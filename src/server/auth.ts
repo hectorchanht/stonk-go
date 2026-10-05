@@ -8,7 +8,7 @@ import { type Adapter } from "next-auth/adapters";
 import DiscordProvider from "next-auth/providers/discord";
 
 import { env } from "~/env";
-import { db } from "~/server/db";
+import { getDb } from "~/server/db";
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -58,9 +58,12 @@ if (env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) {
 /**
  * Options for NextAuth.js used to configure adapters, providers, callbacks, etc.
  *
+ * Built per request (not at module scope) so the Prisma client picks up the
+ * D1 binding, which only resolves inside a request on Cloudflare Workers.
+ *
  * @see https://next-auth.js.org/configuration/options
  */
-export const authOptions: NextAuthOptions = {
+export const getAuthOptions = (): NextAuthOptions => ({
   callbacks: {
     session: ({ session, user }) => ({
       ...session,
@@ -70,13 +73,13 @@ export const authOptions: NextAuthOptions = {
       },
     }),
   },
-  adapter: PrismaAdapter(db) as Adapter,
+  adapter: PrismaAdapter(getDb()) as Adapter,
   providers,
-};
+});
 
 /**
  * Wrapper for `getServerSession` so that you don't need to import the `authOptions` in every file.
  *
  * @see https://next-auth.js.org/configuration/nextjs
  */
-export const getServerAuthSession = () => getServerSession(authOptions);
+export const getServerAuthSession = () => getServerSession(getAuthOptions());
