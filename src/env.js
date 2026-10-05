@@ -7,23 +7,29 @@ export const env = createEnv({
    * isn't built with invalid env vars.
    */
   server: {
-    DATABASE_URL: z.string().url(),
+    // sqlite connection strings like "file:./db.sqlite" are not URLs,
+    // so plain non-empty string validation is correct here.
+    // Defaults to local sqlite; on Cloudflare Workers the D1 binding
+    // (src/server/db.ts) takes over and this value is unused.
+    DATABASE_URL: z.string().min(1).default("file:./db.sqlite"),
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
-    NEXTAUTH_SECRET:
-      process.env.NODE_ENV === "production"
-        ? z.string()
-        : z.string().optional(),
+    // Optional everywhere: sign-in is not required to use the portfolio.
+    // Set it if you enable an auth provider (recommended in production).
+    NEXTAUTH_SECRET: z.string().optional(),
     NEXTAUTH_URL: z.preprocess(
       // This makes Vercel deployments not fail if you don't set NEXTAUTH_URL
       // Since NextAuth.js automatically uses the VERCEL_URL if present.
       (str) => process.env.VERCEL_URL ?? str,
       // VERCEL_URL doesn't include `https` so it cant be validated as a URL
-      process.env.VERCEL ? z.string() : z.string().url()
+      process.env.VERCEL ? z.string() : z.string().url().optional()
     ),
-    DISCORD_CLIENT_ID: z.string(),
-    DISCORD_CLIENT_SECRET: z.string(),
+    // Optional: sign-in is not required to use the portfolio.
+    // Leave empty for local single-user use; the Discord provider is
+    // only wired up when both are set (see src/server/auth.ts).
+    DISCORD_CLIENT_ID: z.string().optional(),
+    DISCORD_CLIENT_SECRET: z.string().optional(),
   },
 
   /**
@@ -53,8 +59,7 @@ export const env = createEnv({
    */
   skipValidation: !!process.env.SKIP_ENV_VALIDATION,
   /**
-   * Makes it so that empty strings are treated as undefined. `SOME_VAR: z.string()` and
-   * `SOME_VAR=''` will throw an error.
+   * Makes it so that empty strings are treated as undefined. `SOME_VAR=''` will throw an error.
    */
   emptyStringAsUndefined: true,
 });

@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "stonk-go",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".open-next/assets",
+    "not_found_handling": "none"
+  },
+  // D1 database for the portfolio. Create it once in the Cloudflare dashboard
+  // (Workers & Pages → D1 → Create, name it "stonk-go-db"), then paste its
+  // database ID below. Until then, `wrangler deploy` will fail validation.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "stonk-go-db",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+    }
+  ]
+}

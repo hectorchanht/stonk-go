@@ -12,11 +12,17 @@
 /prisma/db.sqlite
 /prisma/db.sqlite-journal
 db.sqlite
+*.db
+*.db-journal
 
 # next.js
 /.next/
 /out/
 next-env.d.ts
+
+# opennext / cloudflare worker build output
+/.open-next/
+.dev.vars
 
 # production
 /build

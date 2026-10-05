@@ -3,6 +3,9 @@
 
 generator client {
     provider = "prisma-client-js"
+    // Needed for the D1 driver adapter used on Cloudflare Workers
+    // (src/server/db.ts switches to D1 when the DB binding is present).
+    previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
@@ -14,19 +17,43 @@ datasource db {
     url      = env("DATABASE_URL")
 }
 
-model Post {
-    id        Int      @id @default(autoincrement())
-    name      String
+// NOTE: SQLite has no enum type, so Transaction.type is a plain String
+// constrained to "BUY" | "SELL" by zod validation in the tRPC router.
+
+// A position in a single ticker. Derived from the transaction log
+// (recomputed on every buy/sell/delete) so the log stays the source of truth.
+model Holding {
+    id       String @id @default(cuid())
+    symbol   String @unique // normalized, e.g. "AAPL"
+    name     String? // company name, filled from the quote feed when known
+    quantity Float
+    avgCost  Float // average cost basis per share (fees folded in)
+
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
-    createdBy   User   @relation(fields: [createdById], references: [id])
-    createdById String
-
-    @@index([name])
+    @@index([symbol])
 }
 
-// Necessary for Next auth
+// Immutable log of every buy/sell. Holdings are recomputed from this table,
+// so deleting or editing a transaction automatically fixes the position.
+model Transaction {
+    id         String @id @default(cuid())
+    symbol     String // normalized, e.g. "AAPL"
+    type       String // "BUY" | "SELL" (validated by zod; sqlite has no enums)
+    quantity   Float
+    price      Float // price per share at execution
+    fees       Float           @default(0)
+    executedAt DateTime        @default(now())
+    note       String?
+
+    createdAt DateTime @default(now())
+
+    @@index([symbol])
+    @@index([executedAt])
+}
+
+// Necessary for NextAuth
 model Account {
     id                       String  @id @default(cuid())
     userId                   String
@@ -62,7 +89,6 @@ model User {
     image         String?
     accounts      Account[]
     sessions      Session[]
-    posts         Post[]
 }
 
 model VerificationToken {
