@@ -117,43 +117,54 @@ export function SetupGuide({
           const Icon = s.icon;
           const isDone = ready && done[i];
           const isLast = i === steps.length - 1 || !expanded;
+          // NOTE: the whole row is the done-toggle (tap target >= 44px), so
+          // the number circle can stay small (30px, indicator only). Keep
+          // GuideStep.body phrasing content — no nested buttons/links — since
+          // it renders inside this <button>.
           return (
-            <li key={i} className="relative flex gap-3 pb-4 last:pb-0">
-              <div className="flex flex-col items-center">
-                <button
-                  type="button"
-                  onClick={() => toggle(i)}
-                  aria-pressed={isDone}
-                  aria-label={`Mark step ${i + 1} ${isDone ? "not done" : "done"}: ${s.title}`}
-                  title={isDone ? "Mark not done" : "Mark done"}
-                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border text-sm font-extrabold transition-colors ${
-                    isDone
-                      ? "border-emerald-600 bg-emerald-900/50 text-emerald-300"
-                      : "border-zinc-700 bg-zinc-800/60 text-zinc-300 hover:border-zinc-500"
-                  }`}
-                >
-                  {isDone ? <Check size={18} /> : i + 1}
-                </button>
-                {!isLast && <div className="w-px flex-1 bg-zinc-800" />}
-              </div>
-              <div className="min-w-0 flex-1 pt-2.5">
-                <p className="flex items-center gap-1.5 text-sm font-semibold text-zinc-200">
-                  <Icon size={15} className="shrink-0 text-zinc-500" />
-                  {s.title}
-                </p>
-                <div className="mt-1 text-sm leading-relaxed text-zinc-400">
-                  {s.body}
-                </div>
-                {s.warn && (
-                  <div className="mt-2 flex gap-2 rounded-lg border border-amber-800/60 bg-amber-950/30 p-2.5 text-xs leading-relaxed text-amber-200/90">
-                    <AlertTriangle
-                      size={14}
-                      className="mt-0.5 shrink-0 text-amber-400"
-                    />
-                    <span>{s.warn}</span>
-                  </div>
-                )}
-              </div>
+            <li key={i} className="relative pb-4 last:pb-0">
+              <button
+                type="button"
+                onClick={() => toggle(i)}
+                aria-pressed={isDone}
+                aria-label={`Mark step ${i + 1} ${isDone ? "not done" : "done"}: ${s.title}`}
+                title={isDone ? "Mark not done" : "Mark done"}
+                className="flex w-full gap-2 rounded-lg py-1 text-left transition-colors hover:bg-zinc-800/40"
+              >
+                <span className="flex shrink-0 flex-col items-center">
+                  <span
+                    aria-hidden="true"
+                    className={`flex h-[30px] w-[30px] items-center justify-center rounded-full border text-xs font-bold transition-colors ${
+                      isDone
+                        ? "border-emerald-600 bg-emerald-900/50 text-emerald-300"
+                        : "border-zinc-700 bg-zinc-800/60 text-zinc-300"
+                    }`}
+                  >
+                    {isDone ? <Check size={14} /> : i + 1}
+                  </span>
+                  {!isLast && (
+                    <span className="w-px flex-1 bg-zinc-800" aria-hidden="true" />
+                  )}
+                </span>
+                <span className="min-w-0 flex-1 pt-[5px]">
+                  <span className="flex items-center gap-1.5 text-sm font-semibold text-zinc-200">
+                    <Icon size={15} className="shrink-0 text-zinc-500" />
+                    {s.title}
+                  </span>
+                  <span className="mt-1 block text-sm leading-relaxed text-zinc-400">
+                    {s.body}
+                  </span>
+                  {s.warn && (
+                    <span className="mt-2 flex gap-2 rounded-lg border border-amber-800/60 bg-amber-950/30 p-2.5 text-xs leading-relaxed text-amber-200/90">
+                      <AlertTriangle
+                        size={14}
+                        className="mt-0.5 shrink-0 text-amber-400"
+                      />
+                      <span>{s.warn}</span>
+                    </span>
+                  )}
+                </span>
+              </button>
             </li>
           );
         })}
