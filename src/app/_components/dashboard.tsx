@@ -2,7 +2,15 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
-import { Plus, RefreshCw, Sparkles, X } from "lucide-react";
+import {
+  LogIn,
+  LogOut,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  X,
+} from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { BrokerCard } from "~/app/_components/broker";
@@ -535,6 +543,79 @@ function AuthButtons() {
   );
 }
 
+/** Mobile overflow menu: refresh + sign in/out live here on small screens. */
+function MobileMenu({
+  onRefresh,
+  isFetching,
+}: {
+  onRefresh: () => void;
+  isFetching: boolean;
+}) {
+  const { data: session, status } = useSession();
+  const [open, setOpen] = useState(false);
+  if (status === "loading") return null;
+  const itemCls =
+    "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-zinc-200 hover:bg-zinc-700";
+  return (
+    <div className="relative sm:hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Menu"
+        title="Menu"
+        className="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-2 text-zinc-300 hover:bg-zinc-700"
+      >
+        <MoreHorizontal size={18} />
+      </button>
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-40 cursor-default"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute right-0 z-50 mt-1 w-52 rounded-xl border border-zinc-700 bg-zinc-800 py-1 shadow-xl">
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onRefresh();
+              }}
+              disabled={isFetching}
+              className={`${itemCls} disabled:opacity-40`}
+            >
+              <RefreshCw
+                size={15}
+                className={isFetching ? "animate-spin" : ""}
+              />
+              Refresh prices
+            </button>
+            {session ? (
+              <button
+                type="button"
+                onClick={() => signOut({ callbackUrl: "/" })}
+                className={itemCls}
+              >
+                <LogOut size={15} />
+                Sign out
+                {session.user?.email && (
+                  <span className="ml-auto max-w-[100px] truncate text-xs text-zinc-500">
+                    {session.user.email}
+                  </span>
+                )}
+              </button>
+            ) : (
+              <a href="/login" className={itemCls}>
+                <LogIn size={15} />
+                Sign in
+              </a>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function Dashboard() {
   return (
     <CurrencyProvider>
@@ -618,18 +699,21 @@ function DashboardInner() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <AuthButtons />
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="hidden sm:inline-flex">
+            <AuthButtons />
+          </span>
           <CurrencyPicker />
           <button
             onClick={() => refetch()}
             disabled={isFetching}
             title="Refresh prices"
             aria-label="Refresh prices"
-            className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
+            className="hidden rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 sm:inline-flex"
           >
             <RefreshCw size={16} className={isFetching ? "animate-spin" : ""} />
           </button>
+          <MobileMenu onRefresh={() => refetch()} isFetching={isFetching} />
         </div>
       </header>
 
