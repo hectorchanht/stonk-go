@@ -21,12 +21,12 @@ export function InfoTip({ text }: { text: string }) {
         onMouseLeave={() => setOpen(false)}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
-        className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full border border-zinc-600 align-middle text-zinc-400 hover:border-zinc-300 hover:text-zinc-200"
+        className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full border border-zinc-600 align-middle text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 hover:text-zinc-800 dark:text-zinc-200"
       >
         <Info size={10} strokeWidth={2.5} />
       </button>
       {open && (
-        <span className="absolute left-1/2 top-full z-30 mt-1.5 w-60 -translate-x-1/2 rounded-lg border border-zinc-700 bg-zinc-800 p-2.5 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-zinc-300 shadow-xl">
+        <span className="absolute left-1/2 top-full z-30 mt-1.5 w-60 -translate-x-1/2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-2.5 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-zinc-700 dark:text-zinc-300 shadow-xl">
           {text}
         </span>
       )}
@@ -105,7 +105,7 @@ export function CollapsibleSection({
         >
           <ChevronRight size={14} />
         </span>
-        <span className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
+        <span className="text-sm font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
           {title}
         </span>
         {badge}
@@ -142,9 +142,9 @@ export function StatCard({
       ? "text-emerald-400"
       : tone === "neg"
         ? "text-rose-400"
-        : "text-zinc-100";
+        : "text-zinc-900 dark:text-zinc-100";
   return (
-    <div className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 sm:p-5">
+    <div className="min-w-0 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 p-3 sm:p-5">
       <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
         {label}
         {info && <InfoTip text={info} />}
@@ -200,7 +200,7 @@ export function DataTable<T>({
           style={minWidth ? { minWidth } : undefined}
         >
           <thead>
-            <tr className="border-b border-zinc-800 text-xs uppercase tracking-wider text-zinc-500">
+            <tr className="border-b border-zinc-200 dark:border-zinc-800 text-xs uppercase tracking-wider text-zinc-500">
               {columns.map((c) => (
                 <th
                   key={c.key}
@@ -215,7 +215,7 @@ export function DataTable<T>({
             {rows.map((r, i) => (
               <tr
                 key={keyOf(r, i)}
-                className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-800/30"
+                className="border-b border-zinc-200 dark:border-zinc-800/60 last:border-0 hover:bg-zinc-800/30"
               >
                 {columns.map((c) => (
                   <td
@@ -272,9 +272,9 @@ export function Pagination({
 }) {
   if (pageCount <= 1) return null;
   const btn =
-    "rounded-lg border border-zinc-700 bg-zinc-800 p-1.5 text-zinc-300 hover:bg-zinc-700 disabled:opacity-40";
+    "rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-1.5 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700 disabled:opacity-40";
   return (
-    <div className="flex items-center justify-between border-t border-zinc-800/60 px-3 py-2">
+    <div className="flex items-center justify-between border-t border-zinc-200 dark:border-zinc-800/60 px-3 py-2">
       <span className="text-xs tabular-nums text-zinc-500">
         Page {page + 1} of {pageCount}
       </span>
@@ -341,7 +341,7 @@ export function SkeletonBar({
   return (
     <div
       aria-hidden
-      className={`animate-pulse rounded bg-zinc-800 ${className}`}
+      className={`animate-pulse rounded bg-zinc-200 dark:bg-zinc-800 ${className}`}
       style={{ width, height }}
     />
   );
@@ -354,7 +354,7 @@ export function StatCardSkeleton() {
       {[0, 1, 2, 3].map((i) => (
         <div
           key={i}
-          className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4"
+          className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 p-4"
         >
           <SkeletonBar width="40%" height="0.75rem" className="mb-3" />
           <SkeletonBar width="70%" height="1.5rem" className="mb-2" />
@@ -389,7 +389,7 @@ export function Spinner({
   size?: number;
 }) {
   return (
-    <span className="inline-flex items-center gap-2 text-sm text-zinc-400">
+    <span className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
       <svg
         width={size}
         height={size}

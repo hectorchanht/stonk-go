@@ -13,14 +13,15 @@ export const metadata: Metadata = {
     { rel: "icon", url: "/favicon.png", type: "image/png" },
     { rel: "apple-touch-icon", url: "/apple-touch-icon.png" },
   ],
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${GeistSans.variable} dark`}>
-      <body className="bg-zinc-950">
+    <html lang="en" className={`${GeistSans.variable}`}>
+      <body className="bg-white dark:bg-zinc-950">
         <Providers>{children}</Providers>
       </body>
     </html>

@@ -179,3 +179,46 @@ model VerificationToken {
 
     @@unique([identifier, token])
 }
+
+// Daily portfolio snapshot for the equity-curve chart. Recorded client-side
+// (once per day on dashboard load) because broker positions live in the
+// browser's IBKR snapshot, not on the server.
+model PortfolioSnapshot {
+    id            String   @id @default(cuid())
+    date          String   @unique // YYYY-MM-DD (local date)
+    marketValue   Float
+    costBasis     Float
+    totalPL       Float?
+    dayPL         Float?
+    holdingsCount Int      @default(0)
+    createdAt     DateTime @default(now())
+}
+
+// Price alerts: email the owner when a symbol crosses their target.
+// Alerts require login — the account email is where the alert goes.
+model PriceAlert {
+    id          String    @id @default(cuid())
+    userId      String
+    email       String // denormalized from the account at creation (the check endpoint has no session)
+    symbol      String
+    targetPrice Float
+    direction   String // "above" | "below"
+    active      Boolean   @default(true)
+    triggeredAt DateTime?
+    lastPrice   Float?
+    createdAt   DateTime  @default(now())
+
+    @@index([userId])
+    @@index([active])
+}
+
+// Web Push subscriptions for browser notifications.
+model PushSubscription {
+    id        String   @id @default(cuid())
+    endpoint  String   @unique
+    p256dh    String
+    auth      String
+    createdAt DateTime @default(now())
+
+    @@index([endpoint])
+}

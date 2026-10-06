@@ -93,6 +93,38 @@ export interface BrokerCredentialRow {
   updatedAt: Date;
 }
 
+export interface PortfolioSnapshotRow {
+  id: string;
+  date: string; // YYYY-MM-DD (local)
+  marketValue: number;
+  costBasis: number;
+  totalPL: number | null;
+  dayPL: number | null;
+  holdingsCount: number;
+  createdAt: Date;
+}
+
+export interface PriceAlertRow {
+  id: string;
+  userId: string;
+  email: string;
+  symbol: string;
+  targetPrice: number;
+  direction: string; // "above" | "below"
+  active: boolean;
+  triggeredAt: Date | null;
+  lastPrice: number | null;
+  createdAt: Date;
+}
+
+export interface PushSubscriptionRow {
+  id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  createdAt: Date;
+}
+
 type SortDir = "asc" | "desc";
 
 interface BulkInsertable<TData> {
@@ -208,6 +240,62 @@ export interface AppDb {
     delete(args: { where: { id: string } }): Promise<TransactionRow>;
     deleteMany(args: { where: { symbol: string } }): Promise<{ count: number }>;
   };
+  portfolioSnapshot: {
+    findMany(args: {
+      orderBy: Array<{ date?: SortDir }>;
+    }): Promise<PortfolioSnapshotRow[]>;
+    upsert(args: {
+      where: { date: string };
+      create: {
+        date: string;
+        marketValue: number;
+        costBasis: number;
+        totalPL?: number | null;
+        dayPL?: number | null;
+        holdingsCount?: number;
+      };
+      update: {
+        marketValue: number;
+        costBasis: number;
+        totalPL?: number | null;
+        dayPL?: number | null;
+        holdingsCount?: number;
+      };
+    }): Promise<PortfolioSnapshotRow>;
+  };
+  priceAlert: {
+    findMany(args: {
+      where?: { userId?: string; active?: boolean };
+      orderBy?: Array<{ createdAt?: SortDir }>;
+    }): Promise<PriceAlertRow[]>;
+    findUnique(args: { where: { id: string } }): Promise<PriceAlertRow | null>;
+    create(args: {
+      data: {
+        userId: string;
+        email: string;
+        symbol: string;
+        targetPrice: number;
+        direction: string;
+      };
+    }): Promise<PriceAlertRow>;
+    update(args: {
+      where: { id: string };
+      data: {
+        active?: boolean;
+        triggeredAt?: Date | null;
+        lastPrice?: number | null;
+        targetPrice?: number;
+      };
+    }): Promise<PriceAlertRow>;
+    delete(args: { where: { id: string } }): Promise<PriceAlertRow>;
+  };
+  pushSubscription: {
+    findMany(): Promise<PushSubscriptionRow[]>;
+    create(args: {
+      data: { endpoint: string; p256dh: string; auth: string };
+    }): Promise<PushSubscriptionRow>;
+    delete(args: { where: { endpoint: string } }): Promise<PushSubscriptionRow>;
+  };
 }
 
 type RawRow = Record<string, unknown>;
@@ -304,6 +392,44 @@ function mapTransaction(r: RawRow): TransactionRow {
     note: (r.note as string | null) ?? null,
     source: (r.source as string) ?? "manual",
     externalId: (r.externalId as string | null) ?? null,
+    createdAt: toDate(r.createdAt),
+  };
+}
+
+function mapPortfolioSnapshot(r: RawRow): PortfolioSnapshotRow {
+  return {
+    id: r.id as string,
+    date: r.date as string,
+    marketValue: r.marketValue as number,
+    costBasis: r.costBasis as number,
+    totalPL: (r.totalPL as number | null) ?? null,
+    dayPL: (r.dayPL as number | null) ?? null,
+    holdingsCount: (r.holdingsCount as number) ?? 0,
+    createdAt: toDate(r.createdAt),
+  };
+}
+
+function mapPriceAlert(r: RawRow): PriceAlertRow {
+  return {
+    id: r.id as string,
+    userId: r.userId as string,
+    email: r.email as string,
+    symbol: r.symbol as string,
+    targetPrice: r.targetPrice as number,
+    direction: r.direction as string,
+    active: (r.active as number) === 1,
+    triggeredAt: r.triggeredAt ? toDate(r.triggeredAt) : null,
+    lastPrice: (r.lastPrice as number | null) ?? null,
+    createdAt: toDate(r.createdAt),
+  };
+}
+
+function mapPushSubscription(r: RawRow): PushSubscriptionRow {
+  return {
+    id: r.id as string,
+    endpoint: r.endpoint as string,
+    p256dh: r.p256dh as string,
+    auth: r.auth as string,
     createdAt: toDate(r.createdAt),
   };
 }
@@ -671,5 +797,216 @@ export function createD1Db(d1: D1Database): AppDb {
     },
   };
 
-  return { brokerTrade, brokerCashFlow, brokerPosition, brokerCredential, holding, transaction };
+  const portfolioSnapshot: AppDb["portfolioSnapshot"] = {
+    findMany: async (args) => {
+      const order = args.orderBy
+        .flatMap((o) =>
+          Object.entries(o).map(
+            ([k, v]) => `"${k}" ${v === "desc" ? "DESC" : "ASC"}`,
+          ),
+        )
+        .join(", ");
+      const { results } = await d1
+        .prepare(`SELECT * FROM "PortfolioSnapshot" ORDER BY ${order}`)
+        .all();
+      return (results as unknown as RawRow[]).map(mapPortfolioSnapshot);
+    },
+
+    upsert: async (args) => {
+      const c = args.create;
+      await d1
+        .prepare(
+          `INSERT INTO "PortfolioSnapshot"
+             ("id", "date", "marketValue", "costBasis", "totalPL", "dayPL", "holdingsCount", "createdAt")
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT("date") DO UPDATE SET
+             "marketValue" = excluded."marketValue",
+             "costBasis" = excluded."costBasis",
+             "totalPL" = excluded."totalPL",
+             "dayPL" = excluded."dayPL",
+             "holdingsCount" = excluded."holdingsCount"`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          c.date,
+          c.marketValue,
+          c.costBasis,
+          c.totalPL ?? null,
+          c.dayPL ?? null,
+          c.holdingsCount ?? 0,
+          new Date().toISOString(),
+        )
+        .run();
+      const row = await d1
+        .prepare(`SELECT * FROM "PortfolioSnapshot" WHERE "date" = ?`)
+        .bind(c.date)
+        .first();
+      if (!row) throw new Error("PortfolioSnapshot upsert failed");
+      return mapPortfolioSnapshot(row as unknown as RawRow);
+    },
+  };
+
+  const priceAlert: AppDb["priceAlert"] = {
+    findMany: async (args) => {
+      const binds: unknown[] = [];
+      const conds: string[] = [];
+      if (args.where?.userId !== undefined) {
+        conds.push(`"userId" = ?`);
+        binds.push(args.where.userId);
+      }
+      if (args.where?.active !== undefined) {
+        conds.push(`"active" = ?`);
+        binds.push(args.where.active ? 1 : 0);
+      }
+      let sql = `SELECT * FROM "PriceAlert"`;
+      if (conds.length > 0) sql += ` WHERE ${conds.join(" AND ")}`;
+      const order = (args.orderBy ?? [])
+        .flatMap((o) =>
+          Object.entries(o).map(
+            ([k, v]) => `"${k}" ${v === "desc" ? "DESC" : "ASC"}`,
+          ),
+        )
+        .join(", ");
+      if (order) sql += ` ORDER BY ${order}`;
+      const { results } = await d1.prepare(sql).bind(...binds).all();
+      return (results as unknown as RawRow[]).map(mapPriceAlert);
+    },
+
+    findUnique: async (args) => {
+      const row = await d1
+        .prepare(`SELECT * FROM "PriceAlert" WHERE "id" = ?`)
+        .bind(args.where.id)
+        .first();
+      return row ? mapPriceAlert(row as unknown as RawRow) : null;
+    },
+
+    create: async (args) => {
+      const d = args.data;
+      const row: PriceAlertRow = {
+        id: crypto.randomUUID(),
+        userId: d.userId,
+        email: d.email,
+        symbol: d.symbol,
+        targetPrice: d.targetPrice,
+        direction: d.direction,
+        active: true,
+        triggeredAt: null,
+        lastPrice: null,
+        createdAt: new Date(),
+      };
+      await d1
+        .prepare(
+          `INSERT INTO "PriceAlert"
+             ("id", "userId", "email", "symbol", "targetPrice", "direction", "active", "triggeredAt", "lastPrice", "createdAt")
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.userId,
+          row.email,
+          row.symbol,
+          row.targetPrice,
+          row.direction,
+          1,
+          null,
+          null,
+          row.createdAt.toISOString(),
+        )
+        .run();
+      return row;
+    },
+
+    update: async (args) => {
+      const sets: string[] = [];
+      const binds: unknown[] = [];
+      if (args.data.active !== undefined) {
+        sets.push(`"active" = ?`);
+        binds.push(args.data.active ? 1 : 0);
+      }
+      if (args.data.triggeredAt !== undefined) {
+        sets.push(`"triggeredAt" = ?`);
+        binds.push(args.data.triggeredAt ? iso(args.data.triggeredAt) : null);
+      }
+      if (args.data.lastPrice !== undefined) {
+        sets.push(`"lastPrice" = ?`);
+        binds.push(args.data.lastPrice);
+      }
+      if (args.data.targetPrice !== undefined) {
+        sets.push(`"targetPrice" = ?`);
+        binds.push(args.data.targetPrice);
+      }
+      binds.push(args.where.id);
+      await d1
+        .prepare(`UPDATE "PriceAlert" SET ${sets.join(", ")} WHERE "id" = ?`)
+        .bind(...binds)
+        .run();
+      const row = await d1
+        .prepare(`SELECT * FROM "PriceAlert" WHERE "id" = ?`)
+        .bind(args.where.id)
+        .first();
+      if (!row) throw new Error(`PriceAlert ${args.where.id} not found`);
+      return mapPriceAlert(row as unknown as RawRow);
+    },
+
+    delete: async (args) => {
+      const row = await d1
+        .prepare(`SELECT * FROM "PriceAlert" WHERE "id" = ?`)
+        .bind(args.where.id)
+        .first();
+      if (!row) throw new Error(`PriceAlert ${args.where.id} not found`);
+      await d1
+        .prepare(`DELETE FROM "PriceAlert" WHERE "id" = ?`)
+        .bind(args.where.id)
+        .run();
+      return mapPriceAlert(row as unknown as RawRow);
+    },
+  };
+
+  const pushSubscription: AppDb["pushSubscription"] = {
+    findMany: async () => {
+      const { results } = await d1
+        .prepare(`SELECT * FROM "PushSubscription" ORDER BY "createdAt" DESC`)
+        .all();
+      return (results as unknown as RawRow[]).map(mapPushSubscription);
+    },
+    create: async (args) => {
+      const d = args.data;
+      // Upsert by endpoint
+      const existing = await d1
+        .prepare(`SELECT * FROM "PushSubscription" WHERE "endpoint" = ?`)
+        .bind(d.endpoint)
+        .first();
+      if (existing) {
+        return mapPushSubscription(existing as unknown as RawRow);
+      }
+      const row: PushSubscriptionRow = {
+        id: crypto.randomUUID(),
+        endpoint: d.endpoint,
+        p256dh: d.p256dh,
+        auth: d.auth,
+        createdAt: new Date(),
+      };
+      await d1
+        .prepare(
+          `INSERT INTO "PushSubscription" ("id", "endpoint", "p256dh", "auth", "createdAt") VALUES (?, ?, ?, ?, ?)`,
+        )
+        .bind(row.id, row.endpoint, row.p256dh, row.auth, row.createdAt.toISOString())
+        .run();
+      return row;
+    },
+    delete: async (args) => {
+      const row = await d1
+        .prepare(`SELECT * FROM "PushSubscription" WHERE "endpoint" = ?`)
+        .bind(args.where.endpoint)
+        .first();
+      if (!row) throw new Error("PushSubscription not found");
+      await d1
+        .prepare(`DELETE FROM "PushSubscription" WHERE "endpoint" = ?`)
+        .bind(args.where.endpoint)
+        .run();
+      return mapPushSubscription(row as unknown as RawRow);
+    },
+  };
+
+  return { brokerTrade, brokerCashFlow, brokerPosition, brokerCredential, holding, transaction, portfolioSnapshot, priceAlert, pushSubscription };
 }

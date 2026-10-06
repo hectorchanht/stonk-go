@@ -27,6 +27,7 @@ import {
   usePager,
   type DataColumn,
 } from "~/app/_components/ui";
+import { DividendIncome } from "~/app/_components/dividend-income";
 
 type SyncResult = RouterOutputs["ibkr"]["sync"];
 type Analytics = RouterOutputs["ibkr"]["analytics"];
@@ -468,6 +469,7 @@ function AnalyticsView({ data }: { data: Analytics }) {
           )}
         </>
       )}
+      <DividendIncome months={data.dividendsByMonth ?? []} />
       <p className="mt-3 text-xs text-zinc-500">
         From your IBKR Flex records (end-of-day). Realized P/L uses IBKR&apos;s
         FIFO numbers when the query includes them.

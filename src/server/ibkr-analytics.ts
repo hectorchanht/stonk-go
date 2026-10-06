@@ -57,6 +57,23 @@ export async function computeAnalytics(
       .map((c) => ({ v: c.amount, c: c.currency })),
   );
 
+  // Dividend income grouped by calendar month (YYYY-MM), amounts in USD.
+  // IBKR dateTime looks like "20241015;093000" — the first 8 chars are the date.
+  const divByMonth = new Map<string, number>();
+  for (const c of cashFlows) {
+    if (!/dividend/i.test(c.type)) continue;
+    const ymd = (c.dateTime ?? "").slice(0, 8);
+    if (!/^\d{8}$/.test(ymd)) continue;
+    const month = `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}`;
+    divByMonth.set(
+      month,
+      (divByMonth.get(month) ?? 0) + toUsdSafe(c.amount, c.currency),
+    );
+  }
+  const dividendsByMonth = [...divByMonth.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([month, amount]) => ({ month, amount }));
+
   const bySymbol = new Map<
     string,
     {
@@ -100,6 +117,7 @@ export async function computeAnalytics(
       withholding,
     },
     symbols,
+    dividendsByMonth,
     recentTrades: trades.slice(0, 20).map((t) => ({
       id: t.id,
       symbol: t.symbol,

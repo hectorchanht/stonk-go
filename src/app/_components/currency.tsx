@@ -217,7 +217,7 @@ export function CurrencyPicker() {
         value={currency}
         onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
         aria-label="Display currency"
-        className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm font-semibold text-zinc-200 hover:border-zinc-500"
+        className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-2 py-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200 hover:border-zinc-500"
       >
         {CURRENCIES.map((c) => (
           <option key={c.code} value={c.code}>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MessageCircle, Send, Settings2, X } from "lucide-react";
+import { MessageCircle, Send, Settings2, Square } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { useLocale } from "~/app/_components/locale";
@@ -169,11 +169,30 @@ export function AiChat({
     };
   }, [rows, totals, txns, locale]);
 
-  const chatMut = api.ai.chat.useMutation({
-    onSuccess: (res) => {
+  const providerMeta = meta?.providers.find((p) => p.id === settings.provider);
+  const needsKey = providerMeta?.needsKey && !settings.apiKey.trim();
+  // Guard against a stored model ID from a different provider (stale localStorage).
+  const effectiveModel =
+    providerMeta?.models.some((m) => m.id === settings.model)
+      ? settings.model
+      : providerMeta?.models[0]?.id ?? "";
+
+  // Request tracking for the stop button: bumping requestIdRef invalidates
+  // the in-flight request so a late response is ignored. `cancelled` hides
+  // the loading UI immediately while the orphaned request settles.
+  const requestIdRef = useRef(0);
+  const [cancelled, setCancelled] = useState(false);
+
+  const _chatMut = api.ai.chat.useMutation({
+    onMutate: () => ({ requestId: ++requestIdRef.current }),
+    onSuccess: (res, _vars, ctx) => {
+      setCancelled(false);
+      if (ctx?.requestId !== requestIdRef.current) return; // stopped/superseded
       setMessages((m) => [...m, { role: "assistant", content: res.text }]);
     },
-    onError: (e) => {
+    onError: (e, _vars, ctx) => {
+      setCancelled(false);
+      if (ctx?.requestId !== requestIdRef.current) return; // stopped/superseded
       const msg = e.message.includes("NEEDS_API_KEY")
         ? "This provider needs an API key — open settings and add one."
         : e.message.includes("AI_UNAVAILABLE")
@@ -185,14 +204,18 @@ export function AiChat({
     },
   });
 
+  /** True while waiting for a non-cancelled response. */
+  const isLoading = _chatMut.isPending && !cancelled;
+
   const send = useCallback((question?: string) => {
     const q = (question ?? input).trim();
-    if (!q || chatMut.isPending) return;
+    if (!q || isLoading) return;
+    setCancelled(false);
     setError(null);
     setInput("");
     const history = messages.slice(-10);
     setMessages((m) => [...m, { role: "user", content: q }]);
-    chatMut.mutate({
+    _chatMut.mutate({
       question: q,
       history,
       portfolio: snapshot,
@@ -204,11 +227,17 @@ export function AiChat({
       length: settings.length,
       temperature: settings.temperature,
       maxTokens: settings.maxTokens,
-      model: settings.model || null,
+      model: effectiveModel === providerMeta?.models[0]?.id ? null : effectiveModel || null,
       emojis: settings.emojis,
       followUps: settings.followUps,
     });
-  }, [input, chatMut, messages, snapshot, locale, settings]);
+  }, [input, isLoading, _chatMut, messages, snapshot, locale, settings, effectiveModel, providerMeta]);
+
+  /** Stop button: invalidate the in-flight request; its late response is ignored. */
+  const stop = useCallback(() => {
+    requestIdRef.current++;
+    setCancelled(true);
+  }, []);
 
   const toggleSkill = (id: string) =>
     setSettings((s) => ({
@@ -238,14 +267,11 @@ export function AiChat({
     return () => window.clearInterval(t);
   }, []);
 
-  const providerMeta = meta?.providers.find((p) => p.id === settings.provider);
-  const needsKey = providerMeta?.needsKey && !settings.apiKey.trim();
-
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5">
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 p-4 sm:p-5">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
-          <MessageCircle size={14} className="mr-1.5 inline text-zinc-400" />
+          <MessageCircle size={14} className="mr-1.5 inline text-zinc-600 dark:text-zinc-400" />
           AI Chat
           <InfoTip text="Ask anything about your portfolio — the AI sees your holdings, P/L and recent trades. Your API keys stay in this browser and are sent only with your chat requests." />
         </h2>
@@ -254,7 +280,7 @@ export function AiChat({
             <button
               type="button"
               onClick={() => setMessages([])}
-              className="text-xs text-zinc-500 hover:text-zinc-300"
+              className="text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-300"
             >
               Clear
             </button>
@@ -264,7 +290,7 @@ export function AiChat({
             onClick={() => setSettingsOpen((o) => !o)}
             aria-label="Chat settings"
             title="Provider, API key & skills"
-            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded-lg p-1.5 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:bg-zinc-800 hover:text-zinc-800 dark:text-zinc-200"
           >
             <Settings2 size={16} />
           </button>
@@ -272,7 +298,7 @@ export function AiChat({
       </div>
 
       {settingsOpen && (
-        <div className="mt-3 space-y-4 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
+        <div className="mt-3 space-y-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-950/60 p-3">
           <div>
             <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
               Provider
@@ -289,29 +315,47 @@ export function AiChat({
                   className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
                     settings.provider === p.id
                       ? "border-emerald-600 bg-emerald-950/50 text-emerald-300"
-                      : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-600"
+                      : "border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:border-zinc-600"
                   }`}
                 >
                   {p.name}
                 </button>
               ))}
             </div>
-            {(providerMeta?.models?.length ?? 0) > 1 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {providerMeta!.models.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setSettings((s) => ({ ...s, model: m.id }))}
-                    className={`rounded-lg border px-2.5 py-1 text-xs transition ${
-                      (settings.model || providerMeta!.models[0]!.id) === m.id
-                        ? "border-emerald-600 bg-emerald-950/50 text-emerald-300"
-                        : "border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-600"
-                    }`}
-                  >
-                    {m.name}
-                  </button>
-                ))}
+            {(providerMeta?.models?.length ?? 0) > 0 && (
+              <div className="mt-3">
+                <label
+                  htmlFor="ai-chat-model"
+                  className="text-xs font-semibold uppercase tracking-wide text-zinc-500"
+                >
+                  Model
+                </label>
+                <select
+                  id="ai-chat-model"
+                  value={effectiveModel}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      model:
+                        e.target.value === providerMeta!.models[0]!.id
+                          ? ""
+                          : e.target.value,
+                    }))
+                  }
+                  className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:border-emerald-600 focus:outline-none"
+                >
+                  {providerMeta!.models.map((m) => (
+                    <option key={m.id} value={m.id} title={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-zinc-600">
+                  {providerMeta!.models.length} models available
+                  {settings.provider === "cloudflare"
+                    ? " — free via Workers AI"
+                    : " — billed to your API key"}
+                </p>
               </div>
             )}
           </div>
@@ -328,7 +372,7 @@ export function AiChat({
                 }
                 placeholder="sk-…"
                 autoComplete="off"
-                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-600 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:border-emerald-600 focus:outline-none"
               />
               <p className="mt-1 text-xs text-zinc-600">
                 Stored only in this browser. Sent with your chat requests,
@@ -355,7 +399,7 @@ export function AiChat({
                   className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
                     settings.locale === l.id
                       ? "border-violet-600 bg-violet-950/50 text-violet-300"
-                      : "border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-600"
+                      : "border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-500 hover:border-zinc-600"
                   }`}
                 >
                   {l.name}
@@ -377,7 +421,7 @@ export function AiChat({
                   className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
                     settings.tone === t.id
                       ? "border-violet-600 bg-violet-950/50 text-violet-300"
-                      : "border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-600"
+                      : "border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-500 hover:border-zinc-600"
                   }`}
                 >
                   {t.name}
@@ -399,7 +443,7 @@ export function AiChat({
                   className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
                     settings.length === l.id
                       ? "border-violet-600 bg-violet-950/50 text-violet-300"
-                      : "border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-600"
+                      : "border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-500 hover:border-zinc-600"
                   }`}
                 >
                   {l.name}
@@ -409,8 +453,8 @@ export function AiChat({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-zinc-400">
-                Creativity: <b className="text-zinc-200">{settings.temperature.toFixed(1)}</b>
+              <label className="text-xs text-zinc-600 dark:text-zinc-400">
+                Creativity: <b className="text-zinc-800 dark:text-zinc-200">{settings.temperature.toFixed(1)}</b>
               </label>
               <input
                 type="range"
@@ -426,8 +470,8 @@ export function AiChat({
               <p className="text-[11px] text-zinc-600">0 = precise, 1 = creative</p>
             </div>
             <div>
-              <label className="text-xs text-zinc-400">
-                Max length: <b className="text-zinc-200">{settings.maxTokens}</b>
+              <label className="text-xs text-zinc-600 dark:text-zinc-400">
+                Max length: <b className="text-zinc-800 dark:text-zinc-200">{settings.maxTokens}</b>
               </label>
               <input
                 type="range"
@@ -450,7 +494,7 @@ export function AiChat({
               className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
                 settings.emojis
                   ? "border-violet-600 bg-violet-950/50 text-violet-300"
-                  : "border-zinc-700 bg-zinc-900 text-zinc-500"
+                  : "border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-500"
               }`}
             >
               {settings.emojis ? "✓ " : ""}Emojis
@@ -462,7 +506,7 @@ export function AiChat({
               className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
                 settings.followUps
                   ? "border-violet-600 bg-violet-950/50 text-violet-300"
-                  : "border-zinc-700 bg-zinc-900 text-zinc-500"
+                  : "border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-500"
               }`}
             >
               {settings.followUps ? "✓ " : ""}Follow-up suggestions
@@ -484,7 +528,7 @@ export function AiChat({
                     className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
                       on
                         ? "border-sky-600 bg-sky-950/50 text-sky-300"
-                        : "border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-600"
+                        : "border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-500 hover:border-zinc-600"
                     }`}
                   >
                     {s.name}
@@ -512,16 +556,16 @@ export function AiChat({
               className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-sm leading-relaxed ${
                 m.role === "user"
                   ? "bg-emerald-800/60 text-emerald-50"
-                  : "bg-zinc-800/80 text-zinc-100"
+                  : "bg-zinc-200/80 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100"
               }`}
             >
               {m.content}
             </div>
           </div>
         ))}
-        {chatMut.isPending && (
+        {isLoading && (
           <div className="flex justify-start">
-            <div className="rounded-xl bg-zinc-800/80 px-4 py-3">
+            <div className="rounded-xl bg-zinc-200/80 dark:bg-zinc-800/80 px-4 py-3">
               <TypingDots />
             </div>
           </div>
@@ -531,7 +575,7 @@ export function AiChat({
 
       {error && <p className="mt-2 text-sm text-rose-400">{error}</p>}
 
-      <div className="mt-3 flex gap-2">
+      <div className="mt-3 flex items-center gap-2 rounded-2xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 py-2 pl-4 pr-2 transition focus-within:border-emerald-600">
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -546,18 +590,32 @@ export function AiChat({
               ? `Add your ${providerMeta?.name} API key in settings first…`
               : "Ask about your portfolio…"
           }
-          disabled={chatMut.isPending}
-          className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-600 focus:outline-none disabled:opacity-50"
+          disabled={isLoading}
+          aria-label="Ask about your portfolio"
+          className="flex-1 bg-transparent text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:outline-none disabled:opacity-50"
         />
-        <button
-          type="button"
-          onClick={() => send()}
-          disabled={chatMut.isPending || !input.trim()}
-          aria-label="Send"
-          className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-600 text-white transition hover:bg-emerald-500 active:scale-95 disabled:opacity-40"
-        >
-          <Send size={18} />
-        </button>
+        {isLoading ? (
+          <button
+            type="button"
+            onClick={stop}
+            aria-label="Stop generating"
+            title="Stop generating"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-500 text-white transition hover:bg-zinc-400 active:scale-95"
+          >
+            <Square size={15} fill="currentColor" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => send()}
+            disabled={!input.trim()}
+            aria-label="Send"
+            title="Send"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white transition hover:bg-emerald-500 active:scale-95 disabled:opacity-30 disabled:hover:bg-emerald-600"
+          >
+            <Send size={16} />
+          </button>
+        )}
       </div>
     </div>
   );

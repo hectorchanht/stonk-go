@@ -12,7 +12,7 @@ export default async function Home() {
 
   return (
     <HydrateClient>
-      <main className="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+      <main className="min-h-screen bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 antialiased">
         <Dashboard />
       </main>
     </HydrateClient>

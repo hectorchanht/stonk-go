@@ -3,6 +3,7 @@
 import { SessionProvider } from "next-auth/react";
 
 import { TRPCReactProvider } from "~/trpc/react";
+import { ThemeProvider } from "~/app/_components/theme";
 
 /**
  * Client-side providers. SessionProvider is outer so auth state is
@@ -11,7 +12,9 @@ import { TRPCReactProvider } from "~/trpc/react";
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <SessionProvider>
-      <TRPCReactProvider>{children}</TRPCReactProvider>
+      <TRPCReactProvider>
+        <ThemeProvider>{children}</ThemeProvider>
+      </TRPCReactProvider>
     </SessionProvider>
   );
 }

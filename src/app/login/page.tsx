@@ -6,7 +6,7 @@ import { signIn } from "next-auth/react";
 import { api } from "~/trpc/react";
 
 const inputCls =
-  "w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500";
+  "w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500";
 
 /**
  * Magic-link sign-in. Optional: the whole app works without logging in.
@@ -56,8 +56,8 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 text-zinc-100 antialiased">
-      <div className="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900/60 p-6">
+    <main className="flex min-h-screen items-center justify-center bg-white dark:bg-zinc-950 px-4 text-zinc-900 dark:text-zinc-100 antialiased">
+      <div className="w-full max-w-sm rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 p-6">
         <div className="flex items-center gap-3">
           <img
             src="/logo.webp"
@@ -68,7 +68,7 @@ export default function LoginPage() {
           />
           <h1 className="text-xl font-extrabold tracking-tight">Sign in</h1>
         </div>
-        <p className="mt-2 text-sm text-zinc-400">
+        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
           We&apos;ll email you a magic link — no password needed. Signing in is
           optional; it just lets you save your IBKR connection to your account.
         </p>
@@ -115,7 +115,7 @@ export default function LoginPage() {
         )}
 
         <p className="mt-4 text-center text-sm">
-          <a href="/" className="text-zinc-500 hover:text-zinc-300">
+          <a href="/" className="text-zinc-500 hover:text-zinc-700 dark:text-zinc-300">
             ← Back to the portfolio
           </a>
         </p>

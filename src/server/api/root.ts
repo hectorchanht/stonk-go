@@ -2,6 +2,8 @@ import { authRouter } from "~/server/api/routers/auth";
 import { ibkrRouter } from "~/server/api/routers/ibkr";
 import { portfolioRouter } from "~/server/api/routers/portfolio";
 import { aiRouter } from "~/server/api/routers/ai";
+import { alertsRouter } from "~/server/api/routers/alerts";
+import { pushRouter } from "~/server/api/routers/push";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 
 /**
@@ -14,6 +16,8 @@ export const appRouter = createTRPCRouter({
   ibkr: ibkrRouter,
   portfolio: portfolioRouter,
   ai: aiRouter,
+  alerts: alertsRouter,
+  push: pushRouter,
 });
 
 // export type definition of API

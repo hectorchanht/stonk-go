@@ -54,6 +54,18 @@ const BASE_PROMPT: Record<AiLocale, string> = {
     "金额均为 USD，除非另有注明。",
 };
 
+/**
+ * Explicit reply-language directive. The tone/skill prompts are already
+ * written in the target language, but some models (notably Qwen on
+ * Workers AI) still default to English for financial analysis without
+ * an explicit instruction — this fixes "AI set to 繁 but replies in EN".
+ */
+const LOCALE_DIRECTIVE: Record<AiLocale, string> = {
+  en: "Reply in English.",
+  "zh-Hant": "全程用繁體中文（廣東話口語）回答，唔好用英文。",
+  "zh-Hans": "全程用简体中文回答，不要用英文。",
+};
+
 const EMOJI_PROMPT: Record<AiLocale, string> = {
   en: "Do not use emojis.",
   "zh-Hant": "唔好用 emoji。",
@@ -62,8 +74,10 @@ const EMOJI_PROMPT: Record<AiLocale, string> = {
 
 const FOLLOWUP_PROMPT: Record<AiLocale, string> = {
   en: "End your reply with 2-3 suggested follow-up questions the user might ask next, each on its own line.",
-  "zh-Hant": "答完之後，加 2-3 條 user 可能會想問嘅 follow-up 問題，每條一行。",
-  "zh-Hans": "答完后，加 2-3 条用户可能想问的 follow-up 问题，每条一行。",
+  "zh-Hant":
+    "答完之後，用繁體中文（廣東話口語）加 2-3 條 user 可能會想問嘅 follow-up 問題，每條一行，唔好用英文標題。",
+  "zh-Hans":
+    "答完后，用简体中文加 2-3 条用户可能想问的后续问题，每条一行，不要用英文标题。",
 };
 
 function buildPortfolioContext(input: InsightInput): string {
@@ -103,6 +117,7 @@ function buildSystemPrompt(input: ChatInput, locale: AiLocale): string {
 
   const parts = [
     BASE_PROMPT[locale],
+    LOCALE_DIRECTIVE[locale],
     tone.prompt[locale],
     length.instruction[locale],
     ...skills.map((s) => s.prompt[locale]),
@@ -116,12 +131,11 @@ function buildSystemPrompt(input: ChatInput, locale: AiLocale): string {
   );
 }
 
-export async function chat(input: ChatInput): Promise<{ text: string }> {
+/** Build the message array for a chat request (shared by chat + stream). */
+export function buildChatMessages(input: ChatInput): ChatMessage[] {
   const locale = normalizeLocale(input.locale);
-  const provider: ProviderId = normalizeProvider(input.provider);
-
   const system = buildSystemPrompt(input, locale);
-  const messages: ChatMessage[] = [
+  return [
     { role: "system", content: system },
     ...input.history.slice(-10).map((h) => ({
       role: h.role,
@@ -129,6 +143,11 @@ export async function chat(input: ChatInput): Promise<{ text: string }> {
     })),
     { role: "user", content: input.question.slice(0, 2000) },
   ];
+}
+
+export async function chat(input: ChatInput): Promise<{ text: string }> {
+  const provider: ProviderId = normalizeProvider(input.provider);
+  const messages = buildChatMessages(input);
 
   const { text } = await chatWithProvider(
     provider,

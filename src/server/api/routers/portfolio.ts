@@ -10,6 +10,7 @@ import {
   type Quote,
 } from "~/server/market";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "~/server/api/trpc";
+import { xirr as computeXirr } from "~/server/xirr";
 import { computeFlair } from "~/server/wsb";
 import { generateInsights } from "~/server/ai";
 import {
@@ -57,6 +58,8 @@ export interface HoldingRow {
   symbol: string;
   name: string | null;
   quantity: number;
+  /** Native trading currency (HKD for HKEX, USD otherwise). */
+  currency: string;
   /** Null for broker rows when the Flex query lacks the Cost Basis column. */
   avgCost: number | null;
   /** Null for broker rows when the Flex query lacks the Cost Basis column. */
@@ -103,20 +106,29 @@ async function buildSummary(
     ...broker.map((b) => b.symbol),
   ]);
   const bySymbol = new Map<string, Quote>(quotes.map((q) => [q.symbol, q]));
+  const fx = await getFxRates();
 
   const rows: HoldingRow[] = holdings.map((h) => {
     const q = bySymbol.get(h.symbol);
-    const costBasis = h.quantity * h.avgCost;
+    const currency = inferCurrency(h.symbol);
+    const costBasisNative = h.quantity * h.avgCost;
+    const costBasis = toUsd(costBasisNative, currency, fx);
     const price = q?.price ?? null;
-    const marketValue = price != null ? h.quantity * price : null;
-    const dayPL =
+    // Quote price is in native currency; convert market value to USD.
+    const marketValueNative = price != null ? h.quantity * price : null;
+    const marketValue =
+      marketValueNative != null ? toUsd(marketValueNative, currency, fx) : null;
+    const dayPLNative =
       price != null && q?.prevClose != null
         ? h.quantity * (price - q.prevClose)
         : null;
+    const dayPL =
+      dayPLNative != null ? toUsd(dayPLNative, currency, fx) : null;
     const totalPL = marketValue != null ? marketValue - costBasis : null;
     return {
       id: h.id,
       symbol: h.symbol,
+      currency,
       name: q?.name ?? h.name ?? null,
       quantity: h.quantity,
       avgCost: h.avgCost,
@@ -137,20 +149,27 @@ async function buildSummary(
 
   for (const b of broker) {
     const q = bySymbol.get(b.symbol);
+    const currency = b.currency ?? inferCurrency(b.symbol);
     // Live quote when available, otherwise IBKR's end-of-day mark price.
     const price = q?.price ?? b.markPrice;
-    const marketValue = price != null ? b.quantity * price : null;
-    const dayPL =
+    const marketValueNative = price != null ? b.quantity * price : null;
+    const marketValue =
+      marketValueNative != null ? toUsd(marketValueNative, currency, fx) : null;
+    const dayPLNative =
       q?.price != null && q?.prevClose != null
         ? b.quantity * (q.price - q.prevClose)
         : null;
-    const costBasis =
+    const dayPL = dayPLNative != null ? toUsd(dayPLNative, currency, fx) : null;
+    const costBasisNative =
       b.costBasisPrice != null ? b.quantity * b.costBasisPrice : null;
+    const costBasis =
+      costBasisNative != null ? toUsd(costBasisNative, currency, fx) : null;
     const totalPL =
       marketValue != null && costBasis != null ? marketValue - costBasis : null;
     rows.push({
       id: `broker:${b.symbol}`,
       symbol: b.symbol,
+      currency,
       name: q?.name ?? null,
       quantity: b.quantity,
       avgCost: b.costBasisPrice ?? null,
@@ -235,6 +254,83 @@ export const portfolioRouter = createTRPCRouter({
         take: input.limit,
       })
     ),
+
+  /**
+   * Record today's portfolio snapshot for the equity curve. Called
+   * client-side (once per day on dashboard load) because broker positions
+   * live in the browser's IBKR snapshot, not on the server.
+   */
+  recordSnapshot: publicProcedure
+    .input(summaryInput)
+    .mutation(async ({ ctx, input }) => {
+      const s = await buildSummary(ctx, input.brokerPositions);
+      const t = s.totals;
+      // Local calendar date — one row per day, re-recording overwrites.
+      const date = new Date().toLocaleDateString("en-CA");
+      await ctx.db.portfolioSnapshot.upsert({
+        where: { date },
+        create: {
+          date,
+          marketValue: t.marketValue,
+          costBasis: t.costBasis,
+          totalPL: t.totalPL,
+          dayPL: t.dayPL,
+          holdingsCount: t.holdingsCount,
+        },
+        update: {
+          marketValue: t.marketValue,
+          costBasis: t.costBasis,
+          totalPL: t.totalPL,
+          dayPL: t.dayPL,
+          holdingsCount: t.holdingsCount,
+        },
+      });
+      return { date };
+    }),
+
+  /** Daily portfolio snapshots for the equity curve, oldest first. days=0 → all. */
+  history: publicProcedure
+    .input(z.object({ days: z.number().int().min(0).max(3650).default(90) }))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.portfolioSnapshot.findMany({
+        orderBy: [{ date: "asc" }],
+      });
+      return input.days > 0 ? rows.slice(-input.days) : rows;
+    }),
+
+  /**
+   * Annualized internal rate of return from the full transaction log.
+   * Buys are outflows, sells are inflows, today's market value is the
+   * terminal inflow. Excludes dividends (they aren't in the log).
+   */
+  xirr: publicProcedure.input(summaryInput).query(async ({ ctx, input }) => {
+    const txns = await ctx.db.transaction.findMany({
+      orderBy: [{ executedAt: "asc" }],
+    });
+    const s = await buildSummary(ctx, input.brokerPositions);
+    const flows = txns.map((t) => ({
+      date: new Date(t.executedAt),
+      amount:
+        t.type === "BUY"
+          ? -(t.quantity * t.price + (t.fees ?? 0))
+          : t.quantity * t.price - (t.fees ?? 0),
+    }));
+    if (s.totals.marketValue > 0) {
+      flows.push({ date: new Date(), amount: s.totals.marketValue });
+    }
+    const contributions = txns
+      .filter((t) => t.type === "BUY")
+      .reduce((a, t) => a + t.quantity * t.price + (t.fees ?? 0), 0);
+    const withdrawals = txns
+      .filter((t) => t.type === "SELL")
+      .reduce((a, t) => a + t.quantity * t.price - (t.fees ?? 0), 0);
+    return {
+      xirr: computeXirr(flows),
+      contributions,
+      withdrawals,
+      currentValue: s.totals.marketValue,
+    };
+  }),
 
   /**
    * AI-generated portfolio insights via Cloudflare Workers AI.
@@ -399,5 +495,78 @@ export const portfolioRouter = createTRPCRouter({
       await ctx.db.transaction.deleteMany({ where: { symbol: input.symbol } });
       await ctx.db.holding.deleteMany({ where: { symbol: input.symbol } });
       return { ok: true };
+    }),
+
+  /** Export all user data as JSON for backup. */
+  exportBackup: publicProcedure.query(async ({ ctx }) => {
+    const [transactions, holdings] = await Promise.all([
+      ctx.db.transaction.findMany({ orderBy: [{ executedAt: "desc" }] }),
+      ctx.db.holding.findMany({ orderBy: { symbol: "asc" } }),
+    ]);
+    return {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      transactions,
+      holdings,
+    };
+  }),
+
+  /** Restore data from a backup JSON. Replaces all existing data. */
+  importBackup: publicProcedure
+    .input(
+      z.object({
+        version: z.literal(1),
+        transactions: z.array(
+          z.object({
+            symbol: z.string(),
+            type: z.string(),
+            quantity: z.number(),
+            price: z.number(),
+            fees: z.number().optional(),
+            executedAt: z.union([z.string(), z.date()]),
+            note: z.string().nullable().optional(),
+            source: z.string().optional(),
+            externalId: z.string().nullable().optional(),
+          }),
+        ),
+        holdings: z.array(z.unknown()).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      // Clear existing per symbol (D1 adapter requires where clause)
+      const existing = await ctx.db.transaction.findMany({
+        orderBy: [{ executedAt: "desc" }],
+      });
+      const symbols = [...new Set(existing.map((t) => t.symbol))];
+      for (const s of symbols) {
+        await ctx.db.transaction.deleteMany({ where: { symbol: s } });
+      }
+      const hExisting = await ctx.db.holding.findMany({
+        orderBy: { symbol: "asc" },
+      });
+      for (const h of hExisting) {
+        await ctx.db.holding.deleteMany({ where: { symbol: h.symbol } });
+      }
+      // Restore one by one (no createMany on D1 adapter)
+      for (const t of input.transactions) {
+        await ctx.db.transaction.create({
+          data: {
+            symbol: t.symbol,
+            type: t.type,
+            quantity: t.quantity,
+            price: t.price,
+            fees: t.fees ?? 0,
+            executedAt: t.executedAt,
+            note: t.note ?? null,
+            source: t.source ?? "manual",
+            externalId: t.externalId ?? null,
+          },
+        });
+      }
+      // Holdings are recomputed from transactions via recomputeHolding
+      for (const t of input.transactions) {
+        await recomputeHolding(ctx.db, t.symbol);
+      }
+      return { ok: true, restored: input.transactions.length };
     }),
 });

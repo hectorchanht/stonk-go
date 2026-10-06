@@ -140,7 +140,7 @@ const KIND_ICON = {
 } as const;
 
 const SEVERITY_STYLE = {
-  info: "border-zinc-700 bg-zinc-900/60",
+  info: "border-zinc-300 dark:border-zinc-700 bg-white/60 dark:bg-zinc-900/60",
   warn: "border-amber-800/60 bg-amber-950/20",
   critical: "border-rose-800/60 bg-rose-950/20",
 } as const;
@@ -203,7 +203,7 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-sm text-zinc-400">
+        <div className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
           <Bell size={14} />
           {alerts.length === 0 ? (
             <span>All clear — nothing needs your attention</span>
@@ -217,16 +217,16 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
         <button
           type="button"
           onClick={() => setShowSettings((s) => !s)}
-          className="text-xs text-zinc-500 hover:text-zinc-300"
+          className="text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-300"
         >
           Alert at ±{threshold}%
         </button>
       </div>
 
       {showSettings && (
-        <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
-          <label className="text-xs text-zinc-400">
-            Price move alert threshold: <b className="text-zinc-200">±{threshold}%</b>
+        <div className="mb-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-950/60 p-3">
+          <label className="text-xs text-zinc-600 dark:text-zinc-400">
+            Price move alert threshold: <b className="text-zinc-800 dark:text-zinc-200">±{threshold}%</b>
           </label>
           <input
             type="range"
@@ -248,7 +248,7 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
       )}
 
       {alerts.length === 0 ? (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-6 text-center">
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/40 px-4 py-6 text-center">
           <p className="text-2xl">💎🙌</p>
           <p className="mt-2 text-sm text-zinc-500">
             No spikes, no dumps, no concentration risk. Touch grass.
@@ -277,10 +277,10 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
-                      <span className="font-mono text-sm font-bold text-zinc-100">
+                      <span className="font-mono text-sm font-bold text-zinc-900 dark:text-zinc-100">
                         {a.symbol}
                       </span>
-                      <span className="text-sm font-semibold text-zinc-300">
+                      <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
                         {a.headline}
                       </span>
                     </div>
@@ -292,7 +292,7 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
                     type="button"
                     onClick={() => setExpanded(isOpen ? null : a.id)}
                     aria-label={isOpen ? "Collapse" : "Expand"}
-                    className="rounded-lg p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+                    className="rounded-lg p-1 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 hover:text-zinc-700 dark:text-zinc-300"
                   >
                     <ChevronDown
                       size={16}
@@ -303,14 +303,14 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
                     type="button"
                     onClick={() => dismiss(a.id)}
                     aria-label="Dismiss"
-                    className="rounded-lg p-1 text-zinc-600 hover:bg-zinc-800 hover:text-zinc-300"
+                    className="rounded-lg p-1 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 hover:text-zinc-700 dark:text-zinc-300"
                   >
                     <X size={14} />
                   </button>
                 </div>
                 {isOpen && (
-                  <div className="mt-2 border-t border-zinc-800/60 pt-2">
-                    <p className="text-sm text-zinc-400">{a.detail}</p>
+                  <div className="mt-2 border-t border-zinc-200 dark:border-zinc-800/60 pt-2">
+                    <p className="text-sm text-zinc-600 dark:text-zinc-400">{a.detail}</p>
                     <button
                       type="button"
                       onClick={() => askAi(a.aiQuestion)}

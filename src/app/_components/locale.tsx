@@ -134,7 +134,7 @@ export function LocalePicker() {
       onChange={(e) => setLocale(e.target.value as LocaleCode)}
       aria-label="Interface language"
       title="Interface language"
-      className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm font-semibold text-zinc-200 hover:border-zinc-500"
+      className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-2 py-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200 hover:border-zinc-500"
     >
       {LOCALES.map((l) => (
         <option key={l.code} value={l.code} title={l.label}>
@@ -154,7 +154,7 @@ export function AiLocalePicker() {
       onChange={(e) => setAiLocale(e.target.value as LocaleCode)}
       aria-label="AI response language"
       title="AI response language"
-      className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm font-semibold text-zinc-200 hover:border-zinc-500"
+      className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-2 py-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200 hover:border-zinc-500"
     >
       {LOCALES.map((l) => (
         <option key={l.code} value={l.code} title={l.label}>

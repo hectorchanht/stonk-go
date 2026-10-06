@@ -11,7 +11,7 @@ import { useCurrency } from "~/app/_components/currency";
 type Summary = RouterOutputs["portfolio"]["summary"];
 type HoldingRow = Summary["rows"][number];
 
-const card = "rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5";
+const card = "rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 p-4 sm:p-5";
 
 /** Format a USD amount in the user's selected display currency. */
 function useMoney() {
@@ -37,7 +37,7 @@ export function FlairBadge({ flair }: { flair?: PositionFlair | null }) {
       ? "border-sky-700/60 bg-sky-900/40 text-sky-300"
       : flair.badge === "paper"
         ? "border-amber-700/60 bg-amber-900/40 text-amber-300"
-        : "border-zinc-700/60 bg-zinc-800/60 text-zinc-400";
+        : "border-zinc-300 dark:border-zinc-700/60 bg-zinc-200/60 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400";
   return (
     <span
       title={flair.detail}
@@ -106,18 +106,18 @@ export function YoloMeter({ rows }: { rows: HoldingRow[] }) {
     <div className={card}>
       <div className="flex items-baseline justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
-          <Dices size={14} className="mr-1.5 inline text-zinc-400" />YOLO meter
+          <Dices size={14} className="mr-1.5 inline text-zinc-600 dark:text-zinc-400" />YOLO meter
           <InfoTip text="Your portfolio's degeneracy score (0–100): how concentrated your biggest position is, how much is in meme stocks, and all-in energy. 100% vibes, 0% financial advice." />
         </h2>
-        <div className="text-sm font-bold text-zinc-300">{rank}</div>
+        <div className="text-sm font-bold text-zinc-700 dark:text-zinc-300">{rank}</div>
       </div>
       <div className="mt-3 flex items-center gap-4">
-        <div className="text-5xl font-extrabold tabular-nums text-zinc-100">
+        <div className="text-5xl font-extrabold tabular-nums text-zinc-900 dark:text-zinc-100">
           {score}
           <span className="text-lg font-semibold text-zinc-500">/100</span>
         </div>
         <div className="flex-1">
-          <div className="h-4 w-full overflow-hidden rounded-full bg-zinc-800">
+          <div className="h-4 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
             <div
               className={`h-full rounded-full bg-gradient-to-r transition-all ${barColor}`}
               style={{ width: `${score}%` }}
@@ -152,7 +152,7 @@ export function GainLossPorn({ rows }: { rows: HoldingRow[] }) {
 
   const num = (v: number | null) => money(v, { sign: true });
   const tone = (v: number | null) =>
-    v == null ? "text-zinc-400" : v > 0 ? "text-emerald-400" : v < 0 ? "text-rose-400" : "text-zinc-400";
+    v == null ? "text-zinc-600 dark:text-zinc-400" : v > 0 ? "text-emerald-400" : v < 0 ? "text-rose-400" : "text-zinc-600 dark:text-zinc-400";
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -166,7 +166,7 @@ export function GainLossPorn({ rows }: { rows: HoldingRow[] }) {
             <div className="mt-2 break-words font-extrabold tabular-nums text-emerald-400 text-[clamp(1.5rem,7vw,1.875rem)]">
               {num(winner.totalPL)}
             </div>
-            <div className="mt-1 text-lg font-bold text-zinc-100">
+            <div className="mt-1 text-lg font-bold text-zinc-900 dark:text-zinc-100">
               {winner.symbol}
               <span className="ml-2 text-sm font-normal text-zinc-500">
                 {pct(winner.totalPLPct, { sign: true })}
@@ -198,7 +198,7 @@ export function GainLossPorn({ rows }: { rows: HoldingRow[] }) {
         <div className="mt-2 break-words font-extrabold tabular-nums text-rose-400 text-[clamp(1.5rem,7vw,1.875rem)]">
           {num(loser.totalPL)}
         </div>
-        <div className="mt-1 text-lg font-bold text-zinc-100">
+        <div className="mt-1 text-lg font-bold text-zinc-900 dark:text-zinc-100">
           {loser.symbol}
           <span className="ml-2 text-sm font-normal text-zinc-500">
             {pct(loser.totalPLPct, { sign: true })}

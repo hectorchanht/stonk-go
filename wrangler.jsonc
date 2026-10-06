@@ -25,6 +25,11 @@
   // Plain-text vars MUST live here: `wrangler deploy` wipes dashboard
   // variables that aren't declared in this file (secrets survive).
   "vars": {
-    "NEXTAUTH_URL": "https://holdr.lol"
+    "NEXTAUTH_URL": "https://holdr.lol",
+    "NEXT_PUBLIC_VAPID_PUBLIC_KEY": "REPLACE_WITH_VAPID_PUBLIC_KEY"
+  },
+  // Cron trigger for background push notification checks (every 15 min).
+  "triggers": {
+    "crons": ["*/15 * * * *"]
   }
 }

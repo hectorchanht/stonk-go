@@ -2,6 +2,10 @@ import "server-only";
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
+// Re-export pure helpers (also available from ~/server/currency directly).
+export { isHkCode, inferCurrency, toUsd } from "~/server/currency";
+import { isHkCode } from "~/server/currency";
+
 /**
  * Quote sources for the portfolio.
  *
@@ -29,24 +33,6 @@ export interface Quote {
 
 const CACHE_TTL_MS = 60_000;
 const quoteCache = new Map<string, { at: number; quote: Quote }>();
-
-/**
- * HKEX stock codes are numeric (e.g. IBKR reports "2225" for 02225.HK).
- * No major US listing is purely numeric, so an all-digit symbol is
- * treated as a Hong Kong stock.
- */
-export function isHkCode(symbol: string): boolean {
-  return /^\d{1,5}$/.test(symbol.trim());
-}
-
-/**
- * Native trading currency inferred from the symbol's exchange region.
- * HKEX codes (pure numeric) trade in HKD; everything else defaults to USD.
- * Used as a fallback when IBKR didn't report a currency.
- */
-export function inferCurrency(symbol: string): string {
-  return isHkCode(symbol) ? "HKD" : "USD";
-}
 
 /** Yahoo ticker for a symbol — HK codes need the .HK suffix. */
 function yahooTicker(symbol: string): string {
@@ -291,16 +277,4 @@ export async function getFxRates(): Promise<Record<string, number>> {
     }
   }
   return fxCache?.rates ?? {};
-}
-
-/** Convert an amount in `currency` to USD. Falls back to as-is. */
-export function toUsd(
-  amount: number,
-  currency: string | null | undefined,
-  rates: Record<string, number>,
-): number {
-  const code = (currency ?? "USD").toUpperCase();
-  if (code === "USD") return amount;
-  const rate = rates[code.toLowerCase()];
-  return rate ? amount / rate : amount;
 }

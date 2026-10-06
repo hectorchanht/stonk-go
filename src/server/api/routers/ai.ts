@@ -11,6 +11,63 @@ import { TONES, LENGTHS } from "~/server/ai-tones";
  * of the portfolio API — the portfolio snapshot comes from the client,
  * and BYOK keys travel per-request, never stored server-side.
  */
+
+/** Shared input shape for AI chat — also used by /api/ai/chat-stream. */
+export const chatInputSchema = z.object({
+  question: z.string().min(1).max(2000),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().max(4000),
+      }),
+    )
+    .max(20)
+    .default([]),
+  portfolio: z.object({
+    positions: z
+      .array(
+        z.object({
+          symbol: z.string().max(16),
+          marketValue: z.number(),
+          totalPL: z.number(),
+          totalPLPct: z.number().nullable(),
+          dayPL: z.number().nullable(),
+          weightPct: z.number(),
+        }),
+      )
+      .max(60),
+    totals: z.object({
+      marketValue: z.number(),
+      dayPL: z.number().nullable(),
+      totalPL: z.number(),
+      totalPLPct: z.number().nullable(),
+    }),
+    recentTrades: z
+      .array(
+        z.object({
+          symbol: z.string().max(16),
+          type: z.string().max(8),
+          quantity: z.number(),
+          price: z.number(),
+          date: z.string().max(16),
+        }),
+      )
+      .max(20),
+    locale: z.string().max(16),
+  }),
+  locale: z.string().max(16),
+  provider: z.string().max(32),
+  apiKey: z.string().max(300).nullable().default(null),
+  skills: z.array(z.string().max(32)).max(16).default([]),
+  tone: z.string().max(32).default("analyst"),
+  length: z.string().max(32).default("medium"),
+  temperature: z.number().min(0).max(1).default(0.7),
+  maxTokens: z.number().int().min(100).max(4000).default(1000),
+  model: z.string().max(120).nullable().default(null),
+  emojis: z.boolean().default(true),
+  followUps: z.boolean().default(true),
+});
 export const aiRouter = createTRPCRouter({
   /** Available providers, models, tones, lengths and skills for settings UI. */
   meta: publicProcedure.query(() => ({
@@ -41,63 +98,7 @@ export const aiRouter = createTRPCRouter({
 
   /** Ask a question about the portfolio snapshot. */
   chat: publicProcedure
-    .input(
-      z.object({
-        question: z.string().min(1).max(2000),
-        history: z
-          .array(
-            z.object({
-              role: z.enum(["user", "assistant"]),
-              content: z.string().max(4000),
-            }),
-          )
-          .max(20)
-          .default([]),
-        portfolio: z.object({
-          positions: z
-            .array(
-              z.object({
-                symbol: z.string().max(16),
-                marketValue: z.number(),
-                totalPL: z.number(),
-                totalPLPct: z.number().nullable(),
-                dayPL: z.number().nullable(),
-                weightPct: z.number(),
-              }),
-            )
-            .max(60),
-          totals: z.object({
-            marketValue: z.number(),
-            dayPL: z.number().nullable(),
-            totalPL: z.number(),
-            totalPLPct: z.number().nullable(),
-          }),
-          recentTrades: z
-            .array(
-              z.object({
-                symbol: z.string().max(16),
-                type: z.string().max(8),
-                quantity: z.number(),
-                price: z.number(),
-                date: z.string().max(16),
-              }),
-            )
-            .max(20),
-          locale: z.string().max(16),
-        }),
-        locale: z.string().max(16),
-        provider: z.string().max(32),
-        apiKey: z.string().max(300).nullable().default(null),
-        skills: z.array(z.string().max(32)).max(16).default([]),
-        tone: z.string().max(32).default("analyst"),
-        length: z.string().max(32).default("medium"),
-        temperature: z.number().min(0).max(1).default(0.7),
-        maxTokens: z.number().int().min(100).max(4000).default(1000),
-        model: z.string().max(120).nullable().default(null),
-        emojis: z.boolean().default(true),
-        followUps: z.boolean().default(true),
-      }),
-    )
+    .input(chatInputSchema)
     .mutation(async ({ input }) => {
       try {
         const { text } = await chat({

@@ -10,9 +10,11 @@ import {
   LogIn,
   LogOut,
   MessageCircle,
+  Moon,
   MoreHorizontal,
   Plus,
   RefreshCw,
+  Sun,
   Search,
   Sparkles,
   X,
@@ -20,6 +22,11 @@ import {
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { BrokerCard } from "~/app/_components/broker";
+import {
+  PerformanceSection,
+  useSnapshotRecorder,
+} from "~/app/_components/performance";
+import { PriceAlerts } from "~/app/_components/price-alerts";
 import {
   CollapsibleSection,
   DataTable,
@@ -46,6 +53,9 @@ import {
   LocalePicker,
   LocaleProvider,
 } from "~/app/_components/locale";
+import { useTheme } from "~/app/_components/theme";
+import { BackupButtons } from "~/app/_components/backup";
+import { PushToggle } from "~/app/_components/push-toggle";
 import {
   FlairBadge,
   YoloMeter,
@@ -81,10 +91,10 @@ const pct = (v: number | null, opts?: { sign?: boolean }) => {
 };
 
 const plClass = (v: number | null) =>
-  v == null ? "text-zinc-400" : v > 0 ? "text-emerald-400" : v < 0 ? "text-rose-400" : "text-zinc-400";
+  v == null ? "text-zinc-600 dark:text-zinc-400" : v > 0 ? "text-emerald-400" : v < 0 ? "text-rose-400" : "text-zinc-600 dark:text-zinc-400";
 
 const card =
-  "rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5";
+  "rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 p-4 sm:p-5";
 
 const ALLOC_COLORS = [
   "#4ade80",
@@ -104,7 +114,7 @@ function Allocation({ rows }: { rows: HoldingRow[] }) {
   if (priced.length === 0) return null;
   return (
     <div className={card}>
-      <div className="flex h-3 w-full overflow-hidden rounded-full bg-zinc-800">
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
         {priced.map((r, i) => (
           <div
             key={r.symbol}
@@ -119,7 +129,7 @@ function Allocation({ rows }: { rows: HoldingRow[] }) {
       </div>
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
         {priced.map((r, i) => (
-          <span key={r.symbol} className="flex items-center gap-1.5 text-sm text-zinc-400">
+          <span key={r.symbol} className="flex items-center gap-1.5 text-sm text-zinc-600 dark:text-zinc-400">
             <span
               className="inline-block h-2.5 w-2.5 rounded-sm"
               style={{ backgroundColor: ALLOC_COLORS[i % ALLOC_COLORS.length] }}
@@ -201,8 +211,8 @@ function HoldingsTable({
     <button
       type="button"
       onClick={() => toggleSort(k)}
-      className={`inline-flex items-center gap-1 uppercase hover:text-zinc-200 ${
-        sortKey === k ? "text-zinc-200" : ""
+      className={`inline-flex items-center gap-1 uppercase hover:text-zinc-800 dark:text-zinc-200 ${
+        sortKey === k ? "text-zinc-800 dark:text-zinc-200" : ""
       } ${align === "right" ? "flex-row-reverse" : ""}`}
     >
       {label}
@@ -256,7 +266,7 @@ function HoldingsTable({
       header: sortHeader("Symbol", "symbol", "left"),
       render: (r) => (
         <>
-          <div className="font-semibold text-zinc-100">{r.symbol}</div>
+          <div className="font-semibold text-zinc-900 dark:text-zinc-100">{r.symbol}</div>
           {r.source === "broker" && (
             <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-400">
               IBKR
@@ -276,7 +286,7 @@ function HoldingsTable({
       header: "Qty",
       align: "right",
       render: (r) => (
-        <span className="text-zinc-300">
+        <span className="text-zinc-700 dark:text-zinc-300">
           {r.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })}
         </span>
       ),
@@ -285,20 +295,20 @@ function HoldingsTable({
       key: "avgCost",
       header: "Avg cost",
       align: "right",
-      render: (r) => <span className="text-zinc-300">{money(r.avgCost)}</span>,
+      render: (r) => <span className="text-zinc-700 dark:text-zinc-300">{money(r.avgCost)}</span>,
     },
     {
       key: "price",
       header: "Price",
       align: "right",
-      render: (r) => <span className="text-zinc-300">{money(r.price)}</span>,
+      render: (r) => <span className="text-zinc-700 dark:text-zinc-300">{money(r.price)}</span>,
     },
     {
       key: "marketValue",
       header: sortHeader("Mkt value", "marketValue"),
       align: "right",
       render: (r) => (
-        <span className="font-medium text-zinc-100">{money(r.marketValue)}</span>
+        <span className="font-medium text-zinc-900 dark:text-zinc-100">{money(r.marketValue)}</span>
       ),
     },
     {
@@ -327,7 +337,7 @@ function HoldingsTable({
       key: "weight",
       header: sortHeader("Weight", "weightPct"),
       align: "right",
-      render: (r) => <span className="text-zinc-300">{pct(r.weightPct)}</span>,
+      render: (r) => <span className="text-zinc-700 dark:text-zinc-300">{pct(r.weightPct)}</span>,
     },
     {
       key: "actions",
@@ -345,7 +355,7 @@ function HoldingsTable({
                 del.mutate({ symbol: r.symbol });
               }
             }}
-            className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
+            className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 hover:text-rose-400"
             title={`Delete ${r.symbol}`}
           >
             <X size={14} />
@@ -363,7 +373,7 @@ function HoldingsTable({
 
   return (
     <div className={`${card} overflow-hidden p-0`}>
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-3 py-2">
         <div className="relative min-w-0 flex-1">
           <Search
             size={14}
@@ -376,7 +386,7 @@ function HoldingsTable({
               pager.reset();
             }}
             placeholder="Filter by symbol or name…"
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 py-1.5 pl-8 pr-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-500"
+            className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 py-1.5 pl-8 pr-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-500"
           />
         </div>
         <button
@@ -384,7 +394,7 @@ function HoldingsTable({
           onClick={exportCsv}
           title="Export holdings as CSV"
           aria-label="Export holdings as CSV"
-          className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 p-2 text-zinc-300 hover:bg-zinc-700"
+          className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
         >
           <Download size={15} />
         </button>
@@ -408,7 +418,7 @@ function HoldingsTable({
 }
 
 const inputCls =
-  "w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500";
+  "w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500";
 
 function TransactionForm() {
   const utils = api.useUtils();
@@ -481,7 +491,7 @@ function TransactionForm() {
         </div>
         <div className="col-span-1">
           <label className="mb-1 block text-xs text-zinc-500">Type</label>
-          <div className="flex overflow-hidden rounded-lg border border-zinc-700">
+          <div className="flex overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700">
             {(["BUY", "SELL"] as const).map((t) => (
               <button
                 key={t}
@@ -492,7 +502,7 @@ function TransactionForm() {
                     ? t === "BUY"
                       ? "bg-emerald-600 text-white"
                       : "bg-rose-600 text-white"
-                    : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                    : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-700"
                 }`}
               >
                 {t}
@@ -525,7 +535,7 @@ function TransactionForm() {
               title={quoteQuery.data?.price != null ? `Live: $${quoteQuery.data.price.toFixed(2)}` : "Fetch live price"}
               onClick={() => quoteQuery.refetch()}
               disabled={!symbol.trim() || quoteQuery.isFetching}
-              className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-40"
+              className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-2.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700 disabled:opacity-40"
             >
               {quoteQuery.isFetching ? "…" : "⚡"}
             </button>
@@ -656,7 +666,7 @@ function TransactionList() {
       header: "Symbol",
       render: (t) => (
         <>
-          <span className="font-semibold text-zinc-100">{t.symbol}</span>
+          <span className="font-semibold text-zinc-900 dark:text-zinc-100">{t.symbol}</span>
           {t.source === "ibkr" && (
             <span
               className="ml-1.5 rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] font-bold text-sky-400"
@@ -678,7 +688,7 @@ function TransactionList() {
       header: "Detail",
       align: "right",
       render: (t) => (
-        <span className="whitespace-nowrap text-zinc-400">
+        <span className="whitespace-nowrap text-zinc-600 dark:text-zinc-400">
           {t.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })} @{" "}
           {money(t.price)}
         </span>
@@ -714,7 +724,7 @@ function TransactionList() {
                 del.mutate({ id: t.id });
               }
             }}
-            className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
+            className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 hover:text-rose-400"
             title="Delete transaction"
           >
             <X size={14} />
@@ -725,7 +735,7 @@ function TransactionList() {
 
   return (
     <div className={`${card} overflow-hidden p-0`}>
-      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-3 py-2">
         <div className="relative min-w-0 flex-1 basis-40">
           <Search
             size={14}
@@ -738,10 +748,10 @@ function TransactionList() {
               pager.reset();
             }}
             placeholder="Filter by symbol or note…"
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 py-1.5 pl-8 pr-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-500"
+            className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 py-1.5 pl-8 pr-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-500"
           />
         </div>
-        <div className="flex shrink-0 overflow-hidden rounded-lg border border-zinc-700">
+        <div className="flex shrink-0 overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700">
           {(["ALL", "BUY", "SELL"] as const).map((t) => (
             <button
               key={t}
@@ -753,7 +763,7 @@ function TransactionList() {
               className={`px-2.5 py-1.5 text-xs font-semibold ${
                 typeFilter === t
                   ? "bg-zinc-600 text-white"
-                  : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                  : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-700"
               }`}
             >
               {t}
@@ -765,7 +775,7 @@ function TransactionList() {
           onClick={exportCsv}
           title="Export transactions as CSV"
           aria-label="Export transactions as CSV"
-          className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 p-2 text-zinc-300 hover:bg-zinc-700"
+          className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
         >
           <Download size={15} />
         </button>
@@ -804,14 +814,14 @@ function AuthButtons() {
     return (
       <div className="flex items-center gap-2">
         <span
-          className="hidden max-w-[160px] truncate text-sm text-zinc-400 sm:inline"
+          className="hidden max-w-[160px] truncate text-sm text-zinc-600 dark:text-zinc-400 sm:inline"
           title={session.user?.email ?? ""}
         >
           {session.user?.email}
         </span>
         <button
           onClick={() => signOut({ callbackUrl: "/" })}
-          className="whitespace-nowrap rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
+          className="whitespace-nowrap rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
         >
           Sign out
         </button>
@@ -821,7 +831,7 @@ function AuthButtons() {
   return (
     <a
       href="/login"
-      className="whitespace-nowrap rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
+      className="whitespace-nowrap rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
     >
       Sign in
     </a>
@@ -837,10 +847,11 @@ function HeaderMenu({
   isFetching: boolean;
 }) {
   const { data: session, status } = useSession();
+  const { theme, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
   if (status === "loading") return null;
   const itemCls =
-    "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-zinc-200 hover:bg-zinc-700";
+    "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-zinc-800 dark:text-zinc-200 hover:bg-zinc-700";
   return (
     <div className="relative">
       <button
@@ -848,7 +859,7 @@ function HeaderMenu({
         onClick={() => setOpen((o) => !o)}
         aria-label="Menu"
         title="Menu"
-        className="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-2 text-zinc-300 hover:bg-zinc-700"
+        className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-2.5 py-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
       >
         <MoreHorizontal size={18} />
       </button>
@@ -858,7 +869,7 @@ function HeaderMenu({
             className="fixed inset-0 z-40 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute right-0 z-50 mt-1 w-60 rounded-xl border border-zinc-700 bg-zinc-800 py-1 shadow-xl">
+          <div className="absolute right-0 z-50 mt-1 w-60 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 py-1 shadow-xl">
             <button
               type="button"
               onClick={() => {
@@ -874,11 +885,11 @@ function HeaderMenu({
               />
               Refresh prices
             </button>
-            <div className="border-t border-zinc-700/60 px-4 py-2.5">
+            <div className="border-t border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
               <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Currency</div>
               <CurrencyPicker />
             </div>
-            <div className="border-t border-zinc-700/60 px-4 py-2.5">
+            <div className="border-t border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
               <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Language</div>
               <div className="flex items-center gap-2">
                 <LocalePicker />
@@ -889,16 +900,35 @@ function HeaderMenu({
                 <span className="text-xs text-zinc-600">AI</span>
               </div>
             </div>
-            <div className="border-t border-zinc-700/60">
+            <div className="border-t border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
+              <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Theme</div>
+              <button
+                type="button"
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-zinc-800 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+              >
+                {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+                {theme === "dark" ? "Light mode" : "Dark mode"}
+              </button>
+            </div>
+            <div className="border-t border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
+              <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Notifications</div>
+              <PushToggle />
+            </div>
+            <div className="border-t border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
+              <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Backup</div>
+              <BackupButtons />
+            </div>
+            <div className="border-t border-zinc-300 dark:border-zinc-700/60">
               {session ? (
                 <button
                   type="button"
                   onClick={() => signOut({ callbackUrl: "/" })}
                   className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left hover:bg-zinc-700"
                 >
-                  <LogOut size={15} className="shrink-0 text-zinc-300" />
+                  <LogOut size={15} className="shrink-0 text-zinc-700 dark:text-zinc-300" />
                   <span className="min-w-0">
-                    <span className="block text-sm text-zinc-200">Sign out</span>
+                    <span className="block text-sm text-zinc-800 dark:text-zinc-200">Sign out</span>
                     {session.user?.email && (
                       <span className="block truncate text-xs text-zinc-500">
                         {session.user.email}
@@ -955,6 +985,10 @@ function DashboardInner() {
         staleTime: 60_000,
       },
     );
+
+  // Daily equity-curve snapshot (recorded client-side; re-records when IBKR
+  // positions arrive after first paint).
+  useSnapshotRecorder(!!data && !isLoading && !isError, brokerInput);
 
   // WSB flair is judged from the trade log — manual holdings only.
   const manualSymbols = useMemo(
@@ -1061,6 +1095,14 @@ function DashboardInner() {
           </CollapsibleSection>
 
           <CollapsibleSection
+            id="performance"
+            title="Performance"
+            info="Your portfolio's equity curve, built from a snapshot recorded each day you open the app, plus the true annualized return (XIRR) from your full trade log."
+          >
+            <PerformanceSection brokerPositions={brokerInput} />
+          </CollapsibleSection>
+
+          <CollapsibleSection
             id="alerts"
             title={<span className="inline-flex items-center gap-1.5"><Bell size={14} className="text-amber-400" /> Smart Alerts</span>}
             info="Auto-scans your portfolio on every price refresh: big daily movers, concentration risk, deep losers, missing prices or cost basis. Dismissed alerts resurface after 24h."
@@ -1120,10 +1162,18 @@ function DashboardInner() {
             <BrokerCard onPositions={setBrokerPositions} />
           </CollapsibleSection>
 
+          <CollapsibleSection
+            id="price-alerts"
+            title="Price alerts"
+            info="Set a target price per symbol — a scheduled check emails you when it hits. One-shot: a triggered alert deactivates itself. Requires sign-in."
+          >
+            <PriceAlerts />
+          </CollapsibleSection>
+
           {txnOpen && (
             <section id="section-log-txn" className="scroll-mt-4">
               <div className="flex items-center justify-between py-1">
-                <span className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
+                <span className="text-sm font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
                   Log transaction
                   <InfoTip text="Record a buy or sell. Holdings, cost basis and flair are all recomputed from this log." />
                 </span>
@@ -1131,7 +1181,7 @@ function DashboardInner() {
                   type="button"
                   onClick={() => setTxnOpen(false)}
                   aria-label="Close log transaction"
-                  className="rounded-lg px-2 py-1 text-zinc-500 hover:text-zinc-200"
+                  className="rounded-lg px-2 py-1 text-zinc-500 hover:text-zinc-800 dark:text-zinc-200"
                 >
                   <X size={18} />
                 </button>
@@ -1169,7 +1219,7 @@ function DashboardInner() {
                   };
                   requestAnimationFrame(tryScroll);
                 }}
-                className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800/60 px-3 py-1.5 text-sm font-medium text-zinc-200 transition hover:bg-zinc-700 active:scale-95"
+                className="flex items-center gap-1.5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200/60 dark:bg-zinc-800/60 px-3 py-1.5 text-sm font-medium text-zinc-800 dark:text-zinc-200 transition hover:bg-zinc-700 active:scale-95"
               >
                 <Plus size={16} />
                 Log transaction

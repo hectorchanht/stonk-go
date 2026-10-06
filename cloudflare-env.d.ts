@@ -20,6 +20,8 @@ declare global {
     EMAIL_FROM?: string;
     /** base64 of 32 bytes; encrypts per-user IBKR credentials at rest (optional; dashboard Secrets). */
     CREDENTIALS_KEY?: string;
+    /** Shared key authorizing the scheduled /api/alerts/check calls (dashboard Secrets). */
+    ALERTS_CRON_KEY?: string;
   }
 }
 
