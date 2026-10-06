@@ -13,6 +13,7 @@ import {
   Download,
   GripVertical,
   Landmark,
+  Layers,
   LayoutDashboard,
   LogIn,
   LogOut,
@@ -1830,6 +1831,13 @@ const WIDGET_DEFS: WidgetDef[] = [
     info: "Your portfolio's equity curve, built from a snapshot recorded each day you open the app, plus the true annualized return (XIRR) from your full trade log.",
   },
   {
+    id: "platforms",
+    title: "Platforms",
+    icon: Layers,
+    defaultSpan: "full",
+    info: "Value and P/L broken down by platform — your manual log plus each connected broker and exchange.",
+  },
+  {
     id: "allocation",
     title: "Allocation",
     icon: PieChart,
@@ -2051,16 +2059,18 @@ function DashboardInner() {
   }, []);
 
   const t = data?.totals;
-  const missingBasisNote =
-    t && t.brokerMissingBasis > 0 ? ` · excl. ${t.brokerMissingBasis}` : "";
+  const noCostNote =
+    t && t.brokerMissingBasis > 0
+      ? ` ${t.brokerMissingBasis} position${t.brokerMissingBasis === 1 ? "" : "s"} without a recorded cost count${t.brokerMissingBasis === 1 ? "s" : ""} as $0.`
+      : "";
   const dayTone: "pos" | "neg" | "neutral" =
     t?.dayPL == null ? "neutral" : t.dayPL > 0 ? "pos" : t.dayPL < 0 ? "neg" : "neutral";
   const totalTone: "pos" | "neg" | "neutral" =
-    t?.coveredPL == null
+    t == null
       ? "neutral"
-      : t.coveredPL > 0
+      : t.totalPL > 0
         ? "pos"
-        : t.coveredPL < 0
+        : t.totalPL < 0
           ? "neg"
           : "neutral";
 
@@ -2163,16 +2173,16 @@ function DashboardInner() {
               />
               <StatCard
                 label="Total P/L"
-                value={money(t!.coveredPL, { sign: true })}
-                info="Gain or loss on positions with a known cost. Positions without cost basis are excluded — see below."
-                sub={`${pct(t!.coveredPLPct, { sign: true })}${missingBasisNote}`}
+                value={money(t!.totalPL, { sign: true })}
+                info={`Current value minus total cost.${noCostNote}`}
+                sub={pct(t!.totalPLPct, { sign: true })}
                 tone={totalTone}
               />
               <StatCard
                 label="Cost"
                 value={money(t!.costBasis)}
-                info="Everything you've put in (buys + fees). Sells reduce it proportionally."
-                sub={`invested${missingBasisNote}`}
+                info={`Everything you've put in (buys + fees). Sells reduce it proportionally.${noCostNote}`}
+                sub="invested"
               />
             </div>
           );
@@ -2180,6 +2190,57 @@ function DashboardInner() {
         case "performance":
           body = <PerformanceSection brokerPositions={brokerInput} />;
           break;
+        case "platforms": {
+          const plats = data?.totals.byPlatform ?? [];
+          body =
+            plats.length === 0 ? (
+              <p className="text-sm text-zinc-500">No positions yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wide text-zinc-500">
+                      <th className="py-2 pr-3 font-medium">Platform</th>
+                      <th className="py-2 pr-3 text-right font-medium">Value</th>
+                      <th className="py-2 pr-3 text-right font-medium">Day P/L</th>
+                      <th className="py-2 text-right font-medium">Total P/L</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {plats.map((p) => (
+                      <tr
+                        key={p.platform}
+                        className="border-t border-zinc-200 dark:border-zinc-800"
+                      >
+                        <td className="py-2 pr-3">
+                          <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                            {p.platform}
+                          </span>{" "}
+                          <span className="text-xs text-zinc-500">
+                            {p.count}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 text-right font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
+                          {money(p.marketValue)}
+                        </td>
+                        <td
+                          className={`py-2 pr-3 text-right tabular-nums ${plClass(p.dayPL)}`}
+                        >
+                          {money(p.dayPL, { sign: true })}
+                        </td>
+                        <td
+                          className={`py-2 text-right tabular-nums ${plClass(p.totalPL)}`}
+                        >
+                          {money(p.totalPL, { sign: true })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          break;
+        }
         case "allocation":
           body = <AllocationDonut rows={data.rows} />;
           break;
@@ -2246,7 +2307,7 @@ function DashboardInner() {
       money,
       dayTone,
       totalTone,
-      missingBasisNote,
+      noCostNote,
       hasPnlHistory,
       activePnlPeriod,
       periodDays,

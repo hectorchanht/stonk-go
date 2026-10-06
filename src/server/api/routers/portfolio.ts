@@ -133,18 +133,55 @@ export interface Summary {
     costBasis: number;
     marketValue: number;
     dayPL: number | null;
-    /** Null when broker positions lack cost basis — can't be computed honestly. */
-    totalPL: number | null;
+    /** Current value minus total cost. Positions without a recorded cost count as $0. */
+    totalPL: number;
     totalPLPct: number | null;
-    /** P/L on positions with a known cost basis — shown even when some broker rows lack cost. */
-    coveredPL: number | null;
-    coveredPLPct: number | null;
+    /** Per-platform snapshot: Manual + each broker/exchange label. */
+    byPlatform: Array<{
+      platform: string;
+      count: number;
+      marketValue: number;
+      costBasis: number;
+      dayPL: number | null;
+      totalPL: number;
+    }>;
     holdingsCount: number;
     pricedCount: number;
     brokerCount: number;
     /** Broker rows with a market value but no cost basis. */
     brokerMissingBasis: number;
   };
+}
+
+function platformOf(r: HoldingRow): string {
+  return r.source === "manual" ? "Manual" : (r.brokerLabel ?? "IBKR");
+}
+
+/** Per-platform snapshot totals for the Platforms widget. */
+function buildByPlatform(rows: HoldingRow[]) {
+  const map = new Map<
+    string,
+    { count: number; marketValue: number; costBasis: number; dayPL: number }
+  >();
+  for (const r of rows) {
+    const p = platformOf(r);
+    const e = map.get(p) ?? { count: 0, marketValue: 0, costBasis: 0, dayPL: 0 };
+    e.count += 1;
+    e.marketValue += r.marketValue ?? 0;
+    e.costBasis += r.costBasis ?? 0;
+    e.dayPL += r.dayPL ?? 0;
+    map.set(p, e);
+  }
+  return [...map.entries()]
+    .map(([platform, e]) => ({
+      platform,
+      count: e.count,
+      marketValue: e.marketValue,
+      costBasis: e.costBasis,
+      dayPL: e.dayPL,
+      totalPL: e.marketValue - e.costBasis,
+    }))
+    .sort((a, b) => b.marketValue - a.marketValue);
 }
 
 async function buildSummary(
@@ -263,22 +300,10 @@ async function buildSummary(
   const brokerMissingBasis = rows.filter(
     (r) => r.source === "broker" && r.marketValue != null && r.costBasis == null,
   ).length;
-  // Without every position's cost basis, a total P/L number would be a lie —
-  // show it only when it's complete (manual-only portfolios are unaffected).
-  const totalPL =
-    brokerMissingBasis > 0
-      ? null
-      : rows.reduce((s, r) => s + (r.marketValue ?? 0), 0) - costBasis;
-  // P/L on the measurable portion. Holders want the number even when some
-  // broker positions lack cost basis — the excl. note keeps it honest.
-  const coveredRows = rows.filter(
-    (r) => r.marketValue != null && r.costBasis != null,
-  );
-  const coveredCost = coveredRows.reduce((s, r) => s + (r.costBasis ?? 0), 0);
-  const coveredPL =
-    coveredRows.length > 0
-      ? coveredRows.reduce((s, r) => s + (r.marketValue ?? 0), 0) - coveredCost
-      : null;
+  // Total P/L is simply value minus cost. Positions without a recorded
+  // cost basis count as $0 cost (the info tooltip says so) — holders expect
+  // this number to match Value − Cost at a glance.
+  const totalPL = marketValue - costBasis;
 
   for (const r of rows) {
     r.weightPct =
@@ -294,13 +319,8 @@ async function buildSummary(
       marketValue,
       dayPL: dayPLValues.length > 0 ? dayPLValues.reduce((a, b) => a + b, 0) : null,
       totalPL,
-      totalPLPct:
-        totalPL != null && costBasis > 0 ? (totalPL / costBasis) * 100 : null,
-      coveredPL,
-      coveredPLPct:
-        coveredPL != null && coveredCost > 0
-          ? (coveredPL / coveredCost) * 100
-          : null,
+      totalPLPct: costBasis > 0 ? (totalPL / costBasis) * 100 : null,
+      byPlatform: buildByPlatform(rows),
       holdingsCount: rows.length,
       pricedCount: rows.filter((r) => r.marketValue != null).length,
       brokerCount: broker.length,
