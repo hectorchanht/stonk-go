@@ -19,5 +19,7 @@
       "database_name": "stonk-go-db",
       "database_id": "4fdd0409-3f3b-44c6-9212-384bd1e94a55"
     }
-  ]
+  ],
+  // Workers AI for portfolio insights (no key needed; billed to the account).
+  "ai": { "binding": "AI" }
 }

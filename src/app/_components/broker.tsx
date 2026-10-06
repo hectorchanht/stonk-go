@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
+import { useCurrency } from "~/app/_components/currency";
 
 type SyncResult = RouterOutputs["ibkr"]["sync"];
 type Analytics = RouterOutputs["ibkr"]["analytics"];
@@ -24,27 +25,31 @@ const card = "rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5";
 const CREDS_KEY = "holdr.ibkr.creds";
 const SNAPSHOT_KEY = "holdr.ibkr.snapshot";
 /** Auto-sync on page load when the cached snapshot is older than this. */
-const AUTO_SYNC_AFTER_MS = 6 * 3600 * 1000;
+const AUTO_SYNC_AFTER_MS = 1 * 3600 * 1000;
 
-const money = (v: number | null) => {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `$${Math.abs(v).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-};
-
-const moneySigned = (v: number | null) => {
-  if (v == null || !Number.isFinite(v))
-    return <span className="text-zinc-400">—</span>;
-  const cls = v > 0 ? "text-emerald-400" : v < 0 ? "text-rose-400" : "text-zinc-400";
-  const sign = v > 0 ? "+" : v < 0 ? "−" : "";
-  return (
-    <span className={cls}>
-      {sign}${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-    </span>
+/** Format a USD amount in the user's selected display currency. */
+function useMoney() {
+  const { fmt } = useCurrency();
+  return useCallback(
+    (v: number | null) =>
+      v == null || !Number.isFinite(v) ? "—" : fmt(v),
+    [fmt],
   );
-};
+}
+
+function useMoneySigned() {
+  const { fmt } = useCurrency();
+  return useCallback(
+    (v: number | null) => {
+      if (v == null || !Number.isFinite(v))
+        return <span className="text-zinc-400">—</span>;
+      const cls =
+        v > 0 ? "text-emerald-400" : v < 0 ? "text-rose-400" : "text-zinc-400";
+      return <span className={cls}>{fmt(v, { sign: true })}</span>;
+    },
+    [fmt],
+  );
+}
 
 const qtyFmt = (v: number) =>
   v.toLocaleString("en-US", { maximumFractionDigits: 4 });
@@ -85,6 +90,7 @@ function CollapsiblePositions({ positions }: { positions: PositionLike[] }) {
 /* ---------------- shared presentational pieces ---------------- */
 
 function PositionsTable({ positions }: { positions: PositionLike[] }) {
+  const money = useMoney();
   const total = positions.reduce<number>((a, p) => a + (valueOf(p) ?? 0), 0);
   const priced = positions.filter((p) => p.markPrice != null).length;
   return (
@@ -139,6 +145,8 @@ function PositionsTable({ positions }: { positions: PositionLike[] }) {
 }
 
 function AnalyticsView({ data }: { data: Analytics }) {
+  const money = useMoney();
+  const moneySigned = useMoneySigned();
   const t = data.totals;
   const hasTrades = t.trades > 0;
   return (
@@ -241,6 +249,85 @@ function AnalyticsView({ data }: { data: Analytics }) {
 }
 
 /* ---------------- browser mode (any IB user, no login) ---------------- */
+
+/** Gear menu: hides rarely-needed IBKR actions (sync now, change/remove credentials). */
+function GearMenu({
+  items,
+}: {
+  items: {
+    label: string;
+    onClick: () => void;
+    danger?: boolean;
+    disabled?: boolean;
+  }[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label="IBKR settings"
+        title="IBKR settings"
+        className="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-2 text-sm text-zinc-400 hover:text-zinc-200"
+      >
+        ⚙️
+      </button>
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-40 cursor-default"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute right-0 z-50 mt-1 w-60 rounded-xl border border-zinc-700 bg-zinc-800 py-1 shadow-xl">
+            {items.map((it, i) => (
+              <button
+                key={i}
+                type="button"
+                disabled={it.disabled}
+                onClick={() => {
+                  setOpen(false);
+                  it.onClick();
+                }}
+                className={`block w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-700 disabled:opacity-40 ${
+                  it.danger ? "text-rose-400" : "text-zinc-200"
+                }`}
+              >
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SyncPill({
+  syncing,
+  live,
+}: {
+  syncing: boolean;
+  live: boolean;
+}) {
+  if (syncing) {
+    return (
+      <span className="ml-2 inline-flex items-center gap-1.5 rounded-full border border-amber-700/60 bg-amber-900/40 px-2.5 py-0.5 align-middle text-[10px] font-extrabold tracking-wider text-amber-300">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+        SYNCING
+      </span>
+    );
+  }
+  if (live) {
+    return (
+      <span className="ml-2 inline-flex items-center gap-1.5 rounded-full border border-emerald-700/60 bg-emerald-900/40 px-2.5 py-0.5 align-middle text-[10px] font-extrabold tracking-wider text-emerald-300">
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+        LIVE
+      </span>
+    );
+  }
+  return null;
+}
 
 interface Creds {
   token: string;
@@ -449,7 +536,46 @@ function BrowserBrokerCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [creds]);
 
+  // Auto-sync with server-saved credentials right after login, so the IB
+  // portfolio appears without an extra tap (the mobile magic-link flow).
+  // Respects the same staleness window as the local-creds path so we don't
+  // hammer IBKR's report generation on every page load.
+  const savedAutoStarted = useRef(false);
+  useEffect(() => {
+    if (
+      creds !== null ||
+      !session?.user ||
+      !savedQ.data?.saved ||
+      showForm ||
+      savedAutoStarted.current ||
+      sync.isPending ||
+      sync.data
+    ) {
+      return;
+    }
+    savedAutoStarted.current = true;
+    const snap = loadSnapshot();
+    const stale =
+      !snap || Date.now() - new Date(snap.at).getTime() > AUTO_SYNC_AFTER_MS;
+    if (stale) sync.mutate(undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creds, session?.user, savedQ.data?.saved, showForm]);
+
   const data = sync.data ?? snapshot?.data ?? null;
+
+  const lastSync = sync.data
+    ? new Date()
+    : snapshot
+      ? new Date(snapshot.at)
+      : null;
+  const lastSyncLabel = lastSync
+    ? lastSync.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
 
   // Report the snapshot upward so the dashboard totals can include it.
   // (Above the early returns — hooks must run unconditionally.)
@@ -468,29 +594,44 @@ function BrowserBrokerCard({
   if (!creds) {
     // Logged in with credentials saved to the account (and not choosing to
     // enter different ones): sync via the server-side saved credentials.
+    // Sync is automatic after login, so this is a quiet status card —
+    // actions live behind the gear menu.
     if (session?.user && savedQ.data?.saved && !showForm) {
       return (
         <div className={card}>
-          <h2 className="text-lg font-bold">🏦 Interactive Brokers</h2>
-          <p className="mt-1 text-sm text-zinc-400">
-            You have IBKR credentials saved to your account
-            {session.user.email ? ` (${session.user.email})` : ""}. Sync
-            without re-pasting them.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              onClick={() => sync.mutate(undefined)}
-              disabled={sync.isPending}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
-            >
-              {sync.isPending ? "Syncing…" : "↻ Sync with saved credentials"}
-            </button>
-            <button
-              onClick={() => setShowForm(true)}
-              className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
-            >
-              Use different credentials
-            </button>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold">
+                🏦 Interactive Brokers
+                <SyncPill syncing={sync.isPending} live={!!data && !sync.isPending} />
+              </h2>
+              <p className="text-xs text-zinc-500">
+                ✓ Saved credentials · auto-sync on
+                {lastSyncLabel ? ` · synced ${lastSyncLabel}` : ""}
+                {" · end-of-day data"}
+              </p>
+            </div>
+            <GearMenu
+              items={[
+                {
+                  label: sync.isPending ? "Syncing…" : "↻ Sync now",
+                  onClick: () => sync.mutate(undefined),
+                  disabled: sync.isPending,
+                },
+                {
+                  label: "Use different credentials",
+                  onClick: () => setShowForm(true),
+                },
+                {
+                  label: clearCreds.isPending
+                    ? "Removing…"
+                    : "Remove saved credentials",
+                  onClick: () => clearCreds.mutate(),
+                  danger: true,
+                  disabled: clearCreds.isPending,
+                },
+              ]}
+            />
           </div>
           {error && (
             <p className="mt-3 rounded-lg border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-300">
@@ -514,24 +655,28 @@ function BrowserBrokerCard({
       );
     }
     return (
-      <ConnectForm
-        onConnect={(c) => {
-          try {
-            localStorage.setItem(CREDS_KEY, JSON.stringify(c));
-          } catch {
-            /* ignore */
-          }
-          setCreds(c);
-        }}
-      />
+      <>
+        {session?.user && savedQ.data?.saved && (
+          <button
+            onClick={() => setShowForm(false)}
+            className="mb-2 text-sm text-zinc-400 hover:text-zinc-200"
+          >
+            ← Back to saved credentials
+          </button>
+        )}
+        <ConnectForm
+          onConnect={(c) => {
+            try {
+              localStorage.setItem(CREDS_KEY, JSON.stringify(c));
+            } catch {
+              /* ignore */
+            }
+            setCreds(c);
+          }}
+        />
+      </>
     );
   }
-
-  const lastSync = sync.data
-    ? new Date()
-    : snapshot
-      ? new Date(snapshot.at)
-      : null;
 
   const disconnect = () => {
     try {
@@ -545,68 +690,53 @@ function BrowserBrokerCard({
     setError(null);
   };
 
+  const gearItems: {
+    label: string;
+    onClick: () => void;
+    danger?: boolean;
+    disabled?: boolean;
+  }[] = [
+    {
+      label: sync.isPending ? "Syncing…" : "↻ Sync now",
+      onClick: () => sync.mutate(creds),
+      disabled: sync.isPending,
+    },
+  ];
+  if (session?.user) {
+    if (savedQ.data?.saved) {
+      gearItems.push({
+        label: clearCreds.isPending ? "Removing…" : "Remove saved credentials",
+        onClick: () => clearCreds.mutate(),
+        danger: true,
+        disabled: clearCreds.isPending,
+      });
+    } else {
+      gearItems.push({
+        label: saveCreds.isPending ? "Saving…" : "💾 Save to my account",
+        onClick: () => saveCreds.mutate(creds),
+        disabled: saveCreds.isPending,
+      });
+    }
+  }
+  gearItems.push({ label: "Disconnect", onClick: disconnect, danger: true });
+
   return (
     <div className={card}>
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold">🏦 Interactive Brokers</h2>
+          <h2 className="text-lg font-bold">
+            🏦 Interactive Brokers
+            <SyncPill syncing={sync.isPending} live={!!data && !sync.isPending} />
+          </h2>
           <p className="text-xs text-zinc-500">
-            {lastSync
-              ? `Synced ${lastSync.toLocaleString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                })} · `
-              : ""}
+            {lastSyncLabel ? `Synced ${lastSyncLabel} · ` : ""}
             {data ? `${data.positions.length} position${data.positions.length === 1 ? "" : "s"}` : "your account"} ·
             end-of-day data
+            {session?.user && savedQ.data?.saved ? " · ✓ saved to account" : ""}
           </p>
         </div>
-        <div className="flex shrink-0 gap-2">
-          <button
-            onClick={() => sync.mutate(creds)}
-            disabled={sync.isPending}
-            className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
-          >
-            {sync.isPending ? "Syncing…" : "↻ Sync"}
-          </button>
-          <button
-            onClick={disconnect}
-            className="rounded-lg border border-zinc-800 px-3 py-2 text-sm text-zinc-500 hover:text-zinc-300"
-          >
-            Disconnect
-          </button>
-        </div>
+        <GearMenu items={gearItems} />
       </div>
-
-      {session?.user && (
-        <div className="mt-3 flex items-center gap-2">
-          {savedQ.data?.saved ? (
-            <>
-              <span className="text-xs text-emerald-400">
-                ✓ Credentials saved to your account
-              </span>
-              <button
-                onClick={() => clearCreds.mutate()}
-                disabled={clearCreds.isPending}
-                className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:text-rose-400 disabled:opacity-50"
-              >
-                {clearCreds.isPending ? "Removing…" : "Remove saved"}
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={() => saveCreds.mutate(creds)}
-              disabled={saveCreds.isPending}
-              className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
-              title="Encrypt and store these credentials on your account so you can sync from any browser"
-            >
-              {saveCreds.isPending ? "Saving…" : "💾 Save to my account"}
-            </button>
-          )}
-        </div>
-      )}
 
       {error && (
         <p className="mt-3 rounded-lg border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-300">

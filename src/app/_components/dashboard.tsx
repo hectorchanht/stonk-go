@@ -1,10 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { BrokerCard } from "~/app/_components/broker";
+import { CollapsibleSection, InfoTip } from "~/app/_components/ui";
+import { AiInsights } from "~/app/_components/insights";
+import {
+  CurrencyPicker,
+  CurrencyProvider,
+  useCurrency,
+} from "~/app/_components/currency";
 import {
   FlairBadge,
   YoloMeter,
@@ -24,14 +31,15 @@ interface BrokerPositionInput {
   costBasisPrice?: number | null;
 }
 
-const money = (v: number | null, opts?: { sign?: boolean }) => {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const sign = opts?.sign ? (v > 0 ? "+" : v < 0 ? "−" : "") : "";
-  return `${sign}$${Math.abs(v).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-};
+/** Format a USD amount in the user's selected display currency. */
+function useMoney() {
+  const { fmt } = useCurrency();
+  return useCallback(
+    (v: number | null, opts?: { sign?: boolean }) =>
+      v == null || !Number.isFinite(v) ? "—" : fmt(v, opts),
+    [fmt],
+  );
+}
 
 const pct = (v: number | null, opts?: { sign?: boolean }) => {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -50,11 +58,13 @@ function StatCard({
   value,
   sub,
   tone,
+  info,
 }: {
   label: string;
   value: string;
   sub?: string;
   tone?: "pos" | "neg" | "neutral";
+  info?: string;
 }) {
   const toneClass =
     tone === "pos"
@@ -63,14 +73,17 @@ function StatCard({
         ? "text-rose-400"
         : "text-zinc-100";
   return (
-    <div className={card}>
+    <div className={`${card} min-w-0 p-3 sm:p-5`}>
       <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
         {label}
+        {info && <InfoTip text={info} />}
       </div>
-      <div className={`mt-1 text-2xl font-bold tabular-nums sm:text-3xl ${toneClass}`}>
+      <div
+        className={`mt-1 font-bold tabular-nums leading-tight ${toneClass} text-[clamp(1.15rem,5vw,1.875rem)]`}
+      >
         {value}
       </div>
-      {sub && <div className="mt-1 text-sm text-zinc-500">{sub}</div>}
+      {sub && <div className="mt-1 truncate text-sm text-zinc-500">{sub}</div>}
     </div>
   );
 }
@@ -93,10 +106,7 @@ function Allocation({ rows }: { rows: HoldingRow[] }) {
   if (priced.length === 0) return null;
   return (
     <div className={card}>
-      <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
-        Allocation
-      </h2>
-      <div className="mt-3 flex h-3 w-full overflow-hidden rounded-full bg-zinc-800">
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-zinc-800">
         {priced.map((r, i) => (
           <div
             key={r.symbol}
@@ -132,6 +142,7 @@ function HoldingsTable({
   rows: HoldingRow[];
   flair?: Record<string, PositionFlair>;
 }) {
+  const money = useMoney();
   const utils = api.useUtils();
   const del = api.portfolio.deleteHolding.useMutation({
     onSuccess: () => {
@@ -144,10 +155,7 @@ function HoldingsTable({
   if (rows.length === 0) {
     return (
       <div className={card}>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
-          Holdings
-        </h2>
-        <p className="mt-3 text-zinc-500">
+        <p className="text-zinc-500">
           No positions yet. Log your first buy below to get started.
         </p>
       </div>
@@ -156,10 +164,7 @@ function HoldingsTable({
 
   return (
     <div className={`${card} overflow-x-auto p-0`}>
-      <h2 className="px-4 pt-4 text-sm font-semibold uppercase tracking-wider text-zinc-500 sm:px-5 sm:pt-5">
-        Holdings
-      </h2>
-      <table className="mt-3 w-full min-w-[760px] text-left text-sm">
+      <table className="w-full min-w-[760px] text-left text-sm">
         <thead>
           <tr className="border-y border-zinc-800 text-xs uppercase tracking-wider text-zinc-500">
             <th className="px-4 py-2 sm:px-5">Symbol</th>
@@ -308,13 +313,11 @@ function TransactionForm() {
 
   return (
     <div className={card}>
-      <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
-        Log transaction
-      </h2>
-      <form onSubmit={submit} className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <form onSubmit={submit} className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="col-span-1">
           <label className="mb-1 block text-xs text-zinc-500">Symbol</label>
           <input
+            id="txn-symbol"
             className={`${inputCls} uppercase`}
             placeholder="AAPL"
             value={symbol}
@@ -430,6 +433,7 @@ function TransactionForm() {
 }
 
 function TransactionList() {
+  const money = useMoney();
   const utils = api.useUtils();
   const { data, isLoading } = api.portfolio.transactions.useQuery({ limit: 50 });
   const del = api.portfolio.deleteTransaction.useMutation({
@@ -442,9 +446,6 @@ function TransactionList() {
 
   return (
     <div className={`${card} p-0`}>
-      <h2 className="px-4 pt-4 text-sm font-semibold uppercase tracking-wider text-zinc-500 sm:px-5 sm:pt-5">
-        Transactions
-      </h2>
       {isLoading ? (
         <p className="px-4 py-4 text-sm text-zinc-500 sm:px-5">Loading…</p>
       ) : !data || data.length === 0 ? (
@@ -452,7 +453,7 @@ function TransactionList() {
           Nothing logged yet.
         </p>
       ) : (
-        <ul className="mt-2 divide-y divide-zinc-800/60">
+        <ul className="divide-y divide-zinc-800/60">
           {data.map((t) => (
             <li
               key={t.id}
@@ -517,7 +518,7 @@ function AuthButtons() {
         </span>
         <button
           onClick={() => signOut({ callbackUrl: "/" })}
-          className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
+          className="whitespace-nowrap rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
         >
           Sign out
         </button>
@@ -527,7 +528,7 @@ function AuthButtons() {
   return (
     <a
       href="/login"
-      className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
+      className="whitespace-nowrap rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
     >
       Sign in
     </a>
@@ -535,6 +536,15 @@ function AuthButtons() {
 }
 
 export function Dashboard() {
+  return (
+    <CurrencyProvider>
+      <DashboardInner />
+    </CurrencyProvider>
+  );
+}
+
+function DashboardInner() {
+  const money = useMoney();
   // IBKR snapshot reported up by the BrokerCard (lives in this browser only).
   const [brokerPositions, setBrokerPositions] = useState<BrokerPositionInput[]>([]);
   const brokerInput = useMemo(
@@ -601,19 +611,21 @@ export function Dashboard() {
             <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
               Holdr
             </h1>
-            <p className="text-sm text-zinc-500">
+            <p className="hidden text-sm text-zinc-500 min-[380px]:block">
               we are diamond holdrs 💎🙌
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <AuthButtons />
+          <CurrencyPicker />
           <button
             onClick={() => refetch()}
             disabled={isFetching}
+            title="Refresh prices"
             className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
           >
-            {isFetching ? "Refreshing…" : "↻ Refresh prices"}
+            {isFetching ? "…" : <><span className="sm:hidden">↻</span><span className="hidden sm:inline">↻ Refresh prices</span></>}
           </button>
         </div>
       </header>
@@ -630,50 +642,125 @@ export function Dashboard() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatCard
-              label="Portfolio value"
-              value={money(t!.marketValue)}
-              sub={
-                t!.pricedCount < t!.holdingsCount
-                  ? `prices missing for ${t!.holdingsCount - t!.pricedCount}`
-                  : `${t!.holdingsCount} position${t!.holdingsCount === 1 ? "" : "s"}`
-              }
-            />
-            <StatCard
-              label="Day P/L"
-              value={money(t!.dayPL, { sign: true })}
-              sub="vs previous close"
-              tone={dayTone}
-            />
-            <StatCard
-              label="Total P/L"
-              value={money(t!.totalPL, { sign: true })}
-              sub={`${pct(t!.totalPLPct, { sign: true })}${missingBasisNote}`}
-              tone={totalTone}
-            />
-            <StatCard
-              label="Cost basis"
-              value={money(t!.costBasis)}
-              sub={`capital invested${missingBasisNote}`}
-            />
-          </div>
+          <CollapsibleSection id="overview" title="Portfolio overview">
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <StatCard
+                label="Portfolio value"
+                value={money(t!.marketValue)}
+                info="Total market value of everything you hold, at live prices."
+                sub={
+                  t!.pricedCount < t!.holdingsCount
+                    ? `prices missing for ${t!.holdingsCount - t!.pricedCount}`
+                    : `${t!.holdingsCount} position${t!.holdingsCount === 1 ? "" : "s"}`
+                }
+              />
+              <StatCard
+                label="Day P/L"
+                value={money(t!.dayPL, { sign: true })}
+                info="Today's gain or loss versus yesterday's closing prices."
+                sub="vs previous close"
+                tone={dayTone}
+              />
+              <StatCard
+                label="Total P/L"
+                value={money(t!.totalPL, { sign: true })}
+                info="All-time profit or loss: current value minus your total cost basis."
+                sub={`${pct(t!.totalPLPct, { sign: true })}${missingBasisNote}`}
+                tone={totalTone}
+              />
+              <StatCard
+                label="Cost basis"
+                value={money(t!.costBasis)}
+                info="Everything you've put in (buys + fees). Sells reduce it proportionally."
+                sub={`capital invested${missingBasisNote}`}
+              />
+            </div>
+          </CollapsibleSection>
 
-          <Allocation rows={data.rows} />
+          <CollapsibleSection
+            id="insights"
+            title="✨ AI Insights"
+            info="Cloudflare Workers AI reads your portfolio and writes a plain-English brief: concentration, winners, losers, and one suggestion. Cached for 24h per snapshot."
+          >
+            <AiInsights rows={data.rows} totals={t!} />
+          </CollapsibleSection>
 
-          <div className="space-y-4">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
-              🚀 WSB mode
-            </h2>
-            <YoloMeter rows={data.rows} />
-            <GainLossPorn rows={data.rows} />
-            <TendiesCounter totalPL={t!.totalPL} />
-          </div>
+          <CollapsibleSection
+            id="allocation"
+            title="Allocation"
+            info="How your money is split across positions, by market value."
+          >
+            <Allocation rows={data.rows} />
+          </CollapsibleSection>
 
-          <HoldingsTable rows={data.rows} flair={flair} />
-          <BrokerCard onPositions={setBrokerPositions} />
-          <TransactionForm />
-          <TransactionList />
+          <CollapsibleSection
+            id="wsb"
+            title="🚀 WSB mode"
+            info="Degenerate analytics. Hover each ⓘ for the lore."
+          >
+            <div className="space-y-4">
+              <YoloMeter rows={data.rows} />
+              <GainLossPorn rows={data.rows} />
+              <TendiesCounter totalPL={t!.totalPL} />
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="holdings"
+            title="Holdings"
+            info="Every position at live prices. 💎🙌 / 🧻 badges are judged from your trade history — hover a badge for the verdict."
+          >
+            <HoldingsTable rows={data.rows} flair={flair} />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="ibkr"
+            title="Interactive Brokers"
+            info="Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour."
+          >
+            <BrokerCard onPositions={setBrokerPositions} />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="log-txn"
+            title="Log transaction"
+            info="Record a buy or sell. Holdings, cost basis and flair are all recomputed from this log."
+          >
+            <TransactionForm />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="txns"
+            title="Transactions"
+            info="Your full trade history, newest first. Deleting one recomputes the holding."
+            defaultOpen={false}
+          >
+            <TransactionList />
+          </CollapsibleSection>
+
+          <button
+            type="button"
+            onClick={() => {
+              window.dispatchEvent(
+                new CustomEvent("holdr:open-section", { detail: "log-txn" }),
+              );
+              requestAnimationFrame(() => {
+                document
+                  .getElementById("section-log-txn")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                window.setTimeout(() => {
+                  document
+                    .getElementById("txn-symbol")
+                    ?.focus({ preventScroll: true });
+                }, 450);
+              });
+            }}
+            title="Log a transaction"
+            aria-label="Log a transaction"
+            className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-600 text-2xl font-bold text-white shadow-xl shadow-emerald-950/50 transition hover:bg-emerald-500 active:scale-95"
+          >
+            ＋
+          </button>
 
           <footer className="pt-2 text-center text-xs text-zinc-600">
             Prices: Finnhub realtime when configured, else Yahoo (~15min

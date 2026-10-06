@@ -1,21 +1,26 @@
 "use client";
 
+import { useCallback } from "react";
+
 import type { RouterOutputs } from "~/trpc/react";
 import type { PositionFlair } from "~/server/wsb";
+import { InfoTip } from "~/app/_components/ui";
+import { useCurrency } from "~/app/_components/currency";
 
 type Summary = RouterOutputs["portfolio"]["summary"];
 type HoldingRow = Summary["rows"][number];
 
 const card = "rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5";
 
-const money = (v: number | null, opts?: { sign?: boolean }) => {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const sign = opts?.sign ? (v > 0 ? "+" : v < 0 ? "−" : "") : "";
-  return `${sign}$${Math.abs(v).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-};
+/** Format a USD amount in the user's selected display currency. */
+function useMoney() {
+  const { fmt } = useCurrency();
+  return useCallback(
+    (v: number | null, opts?: { sign?: boolean }) =>
+      v == null || !Number.isFinite(v) ? "—" : fmt(v, opts),
+    [fmt],
+  );
+}
 
 const pct = (v: number | null, opts?: { sign?: boolean }) => {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -101,6 +106,7 @@ export function YoloMeter({ rows }: { rows: HoldingRow[] }) {
       <div className="flex items-baseline justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
           🎲 YOLO meter
+          <InfoTip text="Your portfolio's degeneracy score (0–100): how concentrated your biggest position is, how much is in meme stocks, and all-in energy. 100% vibes, 0% financial advice." />
         </h2>
         <div className="text-sm font-bold text-zinc-300">{rank}</div>
       </div>
@@ -131,6 +137,7 @@ export function YoloMeter({ rows }: { rows: HoldingRow[] }) {
 
 /** Biggest winner and biggest loser, immortalized as spotlight cards. */
 export function GainLossPorn({ rows }: { rows: HoldingRow[] }) {
+  const money = useMoney();
   const scored = rows.filter((r) => r.totalPL != null);
   if (scored.length === 0) return null;
 
@@ -151,6 +158,7 @@ export function GainLossPorn({ rows }: { rows: HoldingRow[] }) {
       <div className={`${card} border-emerald-800/60`}>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-emerald-500">
           🏆 Gain porn
+          <InfoTip text="Your single biggest winning position by dollars gained, immortalized. Post it on WSB, king." />
         </h2>
         {hasGains ? (
           <>
@@ -184,6 +192,7 @@ export function GainLossPorn({ rows }: { rows: HoldingRow[] }) {
       <div className={`${card} border-rose-800/60`}>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-rose-500">
           💀 Loss porn
+          <InfoTip text="Your single biggest losing position by dollars lost. We don't judge. Press F to pay respects." />
         </h2>
         <div className="mt-2 text-3xl font-extrabold tabular-nums text-rose-400">
           {num(loser.totalPL)}
@@ -212,6 +221,7 @@ export function GainLossPorn({ rows }: { rows: HoldingRow[] }) {
 const TENDER_PRICE_USD = 1.99;
 
 export function TendiesCounter({ totalPL }: { totalPL: number | null }) {
+  const { fmt } = useCurrency();
   const tendies =
     totalPL == null || !Number.isFinite(totalPL)
       ? null
@@ -221,6 +231,7 @@ export function TendiesCounter({ totalPL }: { totalPL: number | null }) {
     <div className={card}>
       <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
         🍗 Tendies counter
+        <InfoTip text="Your total portfolio profit, converted into chicken tenders at $1.99 USD each (shown in your display currency) — the only unit of account that matters. Negative means you owe the tendies man." />
       </h2>
       {tendies == null ? (
         <>
@@ -236,7 +247,7 @@ export function TendiesCounter({ totalPL }: { totalPL: number | null }) {
           </div>
           <div className="mt-1 text-sm text-zinc-500">
             your gains buy ~{tendies.toLocaleString("en-US")} chicken tenders
-            at ${TENDER_PRICE_USD.toFixed(2)} a pop
+            at {fmt(TENDER_PRICE_USD)} a pop
           </div>
         </>
       ) : tendies < 0 ? (

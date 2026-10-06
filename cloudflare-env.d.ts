@@ -1,9 +1,11 @@
-import type { D1Database } from "@cloudflare/workers-types";
+import type { Ai, D1Database } from "@cloudflare/workers-types";
 
 declare global {
   interface CloudflareEnv {
     /** D1 database bound in wrangler.jsonc (d1_databases). */
     DB: D1Database;
+    /** Workers AI binding (wrangler.jsonc `ai`). Undefined in local dev. */
+    AI?: Ai;
     /** IBKR Flex Web Service token (optional; set in dashboard Variables). */
     IBKR_FLEX_TOKEN?: string;
     /** IBKR Flex Query ID (optional; set in dashboard Variables). */

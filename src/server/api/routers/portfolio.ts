@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getQuote, getQuotes, type Quote } from "~/server/market";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 import { computeFlair } from "~/server/wsb";
+import { generateInsights } from "~/server/ai";
 import { type AppDb } from "~/server/db";
 
 /**
@@ -257,6 +258,51 @@ export const portfolioRouter = createTRPCRouter({
         take: input.limit,
       })
     ),
+
+  /**
+   * AI-generated portfolio insights via Cloudflare Workers AI.
+   * Takes a compact client-built snapshot (USD) — the client caches
+   * results in localStorage for 24h so we don't regenerate on every load.
+   */
+  insights: publicProcedure
+    .input(
+      z.object({
+        positions: z
+          .array(
+            z.object({
+              symbol: z.string().max(12),
+              marketValue: z.number(),
+              totalPL: z.number(),
+              totalPLPct: z.number().nullable(),
+              dayPL: z.number().nullable(),
+              weightPct: z.number(),
+            }),
+          )
+          .max(60),
+        totals: z.object({
+          marketValue: z.number(),
+          dayPL: z.number().nullable(),
+          totalPL: z.number(),
+          totalPLPct: z.number().nullable(),
+        }),
+        recentTrades: z
+          .array(
+            z.object({
+              symbol: z.string().max(12),
+              type: z.string().max(4),
+              quantity: z.number(),
+              price: z.number(),
+              date: z.string().max(10),
+            }),
+          )
+          .max(10)
+          .default([]),
+      }),
+    )
+    .query(async ({ input }) => {
+      const result = await generateInsights(input);
+      return { ...result, generatedAt: new Date().toISOString() };
+    }),
 
   /** Log a buy or sell. Recomputes the holding from the full history. */
   recordTransaction: publicProcedure
