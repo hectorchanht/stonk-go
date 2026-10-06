@@ -782,6 +782,46 @@ export const portfolioRouter = createTRPCRouter({
       return { ok: true };
     }),
 
+  /**
+   * Edit one transaction in place (fix typos without delete + re-add);
+   * the holding is recomputed from the full log afterwards.
+   */
+  updateTransaction: publicProcedure
+    .input(
+      z.object({
+        id: z.string().min(1),
+        type: z.enum(["BUY", "SELL"]),
+        quantity: z.number().positive(),
+        price: z.number().positive(),
+        fees: z.number().min(0).default(0),
+        executedAt: z.date(),
+        note: z.string().trim().max(280).default(""),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      // Sequential, not an interactive $transaction (unsupported on D1).
+      const existing = await ctx.db.transaction.findUnique({
+        where: { id: input.id },
+      });
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Transaction not found" });
+      }
+      await ctx.db.transaction.update({
+        where: { id: input.id },
+        data: {
+          type: input.type,
+          quantity: input.quantity,
+          price: input.price,
+          fees: input.fees,
+          executedAt: input.executedAt,
+          note: input.note === "" ? null : input.note,
+        },
+      });
+      // Throws BAD_REQUEST if the edited sell exceeds the held quantity.
+      await recomputeHolding(ctx.db, existing.symbol);
+      return { ok: true };
+    }),
+
   /** Delete a holding AND its entire transaction history for that symbol. */
   deleteHolding: publicProcedure
     .input(z.object({ symbol: symbolSchema }))

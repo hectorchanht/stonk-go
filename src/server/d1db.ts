@@ -404,6 +404,17 @@ export interface AppDb {
     }): Promise<TransactionRow>;
     delete(args: { where: { id: string } }): Promise<TransactionRow>;
     deleteMany(args: { where: { symbol: string } }): Promise<{ count: number }>;
+    update(args: {
+      where: { id: string };
+      data: {
+        type?: string;
+        quantity?: number;
+        price?: number;
+        fees?: number;
+        executedAt?: Date | string;
+        note?: string | null;
+      };
+    }): Promise<TransactionRow>;
   };
   portfolioSnapshot: {
     findMany(args: {
@@ -1307,6 +1318,48 @@ export function createD1Db(d1: D1Database): AppDb {
         )
         .run();
       return row;
+    },
+
+    update: async (args) => {
+      const d = args.data;
+      const sets: string[] = [];
+      const binds: unknown[] = [];
+      if (d.type !== undefined) {
+        sets.push(`"type" = ?`);
+        binds.push(d.type);
+      }
+      if (d.quantity !== undefined) {
+        sets.push(`"quantity" = ?`);
+        binds.push(d.quantity);
+      }
+      if (d.price !== undefined) {
+        sets.push(`"price" = ?`);
+        binds.push(d.price);
+      }
+      if (d.fees !== undefined) {
+        sets.push(`"fees" = ?`);
+        binds.push(d.fees);
+      }
+      if (d.executedAt !== undefined) {
+        sets.push(`"executedAt" = ?`);
+        binds.push(iso(toDate(d.executedAt)));
+      }
+      if (d.note !== undefined) {
+        sets.push(`"note" = ?`);
+        binds.push(d.note);
+      }
+      if (sets.length > 0) {
+        await d1
+          .prepare(`UPDATE "Transaction" SET ${sets.join(", ")} WHERE "id" = ?`)
+          .bind(...binds, args.where.id)
+          .run();
+      }
+      const updated = await d1
+        .prepare(`SELECT * FROM "Transaction" WHERE "id" = ?`)
+        .bind(args.where.id)
+        .first();
+      if (!updated) throw new Error("Transaction not found");
+      return mapTransaction(updated as unknown as RawRow);
     },
 
     delete: async (args) => {

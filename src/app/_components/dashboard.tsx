@@ -9,6 +9,7 @@ import {
   Bell,
   BellRing,
   Briefcase,
+  ChevronDown,
   Download,
   GripVertical,
   Landmark,
@@ -18,6 +19,7 @@ import {
   Maximize2,
   MessageCircle,
   MoreHorizontal,
+  Pencil,
   PieChart,
   Plus,
   Receipt,
@@ -86,6 +88,7 @@ import {
   CurrencyProvider,
   useCurrency,
 } from "~/app/_components/currency";
+import { canonicalSymbol } from "~/server/currency";
 import {
   AiLocalePicker,
   LocalePicker,
@@ -139,12 +142,17 @@ const card =
 
 type HoldingSortKey = "symbol" | "marketValue" | "dayPL" | "totalPL" | "weightPct";
 
+type TxnRow = RouterOutputs["portfolio"]["transactions"][number];
+
 function HoldingsTable({
   rows,
   flair,
+  brokerSymbols,
 }: {
   rows: HoldingRow[];
   flair?: Record<string, PositionFlair>;
+  /** Raw broker/exchange symbols (pre-dedup) for overlap flags. */
+  brokerSymbols: string[];
 }) {
   const money = useMoney();
   const utils = api.useUtils();
@@ -165,6 +173,58 @@ function HoldingsTable({
     useState<HoldingColumnKey[]>(HOLDINGS_DEFAULT_COLUMNS);
   const [colsHydrated, setColsHydrated] = useState(false);
   const [colsOpen, setColsOpen] = useState(false);
+  const [sourceFilter, setSourceFilter] = useState<"all" | "manual" | "broker">(
+    "all",
+  );
+  const [inspectSymbol, setInspectSymbol] = useState<string | null>(null);
+  const [editingTxn, setEditingTxn] = useState<TxnRow | null>(null);
+  const txnsQuery = api.portfolio.transactions.useQuery(
+    { limit: 200 },
+    { staleTime: 60_000 },
+  );
+  const delTxn = api.portfolio.deleteTransaction.useMutation({
+    onSuccess: () => {
+      void utils.portfolio.summary.invalidate();
+      void utils.portfolio.transactions.invalidate();
+      void utils.portfolio.flair.invalidate();
+    },
+  });
+
+  /** canonical symbol → raw broker symbol, for manual/broker overlap flags. */
+  const brokerCanon = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const b of brokerSymbols) {
+      const c = canonicalSymbol(b);
+      if (!m.has(c)) m.set(c, b);
+    }
+    return m;
+  }, [brokerSymbols]);
+
+  const overlapFor = (r: HoldingRow): string | undefined =>
+    r.source === "manual" ? brokerCanon.get(canonicalSymbol(r.symbol)) : undefined;
+
+  /** Manual-holdings review summary (the "$100K hunt" bar). */
+  const manualStats = useMemo(() => {
+    const ms = rows.filter((r) => r.source === "manual");
+    return {
+      n: ms.length,
+      cost: ms.reduce((a, r) => a + (r.costBasis ?? 0), 0),
+      value: ms.reduce((a, r) => a + (r.marketValue ?? 0), 0),
+      noPrice: ms.filter((r) => r.marketValue == null).length,
+    };
+  }, [rows]);
+
+  const inspectTxns = useMemo(
+    () =>
+      (txnsQuery.data ?? [])
+        .filter((t) => t.symbol === inspectSymbol)
+        .slice()
+        .sort(
+          (a, b) =>
+            new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime(),
+        ),
+    [txnsQuery.data, inspectSymbol],
+  );
   useEffect(() => {
     try {
       const stored = parseStoredColumns(
@@ -199,13 +259,13 @@ function HoldingsTable({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const f = q
-      ? rows.filter(
-          (r) =>
-            r.symbol.toLowerCase().includes(q) ||
-            (r.name ?? "").toLowerCase().includes(q),
-        )
-      : rows.slice();
+    const f = rows.filter(
+      (r) =>
+        (sourceFilter === "all" || r.source === sourceFilter) &&
+        (!q ||
+          r.symbol.toLowerCase().includes(q) ||
+          (r.name ?? "").toLowerCase().includes(q)),
+    );
     const val = (r: HoldingRow): string | number =>
       sortKey === "symbol"
         ? r.symbol
@@ -220,7 +280,7 @@ function HoldingsTable({
       return cmp * sortDir;
     });
     return f;
-  }, [rows, query, sortKey, sortDir]);
+  }, [rows, query, sortKey, sortDir, sourceFilter]);
 
   const pager = usePager(filtered, 10);
 
@@ -312,18 +372,37 @@ function HoldingsTable({
     {
       key: "symbol",
       header: sortHeader("Symbol", "symbol", "left"),
-      render: (r) => (
-        <>
-          <div className="font-semibold text-zinc-900 dark:text-zinc-100">{r.symbol}</div>
-          {sourceBadge(r)}
-          {r.name && (
-            <div className="max-w-[180px] truncate text-xs text-zinc-500">
-              {r.name}
-            </div>
-          )}
-          <FlairBadge flair={flair?.[r.symbol]} />
-        </>
-      ),
+      render: (r) => {
+        const overlap = overlapFor(r);
+        return (
+          <>
+            <div className="font-semibold text-zinc-900 dark:text-zinc-100">{r.symbol}</div>
+            {sourceBadge(r)}
+            {r.source === "manual" && r.marketValue == null && (
+              <div
+                className="mt-0.5 inline-block rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-400"
+                title="No live price — this row adds its full cost to Cost Basis but $0 to portfolio value"
+              >
+                No price
+              </div>
+            )}
+            {overlap != null && (
+              <div
+                className="mt-0.5 text-[10px] font-medium text-sky-400"
+                title={`Overlaps broker position ${overlap} — the broker copy is hidden by the manual-wins dedup`}
+              >
+                ⇄ {overlap}
+              </div>
+            )}
+            {r.name && (
+              <div className="max-w-[180px] truncate text-xs text-zinc-500">
+                {r.name}
+              </div>
+            )}
+            <FlairBadge flair={flair?.[r.symbol]} />
+          </>
+        );
+      },
     },
     {
       key: "qty",
@@ -397,13 +476,29 @@ function HoldingsTable({
       align: "right",
       render: (r) =>
         r.source === "manual" ? (
-          <button
-            onClick={() => deleteHolding(r)}
-            className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 hover:text-rose-400"
-            title={`Delete ${r.symbol}`}
-          >
-            <X size={14} />
-          </button>
+          <span className="inline-flex items-center gap-1">
+            <button
+              onClick={() =>
+                setInspectSymbol(inspectSymbol === r.symbol ? null : r.symbol)
+              }
+              className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 hover:text-zinc-200"
+              title={`Review ${r.symbol} trades`}
+              aria-label={`Review ${r.symbol} trades`}
+              aria-expanded={inspectSymbol === r.symbol}
+            >
+              <ChevronDown
+                size={14}
+                className={inspectSymbol === r.symbol ? "rotate-180" : ""}
+              />
+            </button>
+            <button
+              onClick={() => deleteHolding(r)}
+              className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 hover:text-rose-400"
+              title={`Delete ${r.symbol}`}
+            >
+              <X size={14} />
+            </button>
+          </span>
         ) : (
           <span
             className="text-xs text-zinc-600"
@@ -439,6 +534,28 @@ function HoldingsTable({
             className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 py-1.5 pl-8 pr-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-500"
           />
         </div>
+        <div
+          className="flex shrink-0 overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700"
+          role="group"
+          aria-label="Filter by source"
+        >
+          {(["all", "manual", "broker"] as const).map((sf) => (
+            <button
+              key={sf}
+              type="button"
+              onClick={() => {
+                setSourceFilter(sf);
+                pager.reset();
+              }}
+              aria-pressed={sourceFilter === sf}
+              className={"px-2.5 py-2 text-xs font-semibold uppercase " + (sourceFilter === sf
+                  ? "bg-zinc-600 text-white"
+                  : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800")}
+            >
+              {sf}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           onClick={() => setColsOpen((o) => !o)}
@@ -460,7 +577,123 @@ function HoldingsTable({
         </button>
       </div>
 
-      {/* Column picker: bottom sheet on mobile, centered dialog on desktop */}
+            {/* Manual-holdings review summary */}
+      {sourceFilter === "manual" && (
+        <div className="border-b border-zinc-200 dark:border-zinc-800 px-3 py-2 text-xs text-zinc-500">
+          <span className="font-semibold text-zinc-700 dark:text-zinc-300">
+            {manualStats.n} manual {manualStats.n === 1 ? "holding" : "holdings"}
+          </span>
+          {" · "}Cost{" "}
+          <span className="tabular-nums text-zinc-700 dark:text-zinc-300">
+            {money(manualStats.cost)}
+          </span>
+          {" · "}Value{" "}
+          <span className="tabular-nums text-zinc-700 dark:text-zinc-300">
+            {money(manualStats.value)}
+          </span>
+          {manualStats.noPrice > 0 && (
+            <span className="font-semibold text-amber-400">
+              {" · "}
+              {manualStats.noPrice} without price
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Trade inspector for the expanded manual row */}
+      {inspectSymbol && (
+        <div className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900/40 px-3 py-3">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              {inspectSymbol}{" "}
+              <span className="font-normal text-zinc-500">
+                {"·"} {inspectTxns.length} {inspectTxns.length === 1 ? "trade" : "trades"}
+                {txnsQuery.isLoading ? " (loading…)" : ""}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setInspectSymbol(null)}
+              aria-label="Close trade inspector"
+              className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          {inspectTxns.length === 0 && !txnsQuery.isLoading && (
+            <p className="text-xs text-zinc-500">
+              No trades found for this symbol.
+            </p>
+          )}
+          <div className="space-y-1">
+            {inspectTxns.map((t) => (
+              <div
+                key={t.id}
+                className="flex items-center gap-2 rounded-lg bg-zinc-200/60 dark:bg-zinc-800/60 px-2 py-1.5 text-xs"
+              >
+                <span
+                  className={"rounded px-1.5 py-0.5 text-[10px] font-bold " + (t.type === "BUY"
+                      ? "bg-emerald-900/60 text-emerald-400"
+                      : "bg-rose-900/60 text-rose-400")}
+                >
+                  {t.type}
+                </span>
+                <span className="whitespace-nowrap text-zinc-500">
+                  {new Date(t.executedAt).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </span>
+                <span className="tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {t.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })} @{" "}
+                  {money(t.price)}
+                </span>
+                {t.note ? (
+                  <span className="min-w-0 flex-1 truncate text-zinc-500">{t.note}</span>
+                ) : (
+                  <span className="flex-1" />
+                )}
+                {t.source !== "ibkr" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setEditingTxn(t)}
+                      title="Edit trade"
+                      aria-label={"Edit trade " + t.id}
+                      className="rounded p-1 text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700 hover:text-zinc-200"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm("Delete this transaction? The holding will be recomputed.")) {
+                          delTxn.mutate({ id: t.id });
+                        }
+                      }}
+                      title="Delete trade"
+                      aria-label={"Delete trade " + t.id}
+                      className="rounded p-1 text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700 hover:text-rose-400"
+                    >
+                      <X size={13} />
+                    </button>
+                  </>
+                ) : (
+                  <span
+                    className="rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] font-bold text-sky-400"
+                    title="Synced from IBKR — managed by the next sync"
+                  >
+                    IBKR
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+{/* Column picker: bottom sheet on mobile, centered dialog on desktop */}
       {colsOpen && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center sm:p-4"
@@ -532,6 +765,11 @@ function HoldingsTable({
                   {r.symbol}
                 </div>
                 {sourceBadge(r)}
+                {r.source === "manual" && r.marketValue == null && (
+                  <div className="mt-0.5 inline-block rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-400">
+                    No price
+                  </div>
+                )}
                 {r.name && (
                   <div className="truncate text-xs text-zinc-500">{r.name}</div>
                 )}
@@ -567,13 +805,27 @@ function HoldingsTable({
               </span>
               <span className="tabular-nums">now {money(r.price)}</span>
               {r.source === "manual" ? (
-                <button
-                  onClick={() => deleteHolding(r)}
-                  aria-label={`Delete ${r.symbol}`}
-                  className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-rose-400"
-                >
-                  <X size={15} />
-                </button>
+                <span className="inline-flex items-center">
+                  <button
+                    onClick={() =>
+                      setInspectSymbol(inspectSymbol === r.symbol ? null : r.symbol)
+                    }
+                    aria-label={`Review ${r.symbol} trades`}
+                    className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                  >
+                    <ChevronDown
+                      size={15}
+                      className={inspectSymbol === r.symbol ? "rotate-180" : ""}
+                    />
+                  </button>
+                  <button
+                    onClick={() => deleteHolding(r)}
+                    aria-label={`Delete ${r.symbol}`}
+                    className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-rose-400"
+                  >
+                    <X size={15} />
+                  </button>
+                </span>
               ) : (
                 <span title="Synced from IBKR — read-only">synced</span>
               )}
@@ -608,6 +860,190 @@ function HoldingsTable({
             />
           }
         />
+      </div>
+    {editingTxn && (
+      <EditTransactionModal
+        key={editingTxn.id}
+        txn={editingTxn}
+        onClose={() => setEditingTxn(null)}
+      />
+    )}
+    </div>
+  );
+}
+
+/**
+ * Edit one manual transaction in place — the holding is recomputed from
+ * the full log on save. IBKR-synced rows never reach this modal.
+ */
+function EditTransactionModal({
+  txn,
+  onClose,
+}: {
+  txn: TxnRow;
+  onClose: () => void;
+}) {
+  const utils = api.useUtils();
+  const [type, setType] = useState<"BUY" | "SELL">(
+    txn.type === "SELL" ? "SELL" : "BUY",
+  );
+  const [quantity, setQuantity] = useState(String(txn.quantity));
+  const [price, setPrice] = useState(String(txn.price));
+  const [fees, setFees] = useState(txn.fees ? String(txn.fees) : "");
+  const [executedAt, setExecutedAt] = useState(() =>
+    new Date(txn.executedAt).toISOString().slice(0, 16),
+  );
+  const [note, setNote] = useState(txn.note ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  const update = api.portfolio.updateTransaction.useMutation({
+    onSuccess: () => {
+      void utils.portfolio.summary.invalidate();
+      void utils.portfolio.transactions.invalidate();
+      void utils.portfolio.flair.invalidate();
+      onClose();
+    },
+    onError: (e) => setError(e.message),
+  });
+
+  const save = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    const qty = Number(quantity);
+    const prc = Number(price);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setError("Quantity must be above zero.");
+      return;
+    }
+    if (!Number.isFinite(prc) || prc <= 0) {
+      setError("Price must be above zero.");
+      return;
+    }
+    const dt = new Date(executedAt);
+    if (Number.isNaN(dt.getTime())) {
+      setError("Enter a valid date.");
+      return;
+    }
+    update.mutate({
+      id: txn.id,
+      type,
+      quantity: qty,
+      price: prc,
+      fees: fees ? Number(fees) : 0,
+      executedAt: dt,
+      note: note.trim(),
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center sm:p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={"Edit trade " + txn.symbol}
+    >
+      <div
+        className="w-full max-w-md rounded-t-2xl sm:rounded-2xl border border-zinc-700 bg-zinc-900 p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <div className="text-sm font-semibold text-zinc-100">
+            Edit trade · {txn.symbol}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800"
+          >
+            <X size={14} />
+          </button>
+        </div>
+        <form onSubmit={save} className="grid grid-cols-2 gap-3">
+          <div className="col-span-1">
+            <label className="mb-1 block text-xs text-zinc-500">Type</label>
+            <div className="flex overflow-hidden rounded-lg border border-zinc-700">
+              {(["BUY", "SELL"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setType(t)}
+                  className={"flex-1 py-2 text-sm font-semibold " + (type === t
+                    ? t === "BUY"
+                      ? "bg-emerald-600 text-white"
+                      : "bg-rose-600 text-white"
+                    : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700")}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="col-span-1">
+            <label className="mb-1 block text-xs text-zinc-500">Quantity</label>
+            <input
+              className={inputCls}
+              inputMode="decimal"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+            />
+          </div>
+          <div className="col-span-1">
+            <label className="mb-1 block text-xs text-zinc-500">Price / share</label>
+            <input
+              className={inputCls}
+              inputMode="decimal"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+            />
+          </div>
+          <div className="col-span-1">
+            <label className="mb-1 block text-xs text-zinc-500">Fees</label>
+            <input
+              className={inputCls}
+              inputMode="decimal"
+              value={fees}
+              onChange={(e) => setFees(e.target.value)}
+            />
+          </div>
+          <div className="col-span-1">
+            <label className="mb-1 block text-xs text-zinc-500">Date</label>
+            <input
+              type="datetime-local"
+              className={inputCls}
+              value={executedAt}
+              onChange={(e) => setExecutedAt(e.target.value)}
+            />
+          </div>
+          <div className="col-span-1">
+            <label className="mb-1 block text-xs text-zinc-500">Note</label>
+            <input
+              className={inputCls}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </div>
+          {error && (
+            <p className="col-span-2 text-xs text-rose-400">{error}</p>
+          )}
+          <div className="col-span-2 flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 rounded-lg border border-zinc-700 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={update.isPending}
+              className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {update.isPending ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -1305,7 +1741,7 @@ function DashboardInner() {
         costBasisPrice: p.costBasisPrice ?? null,
         label: p.label ?? null,
         // Empty/missing → undefined so the server falls back to inferCurrency.
-        currency: p.currency || undefined,
+        currency: p.currency ? p.currency : undefined,
       })),
     [brokerPositions, exchangePositions],
   );
@@ -1532,7 +1968,13 @@ function DashboardInner() {
           body = <SmartAlerts rows={data.rows} />;
           break;
         case "holdings":
-          body = <HoldingsTable rows={data.rows} flair={flair} />;
+          body = (
+            <HoldingsTable
+              rows={data.rows}
+              flair={flair}
+              brokerSymbols={brokerInput.map((b) => b.symbol)}
+            />
+          );
           break;
         case "insights":
           body = <AiInsights rows={data.rows} totals={t!} />;
