@@ -7,7 +7,7 @@ import {
   Check,
   ChevronDown,
   Copy,
-  KeyRound,
+  Globe,
   ListChecks,
   LogIn,
   Plus,
@@ -110,40 +110,47 @@ const COINBASE_STEPS: GuideStep[] = [
 const BINANCE_STEPS: GuideStep[] = [
   {
     icon: LogIn,
-    title: "Log in to Binance",
-    body: (
-      <>
-        Log in at <Code>binance.com</Code>, then click the profile icon →{" "}
-        <Code>Account</Code>.
-      </>
-    ),
-  },
-  {
-    icon: KeyRound,
     title: "Open API Management",
     body: (
       <>
-        Go to <Code>API Management</Code> and click <Code>Create API</Code>.
+        In the Binance app, tap your profile / account icon →{" "}
+        <Code>API Management</Code> → tap the yellow <Code>Create API</Code>{" "}
+        button.
       </>
     ),
+    warn: "Do NOT tap Create Tax Report API — that's tax-software-only, one per user, and the wrong key type.",
   },
   {
     icon: ListChecks,
     title: "Choose System generated",
     body: (
       <>
-        Select <Code>System generated</Code> (HMAC symmetric encryption).
+        On <Code>Choose API Key type</Code>, select{" "}
+        <Code>System generated</Code> (HMAC symmetric encryption).
       </>
     ),
     warn: "Do NOT choose Self-generated (Ed25519 / RSA) — Holdr only supports the system-generated HMAC key type.",
   },
   {
     icon: Tag,
-    title: "Label the key",
+    title: "Label it and verify",
     body: (
       <>
-        Enter a label like <Code>Holdr read-only</Code>, then complete 2FA
-        verification.
+        Enter a label like <Code>Holdr</Code>, tap <Code>Next</Code>, then
+        complete the 2FA / security verification. Binance may ask to opt all
+        keys into Default Security Controls — leaving that checked is fine; it
+        doesn&apos;t affect read-only use.
+      </>
+    ),
+  },
+  {
+    icon: ChevronDown,
+    title: "Expand the key card",
+    body: (
+      <>
+        On the new key card, tap the <Code>▼</Code> chevron at the bottom of
+        the card to expand it — the <Code>API restrictions</Code> section is
+        hidden inside and won&apos;t show until you expand.
       </>
     ),
   },
@@ -152,18 +159,40 @@ const BINANCE_STEPS: GuideStep[] = [
     title: "Enable Reading only",
     body: (
       <>
-        In the key&apos;s restrictions, check only{" "}
-        <Code>Enable Reading</Code>. Leave spot/margin trading and withdrawals
-        OFF.
+        Check only <Code>Enable Reading</Code>. Leave everything else OFF:{" "}
+        <Code>Spot &amp; Margin &amp; Stock Trading</Code>,{" "}
+        <Code>Margin Loan/Repay/Transfer</Code>, <Code>Futures</Code>,{" "}
+        <Code>Universal Transfer</Code>, <Code>Withdrawals</Code>,{" "}
+        <Code>Alpha Withdrawals</Code>, <Code>Prediction Trading</Code>,{" "}
+        <Code>Symbol Whitelist</Code>.
       </>
     ),
     warn: "Never enable trading or withdrawals — Holdr only reads balances.",
   },
   {
+    icon: Globe,
+    title: "Leave IP unrestricted",
+    body: (
+      <>
+        Under <Code>IP access restrictions</Code>, leave it{" "}
+        <Code>Unrestricted</Code>. Binance warns that an unrestricted IP plus
+        any non-reading permission gets the key deleted — that doesn&apos;t
+        apply to this reading-only key.
+      </>
+    ),
+    warn: "Do NOT enable “Restrict access to trusted IPs only” — Holdr syncs from Cloudflare Workers whose IPs change, so a whitelist would break syncing.",
+  },
+  {
     icon: Copy,
-    title: "Copy key + secret",
-    body: <>Copy the API key and secret into the fields below.</>,
-    warn: "The secret is shown only once — copy it now or you'll need a new key.",
+    title: "Copy key + secret into Holdr",
+    body: (
+      <>
+        <Code>Copy</Code> the API Key and Secret Key, paste both into
+        Holdr&apos;s Binance panel below, then hit{" "}
+        <Code>Connect &amp; sync</Code>.
+      </>
+    ),
+    warn: "They're never shown in full again — copy now or you'll need a new key.",
   },
 ];
 
