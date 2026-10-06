@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Sparkles } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
@@ -45,9 +45,13 @@ function toBullets(text: string): string[] {
     .map((l) => l.replace(/^[•\-*]\s*/, ""));
 }
 
+type Phase = "idle" | "waiting" | "streaming" | "error";
+
 /**
  * AI portfolio brief, powered by Cloudflare Workers AI.
- * Results are cached in localStorage for 24h per portfolio snapshot.
+ * Streams tokens live via /api/ai/insights-stream (SSE) so the response
+ * types out as it's generated; the completed text is cached in
+ * localStorage for 24h per portfolio snapshot.
  */
 export function AiInsights({
   rows,
@@ -102,28 +106,121 @@ export function AiInsights({
   const [cached, setCached] = useState<{ text: string; at: number } | null>(
     null,
   );
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [streamed, setStreamed] = useState("");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const startedKeyRef = useRef<string | null>(null);
 
+  const startStream = useCallback(async () => {
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setStreamed("");
+    setErrorMsg(null);
+    setPhase("waiting");
+    let full = "";
+    try {
+      const res = await fetch("/api/ai/insights-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        signal: ac.signal,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.body) throw new Error("no-stream");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let firstToken = true;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() ?? "";
+        for (const part of parts) {
+          for (const line of part.split("\n")) {
+            const t = line.trim();
+            if (!t.startsWith("data:")) continue;
+            const data = t.slice(5).trim();
+            if (data === "[DONE]") {
+              const text = full.trim();
+              if (!text) throw new Error("ai-error: empty stream");
+              const entry = { text, at: Date.now() };
+              try {
+                window.localStorage.setItem(
+                  `holdr.ai.${key}`,
+                  JSON.stringify(entry),
+                );
+              } catch {
+                /* ignore */
+              }
+              setCached(entry);
+              setPhase("idle");
+              return;
+            }
+            let payload: unknown = null;
+            try {
+              payload = JSON.parse(data);
+            } catch {
+              continue;
+            }
+            if (payload && typeof payload === "object" && "error" in payload) {
+              throw new Error(String((payload as { error: unknown }).error));
+            }
+            if (typeof payload === "string" && payload) {
+              full += payload;
+              if (firstToken) {
+                firstToken = false;
+                setPhase("streaming");
+              }
+              setStreamed(full);
+            }
+          }
+        }
+      }
+      // Stream ended without [DONE] — accept what we got if non-empty.
+      const text = full.trim();
+      if (text) {
+        const entry = { text, at: Date.now() };
+        try {
+          window.localStorage.setItem(`holdr.ai.${key}`, JSON.stringify(entry));
+        } catch {
+          /* ignore */
+        }
+        setCached(entry);
+        setPhase("idle");
+      } else {
+        throw new Error("ai-error: empty stream");
+      }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
+      setErrorMsg(e instanceof Error ? e.message : "AI_ERROR");
+      setPhase("error");
+    }
+  }, [input, key]);
+
+  // Reset on input change; load cache.
   useEffect(() => {
+    abortRef.current?.abort();
     setCached(loadCache(key));
+    setStreamed("");
+    setErrorMsg(null);
+    setPhase("idle");
+    startedKeyRef.current = null;
   }, [key]);
 
-  const q = api.portfolio.insights.useQuery(input, {
-    enabled: !cached && rows.length > 0,
-    staleTime: Infinity,
-    retry: 1,
-  });
-
+  // Auto-start when there's no cache and we have rows.
   useEffect(() => {
-    if (q.data && "text" in q.data && q.data.text) {
-      const entry = { text: q.data.text, at: Date.now() };
-      try {
-        window.localStorage.setItem(`holdr.ai.${key}`, JSON.stringify(entry));
-      } catch {
-        /* ignore */
-      }
-      setCached(entry);
-    }
-  }, [q.data, key]);
+    if (cached || rows.length === 0) return;
+    if (startedKeyRef.current === key) return;
+    startedKeyRef.current = key;
+    void startStream();
+  }, [cached, rows.length, key, startStream]);
+
+  // Abort on unmount.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const regenerate = useCallback(() => {
     try {
@@ -132,11 +229,13 @@ export function AiInsights({
       /* ignore */
     }
     setCached(null);
-    void q.refetch();
-  }, [key, q]);
+    startedKeyRef.current = key;
+    void startStream();
+  }, [key, startStream]);
 
   const text = cached?.text ?? null;
-  const unavailable = q.data && "unavailable" in q.data;
+  const isNoBinding = (errorMsg ?? "").includes("no binding");
+  const bullets = toBullets(streamed);
 
   return (
     <div className={`${card} border-violet-900/40`}>
@@ -182,7 +281,7 @@ export function AiInsights({
             </div>
           </div>
         </>
-      ) : q.isLoading ? (
+      ) : phase === "waiting" ? (
         <div className="space-y-2.5" aria-label="Generating insights">
           {[0, 1, 2, 3].map((i) => (
             <div
@@ -192,13 +291,44 @@ export function AiInsights({
             />
           ))}
           <p className="pt-1 text-xs text-zinc-500">
-            <span className="inline-flex items-center gap-1.5"><Sparkles size={13} className="text-violet-400" /> Reading your portfolio…</span>
+            <span className="inline-flex items-center gap-1.5">
+              <Sparkles size={13} className="animate-spin text-violet-400" />
+              Analyzing {input.positionCount} position
+              {input.positionCount === 1 ? "" : "s"}…
+            </span>
           </p>
         </div>
-      ) : unavailable || q.isError ? (
+      ) : phase === "streaming" ? (
+        <>
+          <ul className="space-y-2.5 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
+            {bullets.map((b, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="shrink-0 text-violet-400">✦</span>
+                <span>
+                  {b}
+                  {i === bullets.length - 1 && (
+                    <span className="animate-pulse text-violet-400"> ▍</span>
+                  )}
+                </span>
+              </li>
+            ))}
+            {bullets.length === 0 && (
+              <li className="flex gap-2">
+                <span className="animate-pulse text-violet-400">▍</span>
+              </li>
+            )}
+          </ul>
+          <p className="pt-2 text-xs text-zinc-500">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-400" />
+              Streaming…
+            </span>
+          </p>
+        </>
+      ) : phase === "error" ? (
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm text-zinc-500">
-            {unavailable
+            {isNoBinding
               ? "AI insights need the Cloudflare AI binding — live in production after the next deploy."
               : "Couldn't generate insights right now."}
           </p>

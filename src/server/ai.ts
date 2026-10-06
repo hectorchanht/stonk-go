@@ -146,3 +146,76 @@ export async function generateInsights(
     return { unavailable: true, reason: `ai-error: ${msg.slice(0, 160)}` };
   }
 }
+
+/**
+ * Streaming variant of generateInsights — yields raw text tokens as the
+ * model produces them (Workers AI `stream: true` returns an SSE stream of
+ * `data: {"response": "<token>"}` events).
+ * Throws when the AI binding is missing or the stream yields nothing.
+ */
+export async function* generateInsightsStream(
+  input: InsightInput,
+): AsyncGenerator<string, void, unknown> {
+  type AiBinding = {
+    run: (
+      model: string,
+      params: unknown,
+    ) => Promise<ReadableStream<Uint8Array>>;
+  };
+  let ai: AiBinding | null = null;
+  try {
+    const env = getCloudflareContext().env as { AI?: unknown };
+    if (env.AI && typeof (env.AI as AiBinding).run === "function") {
+      ai = env.AI as AiBinding;
+    }
+  } catch {
+    ai = null;
+  }
+  if (!ai) throw new Error("AI unavailable (no binding)");
+
+  const locale = normalizeLocale(input.locale);
+  const stream = await ai.run(MODEL, {
+    messages: [
+      { role: "system", content: SYSTEM_PROMPTS[locale] },
+      { role: "user", content: buildPrompt(input, locale) },
+    ],
+    max_tokens: 700,
+    stream: true,
+  });
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let yielded = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // Split on event boundaries; the trailing fragment stays buffered
+      // so a JSON payload split across TCP chunks reassembles correctly.
+      const parts = buf.split("\n\n");
+      buf = parts.pop() ?? "";
+      for (const part of parts) {
+        for (const line of part.split("\n")) {
+          const t = line.trim();
+          if (!t.startsWith("data:")) continue;
+          const data = t.slice(5).trim();
+          if (data === "[DONE]") return;
+          try {
+            const json = JSON.parse(data) as { response?: unknown };
+            if (typeof json.response === "string" && json.response) {
+              yielded = true;
+              yield json.response;
+            }
+          } catch {
+            // Not a complete JSON event — skip it.
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (!yielded) throw new Error("ai-error: empty stream");
+}
