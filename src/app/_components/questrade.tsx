@@ -3,14 +3,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Check,
   ChevronDown,
+  Copy,
+  KeyRound,
   Landmark,
+  LogIn,
+  Plus,
   RefreshCw,
   Settings,
 } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { useCurrency } from "~/app/_components/currency";
+import {
+  Code,
+  SetupGuide,
+  type GuideStep,
+} from "~/app/_components/setup-guide";
 import {
   DataTable,
   Pagination,
@@ -148,24 +158,59 @@ function loadSnapshot(): { at: string; data: SyncResult } | null {
   }
 }
 
-function SetupSteps() {
-  return (
-    <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-zinc-300">
-      <li>
-        Log in to Questrade → top-right menu → <b>API centre</b> → Activate the
-        API and register a <b>personal app</b>.
-      </li>
-      <li>
-        In your personal app click <b>New manual authorization</b> →{" "}
-        <b>Generate new token</b> → Copy token.
-      </li>
-      <li>
-        Paste it below. The first sync exchanges it for a rotating token
-        (stored only in this browser) — you never paste again.
-      </li>
-    </ol>
-  );
-}
+const QUESTRADE_STEPS: GuideStep[] = [
+  {
+    icon: LogIn,
+    title: "Log in to Questrade",
+    body: (
+      <>
+        Log in at <Code>questrade.com</Code>, then open the top-right name menu
+        and choose <Code>API centre</Code>.
+      </>
+    ),
+  },
+  {
+    icon: KeyRound,
+    title: "Activate the API",
+    body: (
+      <>
+        Click <Code>Activate API</Code> and accept the API access agreement.
+      </>
+    ),
+  },
+  {
+    icon: Plus,
+    title: "Register a personal app",
+    body: (
+      <>
+        Click <Code>Register a personal app</Code>, enter a name and a short
+        description, then <Code>Save</Code>.
+      </>
+    ),
+  },
+  {
+    icon: Copy,
+    title: "Generate a manual token",
+    body: (
+      <>
+        In your personal app click <Code>New manual authorization</Code> →{" "}
+        <Code>Generate new token</Code>, then <Code>Copy token</Code>.
+      </>
+    ),
+    warn: "The token is shown only once and expires 7 days after generation — paste it into Holdr right away.",
+  },
+  {
+    icon: Check,
+    title: "Paste it in Holdr",
+    body: (
+      <>
+        Paste the token below and hit <Code>Connect &amp; sync</Code>. Holdr
+        rotates it automatically — you never paste again.
+      </>
+    ),
+    warn: "Treat the token like a password — never share it with anyone.",
+  },
+];
 
 function ConnectForm({ onConnect }: { onConnect: (token: string) => void }) {
   const [token, setToken] = useState("");
@@ -181,7 +226,12 @@ function ConnectForm({ onConnect }: { onConnect: (token: string) => void }) {
         Connect your Questrade account via their official API — read-only,
         positions stay grouped by currency.
       </p>
-      <SetupSteps />
+      <SetupGuide
+        id="questrade"
+        steps={QUESTRADE_STEPS}
+        guideUrl="https://www.questrade.com/api/documentation/getting-started"
+        guideLabel="Questrade API docs"
+      />
       <div className="mt-4 space-y-3">
         <label className="block">
           <span className="text-xs uppercase tracking-wide text-zinc-500">

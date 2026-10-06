@@ -6,13 +6,25 @@ import {
   Bitcoin,
   Check,
   ChevronDown,
+  Copy,
+  KeyRound,
+  ListChecks,
+  LogIn,
+  Plus,
   RefreshCw,
   Save,
   Settings,
+  ShieldCheck,
+  Tag,
 } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { useCurrency } from "~/app/_components/currency";
+import {
+  Code,
+  SetupGuide,
+  type GuideStep,
+} from "~/app/_components/setup-guide";
 
 type ExchangeName = "coinbase" | "binance";
 type SyncResult = RouterOutputs["exchanges"]["sync"];
@@ -47,39 +59,113 @@ const EXCHANGE_META: Record<
 
 const AUTO_SYNC_AFTER_MS = 1 * 3600 * 1000;
 
-function SetupSteps({ exchange }: { exchange: ExchangeName }) {
-  if (exchange === "coinbase") {
-    return (
-      <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-zinc-300">
-        <li>
-          On <b>coinbase.com</b> open your profile menu → <b>API</b> (or
-          Settings → API) and create an API key.
-        </li>
-        <li>
-          Enable <b>view/read permissions only</b> — leave trading and
-          transfers OFF.
-        </li>
-        <li>
-          Copy the API key + secret (the secret is shown once) and paste them
-          below.
-        </li>
-      </ol>
-    );
-  }
-  return (
-    <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-zinc-300">
-      <li>
-        On <b>binance.com</b> go to Profile → <b>API Management</b> and create
-        an API key.
-      </li>
-      <li>
-        Check <b>only &ldquo;Enable Reading&rdquo;</b> — leave spot/margin
-        trading and withdrawals OFF. An IP whitelist is recommended.
-      </li>
-      <li>Paste the API key + secret below.</li>
-    </ol>
-  );
-}
+const COINBASE_STEPS: GuideStep[] = [
+  {
+    icon: LogIn,
+    title: "Log in to Coinbase",
+    body: (
+      <>
+        Log in at <Code>coinbase.com</Code>.
+      </>
+    ),
+  },
+  {
+    icon: Settings,
+    title: "Open API settings",
+    body: (
+      <>
+        Click your profile icon → <Code>Settings</Code> → the <Code>API</Code>{" "}
+        tab.
+      </>
+    ),
+  },
+  {
+    icon: Plus,
+    title: "Create an API key",
+    body: (
+      <>
+        Click <Code>Create API Key</Code> and complete 2-step verification.
+      </>
+    ),
+  },
+  {
+    icon: ShieldCheck,
+    title: "Read-only permissions",
+    body: (
+      <>
+        Keep only the <Code>View</Code> (read-only) permission. Leave{" "}
+        <Code>Trade</Code>, <Code>Transfer</Code> and <Code>Manage</Code> OFF.
+      </>
+    ),
+    warn: "Never enable trading or transfers — Holdr only reads balances and has no trading code at all.",
+  },
+  {
+    icon: Copy,
+    title: "Copy key + secret",
+    body: <>Copy the API key and secret into the fields below.</>,
+    warn: "The secret is shown only once — copy it now or you'll need a new key.",
+  },
+];
+
+const BINANCE_STEPS: GuideStep[] = [
+  {
+    icon: LogIn,
+    title: "Log in to Binance",
+    body: (
+      <>
+        Log in at <Code>binance.com</Code>, then click the profile icon →{" "}
+        <Code>Account</Code>.
+      </>
+    ),
+  },
+  {
+    icon: KeyRound,
+    title: "Open API Management",
+    body: (
+      <>
+        Go to <Code>API Management</Code> and click <Code>Create API</Code>.
+      </>
+    ),
+  },
+  {
+    icon: ListChecks,
+    title: "Choose System generated",
+    body: (
+      <>
+        Select <Code>System generated</Code> (HMAC symmetric encryption).
+      </>
+    ),
+    warn: "Do NOT choose Self-generated (Ed25519 / RSA) — Holdr only supports the system-generated HMAC key type.",
+  },
+  {
+    icon: Tag,
+    title: "Label the key",
+    body: (
+      <>
+        Enter a label like <Code>Holdr read-only</Code>, then complete 2FA
+        verification.
+      </>
+    ),
+  },
+  {
+    icon: ShieldCheck,
+    title: "Enable Reading only",
+    body: (
+      <>
+        In the key&apos;s restrictions, check only{" "}
+        <Code>Enable Reading</Code>. Leave spot/margin trading and withdrawals
+        OFF.
+      </>
+    ),
+    warn: "Never enable trading or withdrawals — Holdr only reads balances.",
+  },
+  {
+    icon: Copy,
+    title: "Copy key + secret",
+    body: <>Copy the API key and secret into the fields below.</>,
+    warn: "The secret is shown only once — copy it now or you'll need a new key.",
+  },
+];
 
 /** Gear menu for the connected card (mirrors the IBKR card). */
 function GearMenu({
@@ -382,7 +468,20 @@ function ExchangeCard({
           <p className="mt-1 text-sm text-zinc-400">
             Connect your {meta.title} account to pull balances (read-only).
           </p>
-          <SetupSteps exchange={exchange} />
+          <SetupGuide
+            id={exchange}
+            steps={exchange === "coinbase" ? COINBASE_STEPS : BINANCE_STEPS}
+            guideUrl={
+              exchange === "coinbase"
+                ? "https://help.coinbase.com/en/exchange/managing-my-account/how-to-create-an-api-key"
+                : "https://www.binance.com/en-AU/support/faq/detail/360002502072"
+            }
+            guideLabel={
+              exchange === "coinbase"
+                ? "Coinbase help: creating an API key"
+                : "Binance FAQ: creating API keys"
+            }
+          />
           <div className="mt-4 space-y-3">
             <label className="block">
               <span className="text-xs uppercase tracking-wide text-zinc-500">API key</span>

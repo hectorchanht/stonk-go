@@ -9,7 +9,10 @@ import {
   ChevronDown,
   Copy,
   Download,
+  FileText,
+  KeyRound,
   Landmark,
+  LogIn,
   RefreshCw,
   Save,
   Settings,
@@ -18,6 +21,11 @@ import {
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { useCurrency } from "~/app/_components/currency";
+import {
+  Code,
+  SetupGuide,
+  type GuideStep,
+} from "~/app/_components/setup-guide";
 import {
   DataTable,
   Pagination,
@@ -611,23 +619,51 @@ async function parseExportedCreds(file: File): Promise<Creds> {
   return { token, queryId };
 }
 
-function SetupSteps() {
-  return (
-    <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-zinc-300">
-      <li>
-        In Client Portal go to <b>Performance &amp; Reports → Flex Queries</b>,
-        create an <b>Activity</b> query with the <b>Open Positions</b>,{" "}
-        <b>Trades</b> and <b>Cash Transactions</b> sections, and note its Query
-        ID.
-      </li>
-      <li>
-        Go to <b>Settings → Reporting → Flex Web Service</b> and generate a
-        token.
-      </li>
-      <li>Paste both below — they stay in your browser, never on our server.</li>
-    </ol>
-  );
-}
+const IBKR_STEPS: GuideStep[] = [
+  {
+    icon: LogIn,
+    title: "Log in to Client Portal",
+    body: (
+      <>
+        Log in to the IBKR <Code>Client Portal</Code>.
+      </>
+    ),
+  },
+  {
+    icon: FileText,
+    title: "Create an Activity Flex Query",
+    body: (
+      <>
+        Go to <Code>Performance &amp; Reports</Code> → <Code>Flex Queries</Code>,
+        create an <Code>Activity</Code> query with the{" "}
+        <Code>Open Positions</Code>, <Code>Trades</Code> and{" "}
+        <Code>Cash Transactions</Code> sections — then note its Query ID.
+      </>
+    ),
+  },
+  {
+    icon: KeyRound,
+    title: "Generate a Flex token",
+    body: (
+      <>
+        Click the user menu (top right) → <Code>Settings</Code> →{" "}
+        <Code>Account Reporting</Code> → <Code>Flex Web Service</Code>, then{" "}
+        <Code>Generate A New Token</Code>.
+      </>
+    ),
+    warn: "The token is shown once — copy it now. Flex reports are read-only; they can never trade.",
+  },
+  {
+    icon: Check,
+    title: "Paste both in Holdr",
+    body: (
+      <>
+        Paste the token and Query ID below and hit <Code>Connect &amp; sync</Code>.
+        Flex data is end-of-day.
+      </>
+    ),
+  },
+];
 
 /** Fits IBKR's 200-char "Configure Query with AI" prompt box. */
 const IBKR_AI_PROMPT =
@@ -703,7 +739,12 @@ function ConnectForm({ onConnect }: { onConnect: (c: Creds) => void }) {
         Connect your IBKR account to pull real positions and trade analysis
         (read-only — Flex can&apos;t trade).
       </p>
-      <SetupSteps />
+      <SetupGuide
+        id="ibkr"
+        steps={IBKR_STEPS}
+        guideUrl="https://www.ibkrguides.com/brokerportal/flexwebservice.htm"
+        guideLabel="IBKR guide: Flex Web Service"
+      />
       <CopyAiPrompt />
       <div className="mt-4 space-y-3">
         <label className="block">
