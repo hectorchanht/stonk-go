@@ -278,7 +278,7 @@ export const portfolioRouter = createTRPCRouter({
               weightPct: z.number(),
             }),
           )
-          .max(60),
+          .max(200),
         totals: z.object({
           marketValue: z.number(),
           dayPL: z.number().nullable(),
@@ -300,7 +300,12 @@ export const portfolioRouter = createTRPCRouter({
       }),
     )
     .query(async ({ input }) => {
-      const result = await generateInsights(input);
+      // Defense in depth: the client sends the top 30, but never let a
+      // huge position list blow up the prompt — keep the top 30 by value.
+      const positions = [...input.positions]
+        .sort((a, b) => b.marketValue - a.marketValue)
+        .slice(0, 30);
+      const result = await generateInsights({ ...input, positions });
       return { ...result, generatedAt: new Date().toISOString() };
     }),
 
