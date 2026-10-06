@@ -53,7 +53,7 @@ function getEmailFrom(): string {
   from ??= process.env.EMAIL_FROM;
   return typeof from === "string" && from.length > 0
     ? from
-    : "Holdr <login@hectorchan.com>";
+    : "Holdr <login@holdr.lol>";
 }
 
 const esc = (s: string) =>
