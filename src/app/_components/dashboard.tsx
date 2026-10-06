@@ -22,6 +22,7 @@ import {
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { BrokerCard } from "~/app/_components/broker";
+import { ExchangeCards, type ExchangePositionLike } from "~/app/_components/exchanges";
 import {
   PerformanceSection,
   useSnapshotRecorder,
@@ -72,6 +73,8 @@ interface BrokerPositionInput {
   quantity: number;
   markPrice: number | null;
   costBasisPrice?: number | null;
+  /** Source label shown on the Holdings badge ("IBKR", "COINBASE", ...). */
+  label?: string | null;
 }
 
 /** Format a USD amount in the user's selected display currency. */
@@ -269,7 +272,7 @@ function HoldingsTable({
           <div className="font-semibold text-zinc-900 dark:text-zinc-100">{r.symbol}</div>
           {r.source === "broker" && (
             <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-400">
-              IBKR
+              {r.brokerLabel ?? "IBKR"}
             </div>
           )}
           {r.name && (
@@ -966,15 +969,18 @@ function DashboardInner() {
   const [txnOpen, setTxnOpen] = useState(false);
   // IBKR snapshot reported up by the BrokerCard (lives in this browser only).
   const [brokerPositions, setBrokerPositions] = useState<BrokerPositionInput[]>([]);
+  // Exchange balances reported up by the ExchangeCards.
+  const [exchangePositions, setExchangePositions] = useState<ExchangePositionLike[]>([]);
   const brokerInput = useMemo(
     () =>
-      brokerPositions.map((p) => ({
+      [...brokerPositions, ...exchangePositions].map((p) => ({
         symbol: p.symbol,
         quantity: p.quantity,
         markPrice: p.markPrice,
         costBasisPrice: p.costBasisPrice ?? null,
+        label: p.label ?? null,
       })),
-    [brokerPositions],
+    [brokerPositions, exchangePositions],
   );
 
   const { data, isLoading, isError, refetch, isFetching } =
@@ -1006,7 +1012,7 @@ function DashboardInner() {
   const t = data?.totals;
   const missingBasisNote =
     t && t.brokerMissingBasis > 0
-      ? ` · excl. ${t.brokerMissingBasis} IBKR w/o cost basis`
+      ? ` · excl. ${t.brokerMissingBasis} broker position${t.brokerMissingBasis === 1 ? "" : "s"} w/o cost basis`
       : "";
   const dayTone: "pos" | "neg" | "neutral" =
     t?.dayPL == null ? "neutral" : t.dayPL > 0 ? "pos" : t.dayPL < 0 ? "neg" : "neutral";
@@ -1160,6 +1166,16 @@ function DashboardInner() {
             info="Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour. Synced trades merge into your transaction log (marked IBKR) so holdings and cost basis stay in one place — your manual entries are never touched. Stock splits are auto-adjusted against IBKR's positions. IBKR publishes end-of-day reports, so today's trades appear after the next report; there is no live push."
           >
             <BrokerCard onPositions={setBrokerPositions} />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="exchanges"
+            title="Crypto exchanges"
+            info="Read-only balances from Coinbase and Binance. Keys are encrypted on the server and only ever used to read balances — use read-only API keys. Values are in USD at each asset's spot price at sync time."
+          >
+            <div className="space-y-4">
+              <ExchangeCards onPositions={setExchangePositions} />
+            </div>
           </CollapsibleSection>
 
           <CollapsibleSection

@@ -46,6 +46,8 @@ const brokerPositionInput = z.object({
   quantity: z.number(),
   markPrice: z.number().nullable(),
   costBasisPrice: z.number().nullable().optional(),
+  /** Source label for the Holdings badge ("IBKR", "COINBASE", "BINANCE"). */
+  label: z.string().max(16).nullable().optional(),
   currency: z.string().max(8).optional(),
 });
 
@@ -72,6 +74,8 @@ export interface HoldingRow {
   totalPLPct: number | null;
   weightPct: number | null;
   source: "manual" | "broker";
+  /** Source label for broker rows ("IBKR", "COINBASE", "BINANCE"); null for manual. */
+  brokerLabel: string | null;
 }
 
 export interface Summary {
@@ -144,6 +148,7 @@ async function buildSummary(
           : null,
       weightPct: null, // filled below once portfolio value is known
       source: "manual" as const,
+      brokerLabel: null,
     };
   });
 
@@ -183,6 +188,7 @@ async function buildSummary(
         totalPL != null && costBasis ? (totalPL / costBasis) * 100 : null,
       weightPct: null,
       source: "broker" as const,
+      brokerLabel: b.label ?? null,
     });
   }
 

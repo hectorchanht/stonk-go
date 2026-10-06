@@ -93,6 +93,49 @@ export interface BrokerCredentialRow {
   updatedAt: Date;
 }
 
+export interface ExchangeCredentialRow {
+  id: string;
+  userId: string;
+  exchange: string;
+  label: string | null;
+  encKey: string;
+  encSecret: string;
+  iv: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ExchangeBalanceRow {
+  id: string;
+  userId: string;
+  exchange: string;
+  asset: string;
+  /** Native quantity, exact decimal string — never a float. */
+  quantity: string;
+  priceUsd: string | null;
+  priceSource: string | null;
+  priceAt: string | null;
+  /** Integer USD cents as text; null when unpriced. */
+  valueCents: string | null;
+  currency: string;
+  syncedAt: Date;
+}
+
+export interface ExchangeSyncRow {
+  id: string;
+  userId: string;
+  exchange: string;
+  syncedAt: Date;
+  assetCount: number;
+  pricedCount: number;
+  /** Integer USD cents as text. */
+  totalCents: string;
+  /** Integer cents as text (signed). */
+  driftCents: string;
+  ok: boolean;
+  note: string | null;
+}
+
 export interface PortfolioSnapshotRow {
   id: string;
   date: string; // YYYY-MM-DD (local)
@@ -203,6 +246,69 @@ export interface AppDb {
       };
     }): Promise<BrokerCredentialRow>;
     delete(args: { where: { userId: string } }): Promise<BrokerCredentialRow>;
+  };
+  exchangeCredential: {
+    findFirst(args: {
+      where: { userId: string; exchange: string };
+    }): Promise<ExchangeCredentialRow | null>;
+    findMany(args: {
+      where: { userId: string };
+    }): Promise<ExchangeCredentialRow[]>;
+    upsert(args: {
+      where: { userId_exchange: { userId: string; exchange: string } };
+      update: { encKey: string; encSecret: string; iv: string; label?: string | null };
+      create: {
+        userId: string;
+        exchange: string;
+        encKey: string;
+        encSecret: string;
+        iv: string;
+        label?: string | null;
+      };
+    }): Promise<ExchangeCredentialRow>;
+    delete(args: {
+      where: { userId_exchange: { userId: string; exchange: string } };
+    }): Promise<ExchangeCredentialRow>;
+  };
+  exchangeBalance: {
+    findMany(args: {
+      where: { userId: string; exchange: string };
+      orderBy?: Array<{ asset?: SortDir }>;
+    }): Promise<ExchangeBalanceRow[]>;
+    deleteMany(args: {
+      where: { userId: string; exchange: string };
+    }): Promise<{ count: number }>;
+    createMany(args: {
+      data: Array<{
+        userId: string;
+        exchange: string;
+        asset: string;
+        quantity: string;
+        priceUsd?: string | null;
+        priceSource?: string | null;
+        priceAt?: string | null;
+        valueCents?: string | null;
+        currency?: string;
+      }>;
+    }): Promise<{ count: number }>;
+  };
+  exchangeSync: {
+    findFirst(args: {
+      where: { userId: string; exchange: string };
+      orderBy: { syncedAt: SortDir };
+    }): Promise<ExchangeSyncRow | null>;
+    create(args: {
+      data: {
+        userId: string;
+        exchange: string;
+        assetCount: number;
+        pricedCount: number;
+        totalCents: string;
+        driftCents: string;
+        ok: boolean;
+        note?: string | null;
+      };
+    }): Promise<ExchangeSyncRow>;
   };
   holding: {
     findMany(args: { orderBy: { symbol: SortDir } }): Promise<HoldingRow[]>;
@@ -365,6 +471,51 @@ function mapBrokerCredential(r: RawRow): BrokerCredentialRow {
     iv: r.iv as string,
     createdAt: toDate(r.createdAt),
     updatedAt: toDate(r.updatedAt),
+  };
+}
+
+function mapExchangeCredential(r: RawRow): ExchangeCredentialRow {
+  return {
+    id: r.id as string,
+    userId: r.userId as string,
+    exchange: r.exchange as string,
+    label: (r.label as string | null) ?? null,
+    encKey: r.encKey as string,
+    encSecret: r.encSecret as string,
+    iv: r.iv as string,
+    createdAt: toDate(r.createdAt),
+    updatedAt: toDate(r.updatedAt),
+  };
+}
+
+function mapExchangeBalance(r: RawRow): ExchangeBalanceRow {
+  return {
+    id: r.id as string,
+    userId: r.userId as string,
+    exchange: r.exchange as string,
+    asset: r.asset as string,
+    quantity: r.quantity as string,
+    priceUsd: (r.priceUsd as string | null) ?? null,
+    priceSource: (r.priceSource as string | null) ?? null,
+    priceAt: (r.priceAt as string | null) ?? null,
+    valueCents: (r.valueCents as string | null) ?? null,
+    currency: (r.currency as string) ?? "USD",
+    syncedAt: toDate(r.syncedAt),
+  };
+}
+
+function mapExchangeSync(r: RawRow): ExchangeSyncRow {
+  return {
+    id: r.id as string,
+    userId: r.userId as string,
+    exchange: r.exchange as string,
+    syncedAt: toDate(r.syncedAt),
+    assetCount: r.assetCount as number,
+    pricedCount: r.pricedCount as number,
+    totalCents: String(r.totalCents),
+    driftCents: String(r.driftCents),
+    ok: (r.ok as number | boolean) === true || (r.ok as number) === 1,
+    note: (r.note as string | null) ?? null,
   };
 }
 
@@ -645,6 +796,168 @@ export function createD1Db(d1: D1Database): AppDb {
         .bind(args.where.userId)
         .run();
       return mapBrokerCredential(row as unknown as RawRow);
+    },
+  };
+
+  const exchangeCredential: AppDb["exchangeCredential"] = {
+    findFirst: async (args) => {
+      const row = await d1
+        .prepare(`SELECT * FROM "ExchangeCredential" WHERE "userId" = ? AND "exchange" = ?`)
+        .bind(args.where.userId, args.where.exchange)
+        .first();
+      return row ? mapExchangeCredential(row as unknown as RawRow) : null;
+    },
+
+    findMany: async (args) => {
+      const { results } = await d1
+        .prepare(`SELECT * FROM "ExchangeCredential" WHERE "userId" = ? ORDER BY "exchange" ASC`)
+        .bind(args.where.userId)
+        .all();
+      return (results as unknown as RawRow[]).map(mapExchangeCredential);
+    },
+
+    upsert: async (args) => {
+      const now = new Date().toISOString();
+      const { userId, exchange } = args.where.userId_exchange;
+      await d1
+        .prepare(
+          `INSERT INTO "ExchangeCredential"
+             ("id", "userId", "exchange", "label", "encKey", "encSecret", "iv", "createdAt", "updatedAt")
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT("userId", "exchange") DO UPDATE SET
+             "label" = excluded."label",
+             "encKey" = excluded."encKey",
+             "encSecret" = excluded."encSecret",
+             "iv" = excluded."iv",
+             "updatedAt" = excluded."updatedAt"`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          userId,
+          exchange,
+          args.create.label ?? null,
+          args.create.encKey,
+          args.create.encSecret,
+          args.create.iv,
+          now,
+          now,
+        )
+        .run();
+      const row = await d1
+        .prepare(`SELECT * FROM "ExchangeCredential" WHERE "userId" = ? AND "exchange" = ?`)
+        .bind(userId, exchange)
+        .first();
+      if (!row) throw new Error(`upsert failed for exchange credential`);
+      return mapExchangeCredential(row as unknown as RawRow);
+    },
+
+    delete: async (args) => {
+      const { userId, exchange } = args.where.userId_exchange;
+      const row = await d1
+        .prepare(`SELECT * FROM "ExchangeCredential" WHERE "userId" = ? AND "exchange" = ?`)
+        .bind(userId, exchange)
+        .first();
+      if (!row) throw new Error(`Exchange credential not found`);
+      await d1
+        .prepare(`DELETE FROM "ExchangeCredential" WHERE "userId" = ? AND "exchange" = ?`)
+        .bind(userId, exchange)
+        .run();
+      return mapExchangeCredential(row as unknown as RawRow);
+    },
+  };
+
+  const exchangeBalance: AppDb["exchangeBalance"] = {
+    findMany: async (args) => {
+      const { results } = await d1
+        .prepare(
+          `SELECT * FROM "ExchangeBalance" WHERE "userId" = ? AND "exchange" = ? ORDER BY "asset" ASC`,
+        )
+        .bind(args.where.userId, args.where.exchange)
+        .all();
+      return (results as unknown as RawRow[]).map(mapExchangeBalance);
+    },
+
+    deleteMany: async (args) => {
+      const r = await d1
+        .prepare(`DELETE FROM "ExchangeBalance" WHERE "userId" = ? AND "exchange" = ?`)
+        .bind(args.where.userId, args.where.exchange)
+        .run();
+      return { count: r.meta.changes ?? 0 };
+    },
+
+    createMany: async (args) => {
+      const now = new Date().toISOString();
+      let count = 0;
+      for (const b of args.data) {
+        await d1
+          .prepare(
+            `INSERT INTO "ExchangeBalance"
+               ("id", "userId", "exchange", "asset", "quantity", "priceUsd",
+                "priceSource", "priceAt", "valueCents", "currency", "syncedAt")
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            b.userId,
+            b.exchange,
+            b.asset,
+            b.quantity,
+            b.priceUsd ?? null,
+            b.priceSource ?? null,
+            b.priceAt ?? null,
+            b.valueCents ?? null,
+            b.currency ?? "USD",
+            now,
+          )
+          .run();
+        count++;
+      }
+      return { count };
+    },
+  };
+
+  const exchangeSync: AppDb["exchangeSync"] = {
+    findFirst: async (args) => {
+      const dir = args.orderBy.syncedAt === "desc" ? "DESC" : "ASC";
+      const row = await d1
+        .prepare(
+          `SELECT * FROM "ExchangeSync" WHERE "userId" = ? AND "exchange" = ? ORDER BY "syncedAt" ${dir} LIMIT 1`,
+        )
+        .bind(args.where.userId, args.where.exchange)
+        .first();
+      return row ? mapExchangeSync(row as unknown as RawRow) : null;
+    },
+
+    create: async (args) => {
+      const d = args.data;
+      const now = new Date().toISOString();
+      const id = crypto.randomUUID();
+      await d1
+        .prepare(
+          `INSERT INTO "ExchangeSync"
+             ("id", "userId", "exchange", "syncedAt", "assetCount", "pricedCount",
+              "totalCents", "driftCents", "ok", "note")
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          id,
+          d.userId,
+          d.exchange,
+          now,
+          d.assetCount,
+          d.pricedCount,
+          d.totalCents,
+          d.driftCents,
+          d.ok ? 1 : 0,
+          d.note ?? null,
+        )
+        .run();
+      const row = await d1
+        .prepare(`SELECT * FROM "ExchangeSync" WHERE "id" = ?`)
+        .bind(id)
+        .first();
+      if (!row) throw new Error(`create failed for exchange sync`);
+      return mapExchangeSync(row as unknown as RawRow);
     },
   };
 
@@ -1008,5 +1321,18 @@ export function createD1Db(d1: D1Database): AppDb {
     },
   };
 
-  return { brokerTrade, brokerCashFlow, brokerPosition, brokerCredential, holding, transaction, portfolioSnapshot, priceAlert, pushSubscription };
+  return {
+    brokerTrade,
+    brokerCashFlow,
+    brokerPosition,
+    brokerCredential,
+    holding,
+    transaction,
+    portfolioSnapshot,
+    priceAlert,
+    pushSubscription,
+    exchangeCredential,
+    exchangeBalance,
+    exchangeSync,
+  };
 }

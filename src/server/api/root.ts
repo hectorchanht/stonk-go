@@ -1,5 +1,6 @@
 import { authRouter } from "~/server/api/routers/auth";
 import { ibkrRouter } from "~/server/api/routers/ibkr";
+import { exchangesRouter } from "~/server/api/routers/exchanges";
 import { portfolioRouter } from "~/server/api/routers/portfolio";
 import { aiRouter } from "~/server/api/routers/ai";
 import { alertsRouter } from "~/server/api/routers/alerts";
@@ -13,6 +14,7 @@ import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
  */
 export const appRouter = createTRPCRouter({
   auth: authRouter,
+  exchanges: exchangesRouter,
   ibkr: ibkrRouter,
   portfolio: portfolioRouter,
   ai: aiRouter,
