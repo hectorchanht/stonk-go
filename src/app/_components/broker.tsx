@@ -287,6 +287,51 @@ function SetupSteps() {
   );
 }
 
+/** Fits IBKR's 200-char "Configure Query with AI" prompt box. */
+const IBKR_AI_PROMPT =
+  "New Activity Flex Query 'stonk-go': Open Positions (add Cost Basis Price), Trades, Cash Transactions - all columns. Format XML, delivery Flex Web Service, widest date range. Tell me the Query ID.";
+
+function CopyAiPrompt() {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(IBKR_AI_PROMPT);
+    } catch {
+      // Clipboard API unavailable (older browser / non-secure context).
+      const ta = document.createElement("textarea");
+      ta.value = IBKR_AI_PROMPT;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        /* ignore */
+      }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
+      <p className="text-xs text-zinc-400">
+        Shortcut — paste this into IBKR&apos;s{" "}
+        <b className="text-zinc-300">Configure Query with AI</b>:
+      </p>
+      <p className="mt-1.5 text-xs leading-relaxed text-zinc-300">
+        {IBKR_AI_PROMPT}
+      </p>
+      <button
+        type="button"
+        onClick={copy}
+        className="mt-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
+      >
+        {copied ? "✓ Copied" : "⧉ Copy prompt"}
+      </button>
+    </div>
+  );
+}
+
 function ConnectForm({ onConnect }: { onConnect: (c: Creds) => void }) {
   const [token, setToken] = useState("");
   const [queryId, setQueryId] = useState("");
@@ -299,6 +344,7 @@ function ConnectForm({ onConnect }: { onConnect: (c: Creds) => void }) {
         (read-only — Flex can&apos;t trade).
       </p>
       <SetupSteps />
+      <CopyAiPrompt />
       <div className="mt-4 space-y-3">
         <label className="block">
           <span className="text-xs uppercase tracking-wide text-zinc-500">Flex Web Service token</span>
