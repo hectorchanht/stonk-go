@@ -27,8 +27,36 @@ export interface FlexPosition {
   markPrice: number | null;
 }
 
+export interface FlexTrade {
+  accountId: string;
+  symbol: string;
+  description: string | null;
+  assetCategory: string;
+  currency: string;
+  tradeDate: string; // YYYYMMDD as IBKR reports it
+  quantity: number;
+  tradePrice: number | null;
+  proceeds: number | null;
+  commission: number | null;
+  realizedPnl: number | null;
+  openClose: string | null; // "O" | "C" | ...
+  transactionType: string | null;
+}
+
+export interface FlexCashFlow {
+  accountId: string;
+  symbol: string | null;
+  description: string | null;
+  currency: string;
+  dateTime: string;
+  amount: number;
+  type: string; // "Dividends" | "Withholding Tax" | "Deposits" | ...
+}
+
 export interface FlexResult {
   positions: FlexPosition[];
+  trades: FlexTrade[];
+  cashFlows: FlexCashFlow[];
   /** When IBKR generated the statement, if the XML says. */
   generatedAt: string | null;
 }
@@ -70,19 +98,20 @@ function num(v: string | undefined): number | null {
 }
 
 /**
- * Parse a Flex statement XML string into open positions.
- * Pure function — unit-testable without network.
+ * Parse a Flex statement XML string into positions, trades and cash flows.
+ * Pure function — unit-testable without network. Sections the Flex Query
+ * doesn't include simply come back empty.
  */
 export function parseFlexPositions(xml: string): FlexResult {
   const genMatch = /<FlexStatement[^>]*whenGenerated="([^"]*)"/.exec(xml);
   const generatedAt = genMatch?.[1] ?? null;
 
-  const section = /<OpenPositions>([\s\S]*?)<\/OpenPositions>/.exec(xml);
   const positions: FlexPosition[] = [];
-  if (section?.[1]) {
+  const posSection = /<OpenPositions>([\s\S]*?)<\/OpenPositions>/.exec(xml);
+  if (posSection?.[1]) {
     const re = /<OpenPosition\b([^>]*?)\/>/g;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(section[1])) !== null) {
+    while ((m = re.exec(posSection[1])) !== null) {
       const a = attrs(m[1]!);
       const quantity = num(a.position);
       if (!a.symbol || quantity == null) continue;
@@ -97,7 +126,56 @@ export function parseFlexPositions(xml: string): FlexResult {
       });
     }
   }
-  return { positions, generatedAt };
+
+  const trades: FlexTrade[] = [];
+  const tradeSection = /<Trades>([\s\S]*?)<\/Trades>/.exec(xml);
+  if (tradeSection?.[1]) {
+    const re = /<Trade\b([^>]*?)\/>/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(tradeSection[1])) !== null) {
+      const a = attrs(m[1]!);
+      const quantity = num(a.quantity);
+      if (!a.symbol || quantity == null) continue;
+      trades.push({
+        accountId: a.accountId ?? "",
+        symbol: a.symbol,
+        description: a.description ?? null,
+        assetCategory: a.assetCategory ?? "",
+        currency: a.currency ?? "",
+        tradeDate: a.tradeDate ?? "",
+        quantity,
+        tradePrice: num(a.tradePrice),
+        proceeds: num(a.proceeds),
+        commission: num(a.commission),
+        realizedPnl: num(a.fifoPnlRealized),
+        openClose: a.openCloseIndicator ?? null,
+        transactionType: a.transactionType ?? null,
+      });
+    }
+  }
+
+  const cashFlows: FlexCashFlow[] = [];
+  const cashSection = /<CashTransactions>([\s\S]*?)<\/CashTransactions>/.exec(xml);
+  if (cashSection?.[1]) {
+    const re = /<CashTransaction\b([^>]*?)\/>/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(cashSection[1])) !== null) {
+      const a = attrs(m[1]!);
+      const amount = num(a.amount);
+      if (amount == null || !a.type) continue;
+      cashFlows.push({
+        accountId: a.accountId ?? "",
+        symbol: a.symbol ?? null,
+        description: a.description ?? null,
+        currency: a.currency ?? "",
+        dateTime: a.dateTime ?? "",
+        amount,
+        type: a.type,
+      });
+    }
+  }
+
+  return { positions, trades, cashFlows, generatedAt };
 }
 
 interface FlexResponseMeta {

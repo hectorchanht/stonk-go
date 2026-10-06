@@ -125,27 +125,40 @@ workerd).
 ## Interactive Brokers (optional)
 
 The dashboard has an **Interactive Brokers** card that pulls your real
-positions (read-only) via IBKR's **Flex Web Service** — a token-based
-reporting API, so no IB Gateway or TWS needs to run anywhere.
+positions and trade analysis (read-only) via IBKR's **Flex Web Service** —
+a token-based reporting API, so no IB Gateway or TWS needs to run anywhere.
 
-One-time setup in Client Portal:
+**Any IB user can connect — no login needed.** If the server has no IBKR
+account configured, the card shows a connect form: paste your Flex token +
+query ID once and it's remembered in your browser (localStorage). The app
+auto-syncs on page load when the cached data is stale ("self update"). Your
+token is sent to IBKR only when syncing and is never stored on the server.
+If the server *does* have an account configured (env vars below), everyone
+sees that shared snapshot instead.
 
-1. **Reports → Flex Queries** — create an *Activity* Flex Query with the
-   **Open Positions** section. Note its Query ID.
+One-time setup in Client Portal (per user):
+
+1. **Performance & Reports → Flex Queries** — create an *Activity* Flex
+   Query with the **Open Positions**, **Trades** and **Cash Transactions**
+   sections. Note its Query ID.
 2. **Settings → Account Settings → Reporting → Flex Web Service** —
    generate a token (lasts up to ~1 year; set a reminder to rotate).
-3. Set `IBKR_FLEX_TOKEN` and `IBKR_FLEX_QUERY_ID`:
-   - locally: in `.env`
-   - on Cloudflare: dashboard → Worker → Settings → Variables (as secrets)
-4. Reload the page and hit **Sync from IBKR**.
+3. Either:
+   - paste both into the app's connect form (browser-kept, per user), or
+   - set `IBKR_FLEX_TOKEN` and `IBKR_FLEX_QUERY_ID` as Worker secrets /
+     `.env` vars for the server-wide account.
+
+The sync pulls positions, trade executions and cash movements; the analysis
+view shows realized P/L (IBKR FIFO), dividends, commissions paid, per-symbol
+breakdown and recent trades.
 
 Notes:
 
 - Flex data is **end-of-day** (refreshes after market close), not live.
 - The token is read-only reporting access, but treat it like a password.
-- Synced positions are a snapshot in the `BrokerPosition` table; your
-  manual transaction log stays the source of truth for cost basis.
-- If the env vars are missing, the card shows these setup steps instead.
+- Synced positions are a snapshot; your manual transaction log stays the
+  source of truth for cost basis.
+- If nothing is configured, the card shows these setup steps instead.
 
 ## Notes & roadmap
 

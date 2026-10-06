@@ -71,6 +71,46 @@ model BrokerPosition {
     @@index([symbol])
 }
 
+// Trade executions synced from IBKR Flex (Trades section).
+// The Flex report for the query's date range is the full history;
+// sync replaces the whole set, like BrokerPosition.
+model BrokerTrade {
+    id              String   @id @default(cuid())
+    accountId       String
+    symbol          String
+    description     String?
+    assetCategory   String
+    currency        String
+    tradeDate       String // YYYYMMDD as IBKR reports it
+    quantity        Float
+    tradePrice      Float?
+    proceeds        Float?
+    commission      Float?
+    realizedPnl     Float?
+    openClose       String?
+    transactionType String?
+    syncedAt        DateTime @default(now())
+
+    @@index([symbol])
+    @@index([tradeDate])
+}
+
+// Cash movements synced from IBKR Flex (Cash Transactions section):
+// dividends, interest, withholding tax, deposits/withdrawals, fees.
+model BrokerCashFlow {
+    id          String   @id @default(cuid())
+    accountId   String
+    symbol      String?
+    description String?
+    currency    String
+    dateTime    String
+    amount      Float
+    type        String
+    syncedAt    DateTime @default(now())
+
+    @@index([type])
+}
+
 // Necessary for NextAuth
 model Account {
     id                       String  @id @default(cuid())

@@ -49,9 +49,82 @@ export interface BrokerPositionRow {
   syncedAt: Date;
 }
 
+export interface BrokerTradeRow {
+  id: string;
+  accountId: string;
+  symbol: string;
+  description: string | null;
+  assetCategory: string;
+  currency: string;
+  tradeDate: string;
+  quantity: number;
+  tradePrice: number | null;
+  proceeds: number | null;
+  commission: number | null;
+  realizedPnl: number | null;
+  openClose: string | null;
+  transactionType: string | null;
+  syncedAt: Date;
+}
+
+export interface BrokerCashFlowRow {
+  id: string;
+  accountId: string;
+  symbol: string | null;
+  description: string | null;
+  currency: string;
+  dateTime: string;
+  amount: number;
+  type: string;
+  syncedAt: Date;
+}
+
 type SortDir = "asc" | "desc";
 
+interface BulkInsertable<TData> {
+  deleteMany(): Promise<{ count: number }>;
+  createMany(args: { data: TData[] }): Promise<{ count: number }>;
+}
+
+export interface BrokerTradeData {
+  accountId: string;
+  symbol: string;
+  description?: string | null;
+  assetCategory: string;
+  currency: string;
+  tradeDate: string;
+  quantity: number;
+  tradePrice?: number | null;
+  proceeds?: number | null;
+  commission?: number | null;
+  realizedPnl?: number | null;
+  openClose?: string | null;
+  transactionType?: string | null;
+}
+
+export interface BrokerCashFlowData {
+  accountId: string;
+  symbol?: string | null;
+  description?: string | null;
+  currency: string;
+  dateTime: string;
+  amount: number;
+  type: string;
+}
+
 export interface AppDb {
+  brokerTrade: {
+    findMany(args: {
+      orderBy: Array<{ tradeDate?: SortDir; symbol?: SortDir }>;
+      take?: number;
+    }): Promise<BrokerTradeRow[]>;
+  } & BulkInsertable<BrokerTradeData>;
+  brokerCashFlow: {
+    findMany(args: {
+      orderBy: Array<{ dateTime?: SortDir; type?: SortDir }>;
+      take?: number;
+    }): Promise<BrokerCashFlowRow[]>;
+  } & BulkInsertable<BrokerCashFlowData>;
   brokerPosition: {
     findMany(args: {
       orderBy: Array<{ symbol?: SortDir; accountId?: SortDir }>;
@@ -129,6 +202,40 @@ function mapBrokerPosition(r: RawRow): BrokerPositionRow {
   };
 }
 
+function mapBrokerTrade(r: RawRow): BrokerTradeRow {
+  return {
+    id: r.id as string,
+    accountId: r.accountId as string,
+    symbol: r.symbol as string,
+    description: (r.description as string | null) ?? null,
+    assetCategory: r.assetCategory as string,
+    currency: r.currency as string,
+    tradeDate: r.tradeDate as string,
+    quantity: r.quantity as number,
+    tradePrice: (r.tradePrice as number | null) ?? null,
+    proceeds: (r.proceeds as number | null) ?? null,
+    commission: (r.commission as number | null) ?? null,
+    realizedPnl: (r.realizedPnl as number | null) ?? null,
+    openClose: (r.openClose as string | null) ?? null,
+    transactionType: (r.transactionType as string | null) ?? null,
+    syncedAt: toDate(r.syncedAt),
+  };
+}
+
+function mapBrokerCashFlow(r: RawRow): BrokerCashFlowRow {
+  return {
+    id: r.id as string,
+    accountId: r.accountId as string,
+    symbol: (r.symbol as string | null) ?? null,
+    description: (r.description as string | null) ?? null,
+    currency: r.currency as string,
+    dateTime: r.dateTime as string,
+    amount: r.amount as number,
+    type: r.type as string,
+    syncedAt: toDate(r.syncedAt),
+  };
+}
+
 function mapHolding(r: RawRow): HoldingRow {
   return {
     id: r.id as string,
@@ -156,6 +263,115 @@ function mapTransaction(r: RawRow): TransactionRow {
 }
 
 export function createD1Db(d1: D1Database): AppDb {
+  const orderClause = (
+    orderBy: Array<Record<string, "asc" | "desc" | undefined>>,
+  ): string => {
+    const order = orderBy
+      .flatMap((o) =>
+        Object.entries(o)
+          .filter(([, v]) => v != null)
+          .map(([k, v]) => `"${k}" ${v === "desc" ? "DESC" : "ASC"}`),
+      )
+      .join(", ");
+    return order ? ` ORDER BY ${order}` : "";
+  };
+
+  const brokerTrade: AppDb["brokerTrade"] = {
+    findMany: async (args) => {
+      let sql = `SELECT * FROM "BrokerTrade"${orderClause(args.orderBy)}`;
+      const binds: unknown[] = [];
+      if (args.take !== undefined) {
+        sql += ` LIMIT ?`;
+        binds.push(args.take);
+      }
+      const { results } = await d1.prepare(sql).bind(...binds).all();
+      return (results as unknown as RawRow[]).map(mapBrokerTrade);
+    },
+    deleteMany: async () => {
+      const r = await d1.prepare(`DELETE FROM "BrokerTrade"`).run();
+      return { count: r.meta.changes ?? 0 };
+    },
+    createMany: async (args) => {
+      const now = new Date().toISOString();
+      let count = 0;
+      for (const t of args.data) {
+        await d1
+          .prepare(
+            `INSERT INTO "BrokerTrade"
+               ("id", "accountId", "symbol", "description", "assetCategory",
+                "currency", "tradeDate", "quantity", "tradePrice", "proceeds",
+                "commission", "realizedPnl", "openClose", "transactionType",
+                "syncedAt")
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            t.accountId,
+            t.symbol,
+            t.description ?? null,
+            t.assetCategory,
+            t.currency,
+            t.tradeDate,
+            t.quantity,
+            t.tradePrice ?? null,
+            t.proceeds ?? null,
+            t.commission ?? null,
+            t.realizedPnl ?? null,
+            t.openClose ?? null,
+            t.transactionType ?? null,
+            now,
+          )
+          .run();
+        count++;
+      }
+      return { count };
+    },
+  };
+
+  const brokerCashFlow: AppDb["brokerCashFlow"] = {
+    findMany: async (args) => {
+      let sql = `SELECT * FROM "BrokerCashFlow"${orderClause(args.orderBy)}`;
+      const binds: unknown[] = [];
+      if (args.take !== undefined) {
+        sql += ` LIMIT ?`;
+        binds.push(args.take);
+      }
+      const { results } = await d1.prepare(sql).bind(...binds).all();
+      return (results as unknown as RawRow[]).map(mapBrokerCashFlow);
+    },
+    deleteMany: async () => {
+      const r = await d1.prepare(`DELETE FROM "BrokerCashFlow"`).run();
+      return { count: r.meta.changes ?? 0 };
+    },
+    createMany: async (args) => {
+      const now = new Date().toISOString();
+      let count = 0;
+      for (const c of args.data) {
+        await d1
+          .prepare(
+            `INSERT INTO "BrokerCashFlow"
+               ("id", "accountId", "symbol", "description", "currency",
+                "dateTime", "amount", "type", "syncedAt")
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            c.accountId,
+            c.symbol ?? null,
+            c.description ?? null,
+            c.currency,
+            c.dateTime,
+            c.amount,
+            c.type,
+            now,
+          )
+          .run();
+        count++;
+      }
+      return { count };
+    },
+  };
+
   const brokerPosition: AppDb["brokerPosition"] = {
     findMany: async (args) => {
       const order = args.orderBy
@@ -351,5 +567,5 @@ export function createD1Db(d1: D1Database): AppDb {
     },
   };
 
-  return { brokerPosition, holding, transaction };
+  return { brokerTrade, brokerCashFlow, brokerPosition, holding, transaction };
 }
