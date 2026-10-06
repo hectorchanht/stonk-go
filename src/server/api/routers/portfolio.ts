@@ -33,6 +33,7 @@ import { computeFlair } from "~/server/wsb";
 import { generateInsights } from "~/server/ai";
 import {
   importIbkrTrades as mergeIbkrTrades,
+  curveTradeLegs,
   recomputeHolding,
 } from "~/server/ibkr-import";
 import { type AppDb } from "~/server/db";
@@ -577,9 +578,11 @@ export const portfolioRouter = createTRPCRouter({
         .merge(summaryInput),
     )
     .query(async ({ ctx, input }) => {
-      const txns = await ctx.db.transaction.findMany({
-        orderBy: [{ executedAt: "asc" }],
-      });
+      // Curve legs = Transaction log + raw Flex BrokerTrade rows, so the
+      // true curve covers IBKR positions whose trades never made it into
+      // the log (mergeIbkrTrades skips unreconciled symbols). See
+      // mergeCurveLegs for the honesty rules.
+      const { legs: txns } = await curveTradeLegs(ctx.db);
 
       // 1. True historical value curve. Yahoo/FX failures fall through to
       // the older sources — never a broken chart.
@@ -648,9 +651,8 @@ export const portfolioRouter = createTRPCRouter({
    * reads as ±68% "annualized").
    */
   xirr: publicProcedure.input(summaryInput).query(async ({ ctx, input }) => {
-    const txns = await ctx.db.transaction.findMany({
-      orderBy: [{ executedAt: "asc" }],
-    });
+    // Same legs as the curve — XIRR and the chart must tell one story.
+    const { legs: txns } = await curveTradeLegs(ctx.db);
     const fx = await getFxRates();
     const flows = txnsToUsdFlows(txns, fx);
     const s = await buildSummary(ctx, input.brokerPositions);

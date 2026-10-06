@@ -478,3 +478,134 @@ export async function importIbkrTrades(
 
   return stats;
 }
+
+/* ---------------- Performance-curve legs ---------------- */
+
+/**
+ * A trade leg shaped for the performance curve (performance.ts TradeLeg).
+ * Built from the Transaction log PLUS the raw Flex BrokerTrade rows, so
+ * the true historical-value curve covers positions whose trades never made
+ * it into the log (mergeIbkrTrades skips symbols it can't reconcile —
+ * e.g. buys older than the Flex query's date range).
+ *
+ * Rules (honesty first):
+ * - Symbols that HAVE Transaction rows use the log ONLY. The log is
+ *   split-adjusted and reconciled; mixing in the raw Flex rows would
+ *   double-count across stock splits.
+ * - Symbols with no Transaction rows contribute their raw Flex trades
+ *   (real dates, prices, quantities — never invented).
+ * - "USD.HKD" is a currency conversion, not a holding — excluded.
+ * - Rows without a usable price or date are skipped (reported in stats).
+ */
+export interface CurveLeg {
+  symbol: string;
+  type: string;
+  quantity: number;
+  price: number;
+  fees: number | null;
+  executedAt: Date;
+  source: string;
+}
+
+export interface CurveLegStats {
+  /** Legs from the Transaction log. */
+  fromTransactions: number;
+  /** Legs contributed from raw Flex BrokerTrade rows. */
+  fromBrokerTrades: number;
+  /** BrokerTrade symbols skipped: the Transaction log already covers them. */
+  symbolsCoveredByLog: number;
+  /** BrokerTrade rows skipped: no price, bad date, or zero quantity. */
+  unusableSkipped: number;
+}
+
+interface BrokerTradeLike {
+  symbol: string;
+  tradeDate: string;
+  quantity: number;
+  tradePrice: number | null;
+  commission: number | null;
+}
+
+/** Pure merge — testable without a database. */
+export function mergeCurveLegs(
+  txns: Array<{
+    symbol: string;
+    type: string;
+    quantity: number;
+    price: number;
+    fees: number | null;
+    executedAt: Date | string;
+    source: string;
+  }>,
+  brokerTrades: BrokerTradeLike[],
+): { legs: CurveLeg[]; stats: CurveLegStats } {
+  const stats: CurveLegStats = {
+    fromTransactions: 0,
+    fromBrokerTrades: 0,
+    symbolsCoveredByLog: 0,
+    unusableSkipped: 0,
+  };
+  const legs: CurveLeg[] = txns.map((t) => ({
+    symbol: t.symbol,
+    type: t.type,
+    quantity: t.quantity,
+    price: t.price,
+    fees: t.fees,
+    executedAt: new Date(t.executedAt),
+    source: t.source,
+  }));
+  stats.fromTransactions = legs.length;
+
+  const logSymbols = new Set(
+    txns.map((t) => normSymbol(t.symbol)),
+  );
+  const bySymbol = new Map<string, BrokerTradeLike[]>();
+  for (const b of brokerTrades) {
+    const sym = normSymbol(b.symbol);
+    if (!sym || sym === "USD.HKD") continue;
+    if (logSymbols.has(sym)) continue;
+    const arr = bySymbol.get(sym);
+    if (arr) arr.push(b);
+    else bySymbol.set(sym, [b]);
+  }
+  stats.symbolsCoveredByLog = logSymbols.size;
+
+  for (const [sym, rows] of bySymbol) {
+    for (const r of rows) {
+      const executedAt = parseTradeDate(r.tradeDate);
+      if (
+        !executedAt ||
+        r.tradePrice == null ||
+        !(r.tradePrice > 0) ||
+        !Number.isFinite(r.quantity) ||
+        r.quantity === 0
+      ) {
+        stats.unusableSkipped++;
+        continue;
+      }
+      legs.push({
+        symbol: sym,
+        type: r.quantity > 0 ? "BUY" : "SELL",
+        quantity: Math.abs(r.quantity),
+        price: r.tradePrice,
+        fees: r.commission == null ? null : Math.abs(r.commission),
+        executedAt,
+        source: "ibkr",
+      });
+      stats.fromBrokerTrades++;
+    }
+  }
+  legs.sort((a, b) => a.executedAt.getTime() - b.executedAt.getTime());
+  return { legs, stats };
+}
+
+/** Full curve legs: Transaction log + raw Flex trades (for the router). */
+export async function curveTradeLegs(
+  db: AppDb,
+): Promise<{ legs: CurveLeg[]; stats: CurveLegStats }> {
+  const [txns, brokerTrades] = await Promise.all([
+    db.transaction.findMany({ orderBy: [{ executedAt: "asc" }] }),
+    db.brokerTrade.findMany({ orderBy: [{ tradeDate: "asc" }] }),
+  ]);
+  return mergeCurveLegs(txns, brokerTrades);
+}

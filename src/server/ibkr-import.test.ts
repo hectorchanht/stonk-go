@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { recomputeHolding } from "./ibkr-import";
+import { recomputeHolding, mergeCurveLegs } from "./ibkr-import";
 import type { AppDb } from "./d1db";
 
 interface Txn {
@@ -115,5 +115,78 @@ describe("recomputeHolding average-cost basis", () => {
     const sum = [...totals.values()].reduce((a, b) => a + b, 0);
     // Same reduce the portfolio summary totals use over row costBasis.
     expect(sum).toBeCloseTo(1255, 8);
+  });
+});
+
+describe("mergeCurveLegs", () => {
+  const txn = (
+    symbol: string,
+    type: string,
+    quantity: number,
+    price: number,
+    date: string,
+  ) => ({
+    symbol,
+    type,
+    quantity,
+    price,
+    fees: null,
+    executedAt: new Date(`${date}T12:00:00Z`),
+    source: "ibkr",
+  });
+  const flex = (
+    symbol: string,
+    tradeDate: string,
+    quantity: number,
+    tradePrice: number | null,
+  ) => ({ symbol, tradeDate, quantity, tradePrice, commission: null });
+
+  it("prefers the Transaction log for covered symbols (split safety)", () => {
+    // NAKA: log has the split-adjusted buy; Flex still has the pre-split row.
+    const { legs, stats } = mergeCurveLegs(
+      [txn("NAKA", "BUY", 34.017, 12.2, "2026-02-06")],
+      [
+        flex("NAKA", "20251003", 500, 1.11),
+        flex("NAKA", "20260206", 34.017, 12.2),
+      ],
+    );
+    expect(legs).toHaveLength(1);
+    expect(legs[0]!.quantity).toBeCloseTo(34.017, 6);
+    expect(stats.fromTransactions).toBe(1);
+    expect(stats.fromBrokerTrades).toBe(0);
+    expect(stats.symbolsCoveredByLog).toBe(1);
+  });
+
+  it("contributes raw Flex trades for symbols missing from the log", () => {
+    const { legs, stats } = mergeCurveLegs(
+      [txn("CIFR", "BUY", 88, 16.65, "2026-01-27")],
+      [
+        flex("GDRX", "20251003", 111, 4.5),
+        flex("MRVL", "20251003", 3, 86.34),
+        flex("GDRX", "20251101", -11, 5.0),
+      ],
+    );
+    // 1 log leg + 3 flex legs, sorted by date
+    expect(legs).toHaveLength(4);
+    expect(stats.fromTransactions).toBe(1);
+    expect(stats.fromBrokerTrades).toBe(3);
+    const gdrxSell = legs.find(
+      (l) => l.symbol === "GDRX" && l.type === "SELL",
+    )!;
+    expect(gdrxSell.quantity).toBe(11);
+    expect(gdrxSell.source).toBe("ibkr");
+    expect(legs[0]!.executedAt.toISOString().slice(0, 10)).toBe("2025-10-03");
+  });
+
+  it("skips FX conversions, zero qty, null prices and bad dates", () => {
+    const { legs, stats } = mergeCurveLegs([], [
+      flex("USD.HKD", "20251003", 1000, 7.8),
+      flex("AAA", "20251003", 0, 10),
+      flex("BBB", "20251003", 5, null),
+      flex("CCC", "not-a-date", 5, 10),
+      flex("DDD", "20251003", 5, -3),
+    ]);
+    expect(legs).toHaveLength(0);
+    expect(stats.unusableSkipped).toBe(4); // USD.HKD filtered before counting
   });
 });
