@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Info } from "lucide-react";
 
 /**
@@ -9,6 +9,10 @@ import { ChevronLeft, ChevronRight, Info } from "lucide-react";
  */
 export function InfoTip({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
+  // Touch devices fire mouseenter before click on the first tap — without
+  // this guard the click would instantly toggle shut what hover just opened,
+  // forcing two taps to open.
+  const hoverOpened = useRef(false);
   return (
     <span
       className="relative inline-block align-middle"
@@ -16,9 +20,21 @@ export function InfoTip({ text }: { text: string }) {
     >      <button
         type="button"
         aria-label="What is this?"
-        onClick={() => setOpen((o) => !o)}
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
+        onClick={() => {
+          if (hoverOpened.current) {
+            hoverOpened.current = false; // consume: this click is the same tap
+            return;
+          }
+          setOpen((o) => !o);
+        }}
+        onMouseEnter={() => {
+          hoverOpened.current = true;
+          setOpen(true);
+        }}
+        onMouseLeave={() => {
+          hoverOpened.current = false;
+          setOpen(false);
+        }}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full border border-zinc-600 align-middle text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 hover:text-zinc-800 dark:text-zinc-200"
