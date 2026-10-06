@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
+import { Plus, RefreshCw, Sparkles, X } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { BrokerCard } from "~/app/_components/broker";
@@ -232,7 +233,7 @@ function HoldingsTable({
                     className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
                     title={`Delete ${r.symbol}`}
                   >
-                    ✕
+                    <X size={14} />
                   </button>
                 ) : (
                   <span
@@ -493,7 +494,7 @@ function TransactionList() {
                 className="shrink-0 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
                 title="Delete transaction"
               >
-                ✕
+                <X size={14} />
               </button>
             </li>
           ))}
@@ -624,9 +625,10 @@ function DashboardInner() {
             onClick={() => refetch()}
             disabled={isFetching}
             title="Refresh prices"
+            aria-label="Refresh prices"
             className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
           >
-            {isFetching ? "…" : <><span className="sm:hidden">↻</span><span className="hidden sm:inline">↻ Refresh prices</span></>}
+            <RefreshCw size={16} className={isFetching ? "animate-spin" : ""} />
           </button>
         </div>
       </header>
@@ -680,7 +682,7 @@ function DashboardInner() {
 
           <CollapsibleSection
             id="insights"
-            title="✨ AI Insights"
+            title={<span className="inline-flex items-center gap-1.5"><Sparkles size={14} className="text-violet-400" /> AI Insights</span>}
             info="Cloudflare Workers AI reads your portfolio and writes a plain-English brief: concentration, winners, losers, and one suggestion. Cached for 24h per snapshot."
           >
             <AiInsights rows={data.rows} totals={t!} />
@@ -732,9 +734,9 @@ function DashboardInner() {
                   type="button"
                   onClick={() => setTxnOpen(false)}
                   aria-label="Close log transaction"
-                  className="rounded-lg px-2 py-1 text-lg leading-none text-zinc-500 hover:text-zinc-200"
+                  className="rounded-lg px-2 py-1 text-zinc-500 hover:text-zinc-200"
                 >
-                  ✕
+                  <X size={18} />
                 </button>
               </div>
               <div className="mt-2">
@@ -774,9 +776,9 @@ function DashboardInner() {
             }}
             title="Log a transaction"
             aria-label="Log a transaction"
-            className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-600 text-2xl font-bold text-white shadow-xl shadow-emerald-950/50 transition hover:bg-emerald-500 active:scale-95"
+            className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-600 text-white shadow-xl shadow-emerald-950/50 transition hover:bg-emerald-500 active:scale-95"
           >
-            ＋
+            <Plus size={26} strokeWidth={2.5} />
           </button>
 
           <footer className="pt-2 text-center text-xs text-zinc-600">

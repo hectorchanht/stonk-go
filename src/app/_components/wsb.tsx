@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { Dices, Skull, Trophy } from "lucide-react";
 
 import type { RouterOutputs } from "~/trpc/react";
 import type { PositionFlair } from "~/server/wsb";
@@ -105,7 +106,7 @@ export function YoloMeter({ rows }: { rows: HoldingRow[] }) {
     <div className={card}>
       <div className="flex items-baseline justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
-          🎲 YOLO meter
+          <Dices size={14} className="mr-1.5 inline text-zinc-400" />YOLO meter
           <InfoTip text="Your portfolio's degeneracy score (0–100): how concentrated your biggest position is, how much is in meme stocks, and all-in energy. 100% vibes, 0% financial advice." />
         </h2>
         <div className="text-sm font-bold text-zinc-300">{rank}</div>
@@ -157,7 +158,7 @@ export function GainLossPorn({ rows }: { rows: HoldingRow[] }) {
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div className={`${card} border-emerald-800/60`}>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-emerald-500">
-          🏆 Gain porn
+          <Trophy size={14} className="mr-1.5 inline text-emerald-500" />Gain porn
           <InfoTip text="Your single biggest winning position by dollars gained, immortalized. Post it on WSB, king." />
         </h2>
         {hasGains ? (
@@ -191,7 +192,7 @@ export function GainLossPorn({ rows }: { rows: HoldingRow[] }) {
 
       <div className={`${card} border-rose-800/60`}>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-rose-500">
-          💀 Loss porn
+          <Skull size={14} className="mr-1.5 inline text-rose-500" />Loss porn
           <InfoTip text="Your single biggest losing position by dollars lost. We don't judge. Press F to pay respects." />
         </h2>
         <div className="mt-2 text-3xl font-extrabold tabular-nums text-rose-400">

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { RefreshCw, Sparkles } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 
@@ -145,7 +146,7 @@ export function AiInsights({
               onClick={regenerate}
               className="rounded-lg border border-zinc-700 px-2.5 py-1 text-xs text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
             >
-              ↻ Regenerate
+              <RefreshCw size={13} className="mr-1.5 inline" />Regenerate
             </button>
           </div>
         </>
@@ -159,7 +160,7 @@ export function AiInsights({
             />
           ))}
           <p className="pt-1 text-xs text-zinc-500">
-            ✨ Reading your portfolio…
+            <span className="inline-flex items-center gap-1.5"><Sparkles size={13} className="text-violet-400" /> Reading your portfolio…</span>
           </p>
         </div>
       ) : unavailable || q.isError ? (
@@ -173,7 +174,7 @@ export function AiInsights({
             onClick={regenerate}
             className="shrink-0 rounded-lg border border-zinc-700 px-2.5 py-1 text-xs text-zinc-300 hover:border-zinc-500"
           >
-            ↻ Retry
+            <RefreshCw size={13} className="mr-1.5 inline" />Retry
           </button>
         </div>
       ) : rows.length === 0 ? (

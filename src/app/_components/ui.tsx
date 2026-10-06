@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ChevronRight, Info } from "lucide-react";
 
 /**
  * Small ⓘ that explains a section. Hover/focus shows it on desktop,
@@ -20,9 +21,9 @@ export function InfoTip({ text }: { text: string }) {
         onMouseLeave={() => setOpen(false)}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
-        className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full border border-zinc-600 align-middle text-[10px] font-bold leading-none text-zinc-400 hover:border-zinc-300 hover:text-zinc-200"
+        className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full border border-zinc-600 align-middle text-zinc-400 hover:border-zinc-300 hover:text-zinc-200"
       >
-        i
+        <Info size={10} strokeWidth={2.5} />
       </button>
       {open && (
         <span className="absolute left-1/2 top-full z-30 mt-1.5 w-60 -translate-x-1/2 rounded-lg border border-zinc-700 bg-zinc-800 p-2.5 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-zinc-300 shadow-xl">
@@ -100,9 +101,9 @@ export function CollapsibleSection({
         className="flex w-full cursor-pointer items-center gap-2 py-1 text-left"
       >
         <span
-          className={`shrink-0 text-xs text-zinc-500 transition-transform ${open ? "rotate-90" : ""}`}
+          className={`shrink-0 text-zinc-500 transition-transform ${open ? "rotate-90" : ""}`}
         >
-          ▸
+          <ChevronRight size={14} />
         </span>
         <span className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
           {title}

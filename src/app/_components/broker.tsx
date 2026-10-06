@@ -2,6 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
+import {
+  ArrowLeft,
+  BarChart3,
+  Check,
+  ChevronDown,
+  Copy,
+  Download,
+  Landmark,
+  RefreshCw,
+  Save,
+  Settings,
+} from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { useCurrency } from "~/app/_components/currency";
@@ -76,7 +88,7 @@ function CollapsiblePositions({ positions }: { positions: PositionLike[] }) {
         aria-expanded={open}
         className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200"
       >
-        <span className="inline-block w-4 text-xs">{open ? "▾" : "▸"}</span>
+        <ChevronDown size={14} className={`shrink-0 text-zinc-500 transition-transform ${open ? "" : "-rotate-90"}`} />
         <span>
           {n} position{n === 1 ? "" : "s"} — also listed in Holdings above
         </span>
@@ -152,7 +164,7 @@ function AnalyticsView({ data }: { data: Analytics }) {
   return (
     <div className="mt-5 border-t border-zinc-800 pt-4">
       <h3 className="text-sm font-bold uppercase tracking-wide text-zinc-400">
-        📊 Trade analysis
+        <BarChart3 size={15} className="mr-1.5 inline text-zinc-400" />Trade analysis
       </h3>
       <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <div className="rounded-lg bg-zinc-800/50 p-3">
@@ -255,7 +267,7 @@ function GearMenu({
   items,
 }: {
   items: {
-    label: string;
+    label: React.ReactNode;
     onClick: () => void;
     danger?: boolean;
     disabled?: boolean;
@@ -269,9 +281,9 @@ function GearMenu({
         onClick={() => setOpen((o) => !o)}
         aria-label="IBKR settings"
         title="IBKR settings"
-        className="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-2 text-sm text-zinc-400 hover:text-zinc-200"
+        className="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-2 text-zinc-400 hover:text-zinc-200"
       >
-        ⚙️
+        <Settings size={16} />
       </button>
       {open && (
         <>
@@ -289,7 +301,7 @@ function GearMenu({
                   setOpen(false);
                   it.onClick();
                 }}
-                className={`block w-full px-4 py-2.5 text-left text-sm hover:bg-zinc-700 disabled:opacity-40 ${
+                className={`flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm hover:bg-zinc-700 disabled:opacity-40 ${
                   it.danger ? "text-rose-400" : "text-zinc-200"
                 }`}
               >
@@ -413,7 +425,7 @@ function CopyAiPrompt() {
         onClick={copy}
         className="mt-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
       >
-        {copied ? "✓ Copied" : "⧉ Copy prompt"}
+        {copied ? (<><Check size={14} className="mr-1.5 inline" />Copied</>) : (<><Copy size={14} className="mr-1.5 inline" />Copy prompt</>)}
       </button>
     </div>
   );
@@ -425,7 +437,10 @@ function ConnectForm({ onConnect }: { onConnect: (c: Creds) => void }) {
   const valid = token.trim().length > 0 && queryId.trim().length > 0;
   return (
     <div className={card}>
-      <h2 className="text-lg font-bold">🏦 Interactive Brokers</h2>
+      <h2 className="flex items-center gap-2 text-lg font-bold">
+        <Landmark size={20} className="shrink-0 text-zinc-400" />
+        <span>Interactive Brokers</span>
+      </h2>
       <p className="mt-1 text-sm text-zinc-400">
         Connect your IBKR account to pull real positions and trade analysis
         (read-only — Flex can&apos;t trade).
@@ -643,12 +658,13 @@ function BrowserBrokerCard({
         <div className={card}>
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-bold">
-                🏦 Interactive Brokers
+              <h2 className="flex items-center gap-2 text-lg font-bold">
+                <Landmark size={20} className="shrink-0 text-zinc-400" />
+                <span>Interactive Brokers</span>
                 <SyncPill syncing={sync.isPending} live={!!data && !sync.isPending} />
               </h2>
               <p className="text-xs text-zinc-500">
-                ✓ Saved credentials · auto-sync on
+                <Check size={13} className="mr-1 inline text-emerald-400" />Saved credentials · auto-sync on
                 {lastSyncLabel ? ` · synced ${lastSyncLabel}` : ""}
                 {" · end-of-day data"}
               </p>
@@ -656,7 +672,15 @@ function BrowserBrokerCard({
             <GearMenu
               items={[
                 {
-                  label: sync.isPending ? "Syncing…" : "↻ Sync now",
+                  label: (
+                    <>
+                      <RefreshCw
+                        size={15}
+                        className={sync.isPending ? "animate-spin" : ""}
+                      />
+                      {sync.isPending ? "Syncing…" : "Sync now"}
+                    </>
+                  ),
                   onClick: () => sync.mutate(undefined),
                   disabled: sync.isPending,
                 },
@@ -665,13 +689,16 @@ function BrowserBrokerCard({
                   onClick: () => setShowForm(true),
                 },
                 {
-                  label: "⬇ Export saved credentials",
+                  label: (
+                    <>
+                      <Download size={15} />
+                      Export saved credentials
+                    </>
+                  ),
                   onClick: () => void downloadCreds(),
                 },
                 {
-                  label: clearCreds.isPending
-                    ? "Removing…"
-                    : "Remove saved credentials",
+                  label: clearCreds.isPending ? "Removing…" : "Remove saved credentials",
                   onClick: () => clearCreds.mutate(),
                   danger: true,
                   disabled: clearCreds.isPending,
@@ -705,9 +732,9 @@ function BrowserBrokerCard({
         {session?.user && savedQ.data?.saved && (
           <button
             onClick={() => setShowForm(false)}
-            className="mb-2 text-sm text-zinc-400 hover:text-zinc-200"
+            className="mb-2 inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-200"
           >
-            ← Back to saved credentials
+            <ArrowLeft size={15} /> Back to saved credentials
           </button>
         )}
         <ConnectForm
@@ -737,13 +764,21 @@ function BrowserBrokerCard({
   };
 
   const gearItems: {
-    label: string;
+    label: React.ReactNode;
     onClick: () => void;
     danger?: boolean;
     disabled?: boolean;
   }[] = [
     {
-      label: sync.isPending ? "Syncing…" : "↻ Sync now",
+      label: (
+        <>
+          <RefreshCw
+            size={15}
+            className={sync.isPending ? "animate-spin" : ""}
+          />
+          {sync.isPending ? "Syncing…" : "Sync now"}
+        </>
+      ),
       onClick: () => sync.mutate(creds),
       disabled: sync.isPending,
     },
@@ -751,7 +786,12 @@ function BrowserBrokerCard({
   if (session?.user) {
     if (savedQ.data?.saved) {
       gearItems.push({
-        label: "⬇ Export saved credentials",
+        label: (
+          <>
+            <Download size={15} />
+            Export saved credentials
+          </>
+        ),
         onClick: () => void downloadCreds(),
       });
       gearItems.push({
@@ -762,7 +802,12 @@ function BrowserBrokerCard({
       });
     } else {
       gearItems.push({
-        label: saveCreds.isPending ? "Saving…" : "💾 Save to my account",
+        label: (
+          <>
+            <Save size={15} />
+            {saveCreds.isPending ? "Saving…" : "Save to my account"}
+          </>
+        ),
         onClick: () => saveCreds.mutate(creds),
         disabled: saveCreds.isPending,
       });
@@ -774,15 +819,21 @@ function BrowserBrokerCard({
     <div className={card}>
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold">
-            🏦 Interactive Brokers
+          <h2 className="flex items-center gap-2 text-lg font-bold">
+            <Landmark size={20} className="shrink-0 text-zinc-400" />
+            <span>Interactive Brokers</span>
             <SyncPill syncing={sync.isPending} live={!!data && !sync.isPending} />
           </h2>
           <p className="text-xs text-zinc-500">
             {lastSyncLabel ? `Synced ${lastSyncLabel} · ` : ""}
             {data ? `${data.positions.length} position${data.positions.length === 1 ? "" : "s"}` : "your account"} ·
             end-of-day data
-            {session?.user && savedQ.data?.saved ? " · ✓ saved to account" : ""}
+            {session?.user && savedQ.data?.saved ? (
+              <>
+                {" · "}
+                <Check size={12} className="inline text-emerald-400" /> saved to account
+              </>
+            ) : ""}
           </p>
         </div>
         <GearMenu items={gearItems} />

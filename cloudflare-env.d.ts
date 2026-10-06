@@ -14,6 +14,8 @@ declare global {
     FINNHUB_API_KEY?: string;
     /** Resend API key for magic-link sign-in emails (optional; dashboard Secrets). */
     RESEND_API_KEY?: string;
+    /** Public app URL — NextAuth builds magic-link URLs from it (dashboard Variables). */
+    NEXTAUTH_URL?: string;
     /** From: address for magic-link emails (optional; defaults to Holdr <login@hectorchan.com>). */
     EMAIL_FROM?: string;
     /** base64 of 32 bytes; encrypts per-user IBKR credentials at rest (optional; dashboard Secrets). */

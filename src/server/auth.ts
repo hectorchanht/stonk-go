@@ -114,6 +114,19 @@ async function sendVerificationRequest(params: {
  * instead of re-pasting them in every browser.
  */
 export const getAuthOptions = (): NextAuthOptions => {
+  // NextAuth builds magic-link URLs from process.env.NEXTAUTH_URL, but on
+  // Cloudflare Workers the dashboard variable lives on the worker env, not
+  // process.env — and if it's missing NextAuth falls back to localhost.
+  // Sync it per request so sign-in emails always point at the public domain.
+  try {
+    const workerUrl = getCloudflareContext().env.NEXTAUTH_URL;
+    if (typeof workerUrl === "string" && workerUrl.length > 0) {
+      process.env.NEXTAUTH_URL = workerUrl;
+    }
+  } catch {
+    // Not in a worker request scope — local dev uses process.env as-is.
+  }
+
   const providers: NextAuthOptions["providers"] = [
     EmailProvider({
       from: getEmailFrom(),
