@@ -180,6 +180,25 @@ function HoldingsTable({
   const [sourceFilter, setSourceFilter] = useState<"all" | "manual" | "broker">(
     "all",
   );
+  // Company names under each symbol (HK names are long) — toggleable for all regions.
+  const [showNames, setShowNames] = useState(true);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("holdr.holdings.showNames") === "0") {
+        setShowNames(false);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const toggleShowNames = useCallback((v: boolean) => {
+    setShowNames(v);
+    try {
+      window.localStorage.setItem("holdr.holdings.showNames", v ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, []);
   const [inspectSymbol, setInspectSymbol] = useState<string | null>(null);
   const [editingTxn, setEditingTxn] = useState<TxnRow | null>(null);
   const [clearOpen, setClearOpen] = useState(false);
@@ -416,7 +435,7 @@ function HoldingsTable({
                 ⇄ {overlap}
               </div>
             )}
-            {r.name && (
+            {showNames && r.name && (
               <div className="max-w-[180px] truncate text-xs text-zinc-500">
                 {r.name}
               </div>
@@ -759,6 +778,16 @@ function HoldingsTable({
                 <X size={16} />
               </button>
             </div>
+            <label className="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-lg px-2 hover:bg-zinc-800/60">
+              <input
+                type="checkbox"
+                checked={showNames}
+                onChange={() => toggleShowNames(!showNames)}
+                className="h-5 w-5 shrink-0 accent-emerald-500"
+              />
+              <span className="text-sm text-zinc-200">Company names</span>
+            </label>
+            <div className="my-1 border-t border-zinc-800" />
             <div className="max-h-[60vh] overflow-y-auto">
               {HOLDINGS_ALL_COLUMNS.map((c) => {
                 const checked = visibleSet.has(c.key);
@@ -1957,7 +1986,12 @@ function DashboardInner() {
     { staleTime: 300_000, refetchInterval: 300_000 },
   );
 
-  const periodDays = pnlPeriodDays(pnlPeriod);
+  // 1W/2W/1M need real history — with fewer than 2 equity-curve points
+  // they'd silently show the 1D number, so pin to 1D and disable those
+  // pills until history exists.
+  const hasPnlHistory = (pnlCurve?.points?.length ?? 0) >= 2;
+  const activePnlPeriod = hasPnlHistory ? pnlPeriod : "1D";
+  const periodDays = pnlPeriodDays(activePnlPeriod);
   const periodPnl = useMemo(
     () =>
       data?.totals
@@ -2079,7 +2113,7 @@ function DashboardInner() {
                 }
               />
               <StatCard
-                label={periodPnl ? `${pnlPeriod} P/L` : "Day P/L"}
+                label={periodPnl ? `${activePnlPeriod} P/L` : "Day P/L"}
                 value={money(periodPnl ? periodPnl.pnl : t!.dayPL, {
                   sign: true,
                 })}
@@ -2100,22 +2134,30 @@ function DashboardInner() {
                     role="group"
                     aria-label="P/L comparison period"
                   >
-                    {PNL_PERIODS.map((p) => (
-                      <button
-                        key={p.key}
-                        type="button"
-                        onClick={() => selectPnlPeriod(p.key)}
-                        aria-pressed={pnlPeriod === p.key}
-                        title={`Compare vs ${p.days} day${p.days === 1 ? "" : "s"} ago`}
-                        className={`flex-1 rounded-md px-1 py-1 text-[11px] font-semibold leading-none transition-colors ${
-                          pnlPeriod === p.key
-                            ? "bg-zinc-700 text-white dark:bg-zinc-200 dark:text-zinc-900"
-                            : "text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                        }`}
-                      >
-                        {p.key}
-                      </button>
-                    ))}
+                    {PNL_PERIODS.map((p) => {
+                      const disabled = p.key !== "1D" && !hasPnlHistory;
+                      return (
+                        <button
+                          key={p.key}
+                          type="button"
+                          onClick={() => selectPnlPeriod(p.key)}
+                          disabled={disabled}
+                          aria-pressed={activePnlPeriod === p.key}
+                          title={
+                            disabled
+                              ? "Not enough history yet — check back tomorrow"
+                              : `Compare vs ${p.days} day${p.days === 1 ? "" : "s"} ago`
+                          }
+                          className={`flex-1 rounded-md px-1 py-1 text-[11px] font-semibold leading-none transition-colors ${
+                            activePnlPeriod === p.key
+                              ? "bg-zinc-700 text-white dark:bg-zinc-200 dark:text-zinc-900"
+                              : "text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                          }${disabled ? " cursor-not-allowed opacity-40" : ""}`}
+                        >
+                          {p.key}
+                        </button>
+                      );
+                    })}
                   </div>
                 }
               />
@@ -2205,7 +2247,8 @@ function DashboardInner() {
       dayTone,
       totalTone,
       missingBasisNote,
-      pnlPeriod,
+      hasPnlHistory,
+      activePnlPeriod,
       periodDays,
       periodPnl,
       periodPnlTone,
