@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Info } from "lucide-react";
 
 /**
@@ -13,6 +13,27 @@ export function InfoTip({ text }: { text: string }) {
   // this guard the click would instantly toggle shut what hover just opened,
   // forcing two taps to open.
   const hoverOpened = useRef(false);
+  // Clamp the tooltip inside the viewport: measure after it opens and shift
+  // it horizontally if it would overflow either edge.
+  const tipRef = useRef<HTMLSpanElement>(null);
+  const [shift, setShift] = useState(0);
+  useLayoutEffect(() => {
+    if (!open) {
+      setShift(0);
+      return;
+    }
+    const el = tipRef.current;
+    if (!el || typeof window === "undefined") return;
+    const r = el.getBoundingClientRect();
+    const margin = 8;
+    let dx = 0;
+    if (r.right > window.innerWidth - margin) {
+      dx = window.innerWidth - margin - r.right;
+    } else if (r.left < margin) {
+      dx = margin - r.left;
+    }
+    if (dx !== 0) setShift(dx);
+  }, [open, text]);
   return (
     <span
       className="relative inline-block align-middle"
@@ -42,7 +63,11 @@ export function InfoTip({ text }: { text: string }) {
         <Info size={10} strokeWidth={2.5} />
       </button>
       {open && (
-        <span className="absolute left-1/2 top-full z-30 mt-1.5 w-60 -translate-x-1/2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-2.5 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-zinc-700 dark:text-zinc-300 shadow-xl">
+        <span
+          ref={tipRef}
+          style={{ transform: `translateX(calc(-50% + ${shift}px))` }}
+          className="absolute left-1/2 top-full z-30 mt-1.5 w-60 max-w-[calc(100vw-16px)] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-2.5 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-zinc-700 dark:text-zinc-300 shadow-xl"
+        >
           {text}
         </span>
       )}
