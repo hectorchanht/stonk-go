@@ -599,25 +599,25 @@ function DashboardInner() {
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 px-4 py-6 sm:px-6">
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
           <img
             src="/logo.webp"
             alt="Holdr logo"
-            width={40}
-            height={40}
-            className="h-10 w-10 rounded-xl"
+            width={36}
+            height={36}
+            className="h-9 w-9 shrink-0 rounded-xl sm:h-10 sm:w-10"
           />
-          <div>
-            <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-extrabold tracking-tight sm:text-3xl">
               Holdr
             </h1>
-            <p className="hidden text-sm text-zinc-500 min-[380px]:block">
+            <p className="hidden whitespace-nowrap text-sm text-zinc-500 min-[380px]:block">
               we are diamond holdrs 💎🙌
             </p>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex items-center gap-2">
           <AuthButtons />
           <CurrencyPicker />
           <button
