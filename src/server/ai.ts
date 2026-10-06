@@ -75,7 +75,9 @@ function buildPrompt(input: InsightInput): string {
 
 export async function generateInsights(
   input: InsightInput,
-): Promise<{ text: string } | { unavailable: true }> {
+): Promise<
+  { text: string } | { unavailable: true; reason: "no-binding" | "ai-error" }
+> {
   type AiBinding = {
     run: (model: string, params: unknown) => Promise<unknown>;
   };
@@ -88,7 +90,7 @@ export async function generateInsights(
   } catch {
     ai = null;
   }
-  if (!ai) return { unavailable: true };
+  if (!ai) return { unavailable: true, reason: "no-binding" };
 
   try {
     const res = (await ai.run(MODEL, {
@@ -100,10 +102,10 @@ export async function generateInsights(
     })) as { response?: unknown };
     const text =
       typeof res?.response === "string" ? res.response.trim() : "";
-    if (!text) return { unavailable: true };
+    if (!text) return { unavailable: true, reason: "ai-error" };
     return { text };
   } catch (err) {
     console.error("[ai] insights generation failed:", err);
-    return { unavailable: true };
+    return { unavailable: true, reason: "ai-error" };
   }
 }
