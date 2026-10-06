@@ -13,8 +13,8 @@ export const PROVIDERS = [
     description: "Workers AI — free, no key needed",
     needsKey: false,
     models: [
-      { id: "@cf/qwen/qwen3-30b-a3b-fp8", name: "Qwen 3 30B" },
       { id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", name: "Llama 3.3 70B" },
+      { id: "@cf/qwen/qwen3-30b-a3b-fp8", name: "Qwen 3 30B" },
       { id: "@cf/meta/llama-3.1-8b-instruct", name: "Llama 3.1 8B" },
       { id: "@cf/mistral/mistral-7b-instruct-v0.2", name: "Mistral 7B" },
       { id: "@cf/qwen/qwen2.5-coder-32b-instruct", name: "Qwen 2.5 Coder 32B" },
@@ -98,7 +98,7 @@ async function chatCloudflare(
   if (!ai) throw new Error("no-binding");
 
   const model =
-    opts.model ?? "@cf/qwen/qwen3-30b-a3b-fp8";
+    opts.model ?? "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
   const res = (await ai.run(model, {
     messages,
     max_tokens: clamp(opts.maxTokens, 100, 4000, 1000),
@@ -135,7 +135,7 @@ async function* streamCloudflare(
   }
   if (!ai) throw new Error("no-binding");
 
-  const model = opts.model ?? "@cf/qwen/qwen3-30b-a3b-fp8";
+  const model = opts.model ?? "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
   const stream = await ai.run(model, {
     messages,
     max_tokens: clamp(opts.maxTokens, 100, 4000, 1000),
