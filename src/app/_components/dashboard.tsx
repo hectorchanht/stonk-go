@@ -1721,7 +1721,7 @@ function StockBrokers({
       <div
         role="tablist"
         aria-label="Stock broker"
-        className="mb-3 flex overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700"
+        className="mb-3 flex overflow-x-auto rounded-lg border border-zinc-300 [scrollbar-width:none] dark:border-zinc-700 [&::-webkit-scrollbar]:hidden"
       >
         {tabs.map((t) => (
           <button
@@ -1730,7 +1730,7 @@ function StockBrokers({
             aria-selected={tab === t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`flex-1 px-3 py-2 text-sm font-semibold transition ${
+            className={`shrink-0 whitespace-nowrap px-3 py-2 text-sm font-semibold transition sm:flex-1 ${
               tab === t.id
                 ? "bg-zinc-600 text-white"
                 : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-700"
