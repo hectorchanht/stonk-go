@@ -479,11 +479,20 @@ export function Dashboard() {
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 px-4 py-6 sm:px-6">
       <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
-            📈 stonk-go
-          </h1>
-          <p className="text-sm text-zinc-500">personal investing portfolio</p>
+        <div className="flex items-center gap-3">
+          <img
+            src="/logo.webp"
+            alt="stonk-go logo"
+            width={40}
+            height={40}
+            className="h-10 w-10 rounded-xl"
+          />
+          <div>
+            <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
+              stonk-go
+            </h1>
+            <p className="text-sm text-zinc-500">personal investing portfolio</p>
+          </div>
         </div>
         <button
           onClick={() => refetch()}

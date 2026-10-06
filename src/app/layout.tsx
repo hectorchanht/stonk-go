@@ -9,7 +9,10 @@ export const metadata: Metadata = {
   title: "stonk-go · personal investing portfolio",
   description:
     "A simple self-hosted portfolio tracker: holdings, transactions, and live market prices.",
-  icons: [{ rel: "icon", url: "/favicon.ico" }],
+  icons: [
+    { rel: "icon", url: "/favicon.png", type: "image/png" },
+    { rel: "apple-touch-icon", url: "/apple-touch-icon.png" },
+  ],
 };
 
 export default function RootLayout({
