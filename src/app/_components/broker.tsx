@@ -155,8 +155,8 @@ function MoneyStack({ usd, sign }: { usd: number | null; sign?: boolean }) {
   if (usd == null || !Number.isFinite(usd)) return <>—</>;
   const n = convert(usd);
   const num = n.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   });
   const prefix = sign && n > 0 ? "+" : "";
   return (
