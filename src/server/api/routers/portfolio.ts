@@ -157,9 +157,17 @@ async function buildSummary(
     (b) => !manualSymbols.has(canonicalSymbol(b.symbol)),
   );
 
+  // Crypto-exchange positions are NEVER priced by the stock quote feed: a
+  // delisted Binance token like "SLP" would otherwise pick up the Yahoo price
+  // of Simulations Plus (the US stock sharing its ticker), inventing millions
+  // in phantom portfolio value. They use the exchange's own markPrice; without
+  // one they honestly show as no-price instead of a stranger's stock price.
+  const CRYPTO_LABELS = new Set(["BINANCE", "COINBASE", "KRAKEN"]);
   const quotes = await getQuotes([
     ...holdings.map((h) => h.symbol),
-    ...broker.map((b) => b.symbol),
+    ...broker
+      .filter((b) => !CRYPTO_LABELS.has((b.label ?? "").toUpperCase()))
+      .map((b) => b.symbol),
   ]);
   const bySymbol = new Map<string, Quote>(quotes.map((q) => [q.symbol, q]));
   const fx = await getFxRates();
