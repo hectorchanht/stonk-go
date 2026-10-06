@@ -27,7 +27,14 @@ import { getDb } from "~/server/db";
  * @see https://trpc.io/docs/server/context
  */
 export const createTRPCContext = async (opts: { headers: Headers }) => {
-  const session = await getServerAuthSession();
+  // Auth is optional for this app (no providers configured by default), so a
+  // session failure must never take down the whole API.
+  let session: Awaited<ReturnType<typeof getServerAuthSession>> = null;
+  try {
+    session = await getServerAuthSession();
+  } catch (err) {
+    console.error("[trpc] getServerAuthSession failed:", err);
+  }
 
   return {
     // Per-request client: the D1 binding only resolves inside a request.

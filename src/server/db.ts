@@ -27,6 +27,10 @@ const createPrismaClient = () => {
     });
   }
 
+  console.error(
+    "[db] D1 binding `DB` did not resolve; falling back to DATABASE_URL. " +
+      "On Cloudflare Workers this means getCloudflareContext() had no request scope."
+  );
   return new PrismaClient({ log });
 };
 
