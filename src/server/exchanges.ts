@@ -169,8 +169,14 @@ type FetchFn = typeof fetch;
 async function readJson(res: Response, exchange: ExchangeName, what: string): Promise<unknown> {
   if (!res.ok) {
     let detail = "";
+    let text = "";
     try {
-      const body = (await res.json()) as Record<string, unknown>;
+      text = await res.text();
+    } catch {
+      /* unreadable body */
+    }
+    try {
+      const body = JSON.parse(text) as Record<string, unknown>;
       // Binance: { code, msg }. Coinbase: { message } / { error }.
       const msg =
         (body.msg as string | undefined) ??
@@ -179,7 +185,13 @@ async function readJson(res: Response, exchange: ExchangeName, what: string): Pr
       if (msg) detail = `: ${String(msg).slice(0, 200)}`;
       if (typeof body.code !== "undefined") detail = ` (code ${String(body.code)})${detail}`;
     } catch {
-      /* non-JSON error body */
+      // Non-JSON body (e.g. WAF / geo-block HTML page) — include a plain-text snippet.
+      const snippet = text
+        .replace(/<[^>]*>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 160);
+      if (snippet) detail = `: ${snippet}`;
     }
     throw new ExchangeError(exchange, `${what} failed (HTTP ${res.status})${detail}`, res.status);
   }
@@ -190,7 +202,7 @@ function hintForStatus(exchange: ExchangeName, status: number): string {
   if (status === 401 || status === 403) {
     return exchange === "coinbase"
       ? " Check that the API key is correct and has not been deleted."
-      : " Check the API key/secret and that the key has 'Enable Reading' permission (no trading permission needed).";
+      : " Check the API key/secret and that the key has 'Enable Reading' permission (no trading permission needed). If the error mentions a restricted location, Binance is geo-blocking this server's region.";
   }
   if (status === 429) return " Rate limited — wait a minute and sync again.";
   if (status === 451)
