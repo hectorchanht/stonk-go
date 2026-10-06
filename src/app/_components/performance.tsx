@@ -6,6 +6,8 @@ import { api } from "~/trpc/react";
 import { useCurrency } from "~/app/_components/currency";
 import { StatCard } from "~/app/_components/ui";
 import { EquityChart } from "~/app/_components/equity-chart";
+import { ReturnChart } from "~/app/_components/return-chart";
+import { toPercentSeries } from "~/app/_components/equity-chart-data";
 
 /**
  * Performance section: equity curve from daily snapshots + XIRR.
@@ -48,12 +50,14 @@ export function PerformanceSection({
   brokerPositions: BrokerPositionInput[];
 }) {
   const [range, setRange] = useState<number>(90);
+  const [view, setView] = useState<"value" | "pct">("value");
   const { data: curve, isLoading } = api.portfolio.equityCurve.useQuery({
     days: range,
     brokerPositions,
   });
   const { data: perf } = api.portfolio.xirr.useQuery({ brokerPositions });
   const money = useMoney();
+  const { fmtCompact } = useCurrency();
 
   const pts = curve?.points ?? [];
   const source = curve?.source ?? "none";
@@ -77,7 +81,28 @@ export function PerformanceSection({
 
   return (
     <div className="rounded-xl border border-zinc-200 bg-white/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/60 sm:p-5">
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="flex overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-700">
+          {(
+            [
+              { key: "value", label: "Value" },
+              { key: "pct", label: "Performance" },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setView(t.key)}
+              className={`px-3 py-1.5 text-xs font-semibold ${
+                view === t.key
+                  ? "bg-zinc-600 text-white"
+                  : "bg-white text-zinc-600 hover:bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
         <div className="flex overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-700">
           {RANGES.map((r) => (
             <button
@@ -97,14 +122,32 @@ export function PerformanceSection({
       </div>
       {isLoading ? (
         <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
+      ) : view === "value" ? (
+        <EquityChart
+          points={pts}
+          formatMoney={(v) => money(v)}
+          formatAxisMoney={(v) => fmtCompact(v)}
+        />
+      ) : source === "snapshots" ? (
+        <ReturnChart points={toPercentSeries(pts)} />
       ) : (
-        <EquityChart points={pts} formatMoney={(v) => money(v)} />
+        <p className="py-8 text-center text-sm text-zinc-500">
+          The % view needs daily snapshots — they&rsquo;re recorded
+          automatically each day you open the app, so this chart builds itself
+          over time.
+        </p>
       )}
-      {!isLoading && pts.length >= 2 && (
+      {!isLoading && pts.length >= 2 && view === "value" && (
         <p className="mt-1 text-right text-[11px] text-zinc-500">
           {source === "trades"
             ? "From your trade log · last point is today's live value"
             : "Daily snapshots"}
+        </p>
+      )}
+      {!isLoading && pts.length >= 2 && view === "pct" && source === "snapshots" && (
+        <p className="mt-1 text-right text-[11px] text-zinc-500">
+          Cumulative simple return since {first?.date} · not time-weighted —
+          deposits/withdrawals shift it
         </p>
       )}
       <div className="mt-3 grid grid-cols-2 gap-3">

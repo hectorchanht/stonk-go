@@ -66,3 +66,22 @@ export function curveColor(points: EquityPoint[]): string {
   const last = points[points.length - 1]!;
   return last.value >= first.value ? "#34d399" : "#fb7185";
 }
+
+/**
+ * Cumulative simple % return series from dated values:
+ * pct_i = (value_i − value_0) / value_0 × 100.
+ *
+ * This is a SIMPLE cumulative return, NOT time-weighted (TWR): interim
+ * deposits/withdrawals shift it, so the UI must label it as such and must
+ * never present it as IBKR-style TWR. Returns [] when the base value isn't
+ * positive (dividing by it wouldn't be honest) or there are < 2 points.
+ */
+export function toPercentSeries(points: EquityPoint[]): EquityPoint[] {
+  if (points.length < 2) return [];
+  const base = points[0]!.value;
+  if (!(base > 0)) return [];
+  return points.map((p) => ({
+    date: p.date,
+    value: ((p.value - base) / base) * 100,
+  }));
+}

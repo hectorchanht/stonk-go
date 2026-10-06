@@ -7,6 +7,9 @@ import {
   useEffect,
   useState,
 } from "react";
+import { formatMoney, formatMoneyCompact } from "./money";
+
+export { formatMoney, formatMoneyCompact };
 
 /**
  * Display-currency switching for Holdr. IBKR/Flex data is always in USD;
@@ -90,30 +93,6 @@ async function fetchFx(): Promise<FxCache> {
   throw new Error("FX fetch failed");
 }
 
-/** Format a USD amount in the given display currency. */
-export function formatMoney(
-  usd: number,
-  currency: string,
-  rates?: Record<string, number> | null,
-  opts?: { sign?: boolean },
-): string {
-  const rate = rates?.[currency.toLowerCase()] ?? 1;
-  const converted = usd * rate;
-  const sign = opts?.sign && converted > 0 ? "+" : "";
-  try {
-    return (
-      sign +
-      new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency,
-        maximumFractionDigits: 2,
-      }).format(converted)
-    );
-  } catch {
-    return `${sign}${currency} ${converted.toFixed(2)}`;
-  }
-}
-
 type CurrencyCtx = {
   currency: CurrencyCode;
   setCurrency: (c: CurrencyCode) => void;
@@ -123,6 +102,8 @@ type CurrencyCtx = {
   convert: (usd: number) => number;
   /** Format a USD amount in the display currency. */
   fmt: (usd: number, opts?: { sign?: boolean }) => string;
+  /** Compact format for chart axes (HK$1.1M). */
+  fmtCompact: (usd: number) => string;
 };
 
 const Ctx = createContext<CurrencyCtx>({
@@ -134,6 +115,7 @@ const Ctx = createContext<CurrencyCtx>({
   rateDate: null,
   convert: (usd) => usd,
   fmt: (usd, opts) => formatMoney(usd, "USD", null, opts),
+  fmtCompact: (usd) => formatMoneyCompact(usd, "USD", null),
 });
 
 export function CurrencyProvider({ children }: { children: React.ReactNode }) {
@@ -185,10 +167,14 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
       formatMoney(usd, currency, fx?.rates, opts),
     [fx, currency],
   );
+  const fmtCompact = useCallback(
+    (usd: number) => formatMoneyCompact(usd, currency, fx?.rates),
+    [fx, currency],
+  );
 
   return (
     <Ctx.Provider
-      value={{ currency, setCurrency, rates: fx?.rates ?? null, rateDate: fx?.date ?? null, convert, fmt }}
+      value={{ currency, setCurrency, rates: fx?.rates ?? null, rateDate: fx?.date ?? null, convert, fmt, fmtCompact }}
     >
       {children}
     </Ctx.Provider>

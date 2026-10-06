@@ -2,31 +2,32 @@
 
 import { useEffect, useRef } from "react";
 import {
-  AreaSeries,
   ColorType,
   CrosshairMode,
+  LineSeries,
+  LineStyle,
   createChart,
-  type AreaData,
   type IChartApi,
   type ISeriesApi,
+  type LineData,
   type MouseEventParams,
   type Time,
+  type WhitespaceData,
 } from "lightweight-charts";
 import {
   chartDayToIso,
-  curveColor,
-  toAreaData,
+  isoToChartDay,
   type ChartDay,
   type EquityPoint,
 } from "./equity-chart-data";
 
 const CHART_HEIGHT = 240;
+const UP = "#34d399";
+const DOWN = "#fb7185";
 
-function withAlpha(hex: string, alpha: number): string {
-  const a = Math.round(alpha * 255)
-    .toString(16)
-    .padStart(2, "0");
-  return `${hex}${a}`;
+/** Axis/tooltip label: +40.00%, -20.00% (percentages keep 2 decimals). */
+export function formatPct(p: number): string {
+  return `${p.toFixed(2)}%`;
 }
 
 function timeToIso(t: Time): string {
@@ -37,41 +38,47 @@ function timeToIso(t: Time): string {
   return String(t);
 }
 
+type PctDatum = LineData<Time> | WhitespaceData<Time>;
+
+function splitSeries(points: EquityPoint[]): {
+  up: PctDatum[];
+  down: PctDatum[];
+} {
+  const up: PctDatum[] = [];
+  const down: PctDatum[] = [];
+  for (const p of points) {
+    const time = isoToChartDay(p.date);
+    if (time === null || !Number.isFinite(p.value)) continue;
+    if (p.value >= 0) {
+      up.push({ time, value: p.value });
+      down.push({ time });
+    } else {
+      up.push({ time });
+      down.push({ time, value: p.value });
+    }
+  }
+  return { up, down };
+}
+
 /**
- * Interactive equity chart (TradingView lightweight-charts):
- * - crosshair with tooltip (date + value)
- * - drag to pan, scroll / pinch to zoom
- * - auto-resizes with its container
+ * Cumulative % return chart (IBKR "Performance" tab style):
+ * - green line above zero, red below zero, dashed zero line
+ * - % y-axis (+40.00%), crosshair tooltip with date + %
+ * - drag to pan, scroll / pinch to zoom, auto-resize
  *
- * The upstream `portfolio.equityCurve` returns a single series, so there is
- * one area series. (When the source is the trade log, the points already
- * represent net-invested with the last point replaced by today's live value.)
+ * `points` must be a cumulative simple % series (see toPercentSeries) —
+ * simple return, NOT time-weighted. The parent labels it as such.
  */
-export function EquityChart({
-  points,
-  formatMoney,
-  formatAxisMoney,
-}: {
-  points: EquityPoint[];
-  /** Formats a USD value for the tooltip (whole units, no decimals). */
-  formatMoney: (v: number) => string;
-  /** Compact labels for the price axis (HK$1.1M); defaults to formatMoney. */
-  formatAxisMoney?: (v: number) => string;
-}) {
+export function ReturnChart({ points }: { points: EquityPoint[] }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tipRef = useRef<HTMLDivElement | null>(null);
   const tipDateRef = useRef<HTMLDivElement | null>(null);
   const tipValueRef = useRef<HTMLDivElement | null>(null);
-  const apiRef = useRef<{ chart: IChartApi; series: ISeriesApi<"Area"> } | null>(
-    null,
-  );
-  const formatRef = useRef(formatMoney);
-  const formatAxisRef = useRef(formatAxisMoney ?? formatMoney);
-
-  useEffect(() => {
-    formatRef.current = formatMoney;
-    formatAxisRef.current = formatAxisMoney ?? formatMoney;
-  }, [formatMoney, formatAxisMoney]);
+  const apiRef = useRef<{
+    chart: IChartApi;
+    up: ISeriesApi<"Line">;
+    down: ISeriesApi<"Line">;
+  } | null>(null);
 
   // Create the chart once.
   useEffect(() => {
@@ -107,8 +114,6 @@ export function EquityChart({
         timeVisible: false,
         secondsVisible: false,
       },
-      // Touch: horizontal drag pans the chart; vertical drag still scrolls
-      // the page. Pinch zooms.
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
@@ -121,20 +126,33 @@ export function EquityChart({
         axisPressedMouseMove: true,
       },
       localization: {
-        priceFormatter: (p: number) => formatAxisRef.current(p),
+        priceFormatter: (p: number) => formatPct(p),
       },
     });
 
-    const series = chart.addSeries(AreaSeries, {
+    const up = chart.addSeries(LineSeries, {
       lineWidth: 2,
-      lineColor: "#34d399",
-      topColor: withAlpha("#34d399", 0.35),
-      bottomColor: withAlpha("#34d399", 0.02),
-      priceLineVisible: true,
+      color: UP,
+      priceLineVisible: false,
       lastValueVisible: true,
       crosshairMarkerVisible: true,
     });
-    apiRef.current = { chart, series };
+    const down = chart.addSeries(LineSeries, {
+      lineWidth: 2,
+      color: DOWN,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      crosshairMarkerVisible: true,
+    });
+    up.createPriceLine({
+      price: 0,
+      color: "rgba(161,161,170,0.45)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: "",
+    });
+    apiRef.current = { chart, up, down };
 
     chart.subscribeCrosshairMove((param: MouseEventParams<Time>) => {
       const tip = tipRef.current;
@@ -145,17 +163,19 @@ export function EquityChart({
         tip.style.display = "none";
         return;
       }
-      const datum = param.seriesData.get(api.series) as
-        | AreaData<Time>
-        | undefined;
-      if (datum === undefined) {
+      const datum = (param.seriesData.get(api.up) ??
+        param.seriesData.get(api.down)) as LineData<Time> | undefined;
+      if (datum === undefined || !("value" in datum)) {
         tip.style.display = "none";
         return;
       }
       if (tipDateRef.current !== null)
         tipDateRef.current.textContent = timeToIso(param.time);
-      if (tipValueRef.current !== null)
-        tipValueRef.current.textContent = formatRef.current(datum.value);
+      if (tipValueRef.current !== null) {
+        tipValueRef.current.textContent = formatPct(datum.value);
+        tipValueRef.current.style.color =
+          datum.value >= 0 ? UP : DOWN;
+      }
       tip.style.display = "block";
       const x = param.point.x;
       const y = param.point.y;
@@ -184,21 +204,16 @@ export function EquityChart({
   useEffect(() => {
     const api = apiRef.current;
     if (api === null) return;
-    const color = curveColor(points);
-    api.series.applyOptions({
-      lineColor: color,
-      topColor: withAlpha(color, 0.35),
-      bottomColor: withAlpha(color, 0.02),
-    });
-    api.series.setData(toAreaData(points));
+    const { up, down } = splitSeries(points);
+    api.up.setData(up);
+    api.down.setData(down);
     api.chart.timeScale().fitContent();
   }, [points]);
 
   if (points.length < 2) {
     return (
       <p className="py-8 text-center text-sm text-zinc-500">
-        Log your first trade and your performance curve starts here — daily
-        snapshots refine it each time you open the app.
+        Not enough points to chart yet.
       </p>
     );
   }
@@ -212,7 +227,7 @@ export function EquityChart({
         <div ref={tipDateRef} className="text-[11px] text-zinc-400" />
         <div
           ref={tipValueRef}
-          className="text-sm font-semibold tabular-nums text-zinc-100"
+          className="text-sm font-semibold tabular-nums"
         />
       </div>
     </div>

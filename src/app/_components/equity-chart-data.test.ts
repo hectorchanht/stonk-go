@@ -4,6 +4,7 @@ import {
   curveColor,
   isoToChartDay,
   toAreaData,
+  toPercentSeries,
 } from "./equity-chart-data";
 
 describe("isoToChartDay", () => {
@@ -71,5 +72,51 @@ describe("curveColor", () => {
         { date: "2026-10-02", value: 100 },
       ]),
     ).toBe("#34d399");
+  });
+});
+
+describe("toPercentSeries", () => {
+  it("computes cumulative simple return vs the first point", () => {
+    expect(
+      toPercentSeries([
+        { date: "2026-08-01", value: 100 },
+        { date: "2026-08-02", value: 120 },
+        { date: "2026-08-03", value: 80 },
+      ]),
+    ).toEqual([
+      { date: "2026-08-01", value: 0 },
+      { date: "2026-08-02", value: 20 },
+      { date: "2026-08-03", value: -20 },
+    ]);
+  });
+
+  it("returns [] when the base value is not positive", () => {
+    expect(
+      toPercentSeries([
+        { date: "2026-08-01", value: 0 },
+        { date: "2026-08-02", value: 50 },
+      ]),
+    ).toEqual([]);
+    expect(
+      toPercentSeries([
+        { date: "2026-08-01", value: -10 },
+        { date: "2026-08-02", value: 50 },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("returns [] for fewer than 2 points", () => {
+    expect(toPercentSeries([])).toEqual([]);
+    expect(toPercentSeries([{ date: "2026-08-01", value: 100 }])).toEqual([]);
+  });
+
+  it("keeps dates aligned with the input points", () => {
+    const out = toPercentSeries([
+      { date: "2026-08-01", value: 200 },
+      { date: "2026-09-01", value: 235.28 },
+    ]);
+    expect(out[0]!.date).toBe("2026-08-01");
+    expect(out[1]!.date).toBe("2026-09-01");
+    expect(out[1]!.value).toBeCloseTo(17.64, 2);
   });
 });
