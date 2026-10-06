@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "~/trpc/react";
 import { useCurrency } from "~/app/_components/currency";
 import { StatCard } from "~/app/_components/ui";
+import { EquityChart } from "~/app/_components/equity-chart";
 
 /**
  * Performance section: equity curve from daily snapshots + XIRR.
@@ -34,86 +35,6 @@ const pct = (v: number | null, opts?: { sign?: boolean }) => {
   return `${sign}${Math.abs(v).toFixed(2)}%`;
 };
 
-function EquityChart({
-  points,
-  source,
-}: {
-  points: { date: string; value: number }[];
-  source: "snapshots" | "trades" | "none";
-}) {
-  const money = useMoney();
-  const W = 640;
-  const H = 200;
-  const PAD = 10;
-
-  if (points.length < 2) {
-    return (
-      <p className="py-8 text-center text-sm text-zinc-500">
-        Log your first trade and your performance curve starts here — daily
-        snapshots refine it each time you open the app.
-      </p>
-    );
-  }
-
-  const vals = points.map((p) => p.value);
-  const min = Math.min(...vals);
-  const max = Math.max(...vals);
-  const span = max - min || 1;
-  const x = (i: number) => PAD + (i / (points.length - 1)) * (W - PAD * 2);
-  const y = (v: number) => PAD + (1 - (v - min) / span) * (H - PAD * 2);
-  const line = points
-    .map(
-      (p, i) =>
-        `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`,
-    )
-    .join(" ");
-  const area = `${line} L${x(points.length - 1).toFixed(1)},${H} L${x(0).toFixed(1)},${H} Z`;
-  const up = points[points.length - 1]!.value >= points[0]!.value;
-  const stroke = up ? "#34d399" : "#fb7185";
-  const last = points[points.length - 1]!;
-
-  return (
-    <div>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className="w-full"
-        role="img"
-        aria-label={
-          source === "trades"
-            ? "Net invested over time, ending at today's live value"
-            : "Portfolio value over time"
-        }
-      >
-        <path
-          d={area}
-          fill={up ? "rgba(52,211,153,0.12)" : "rgba(251,113,133,0.12)"}
-        />
-        <path
-          d={line}
-          fill="none"
-          stroke={stroke}
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        <circle
-          cx={x(points.length - 1)}
-          cy={y(last.value)}
-          r="4"
-          fill={stroke}
-        />
-      </svg>
-      <div className="mt-1 flex items-center justify-between text-xs text-zinc-500">
-        <span className="tabular-nums">{points[0]!.date}</span>
-        <span className="tabular-nums">
-          {money(min)} – {money(max)}
-        </span>
-        <span className="tabular-nums">{last.date}</span>
-      </div>
-    </div>
-  );
-}
-
 const RANGES = [
   { label: "1M", days: 30 },
   { label: "3M", days: 90 },
@@ -132,6 +53,7 @@ export function PerformanceSection({
     brokerPositions,
   });
   const { data: perf } = api.portfolio.xirr.useQuery({ brokerPositions });
+  const money = useMoney();
 
   const pts = curve?.points ?? [];
   const source = curve?.source ?? "none";
@@ -176,7 +98,7 @@ export function PerformanceSection({
       {isLoading ? (
         <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
       ) : (
-        <EquityChart points={pts} source={source} />
+        <EquityChart points={pts} formatMoney={(v) => money(v)} />
       )}
       {!isLoading && pts.length >= 2 && (
         <p className="mt-1 text-right text-[11px] text-zinc-500">
