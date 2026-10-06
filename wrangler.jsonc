@@ -21,5 +21,10 @@
     }
   ],
   // Workers AI for portfolio insights (no key needed; billed to the account).
-  "ai": { "binding": "AI" }
+  "ai": { "binding": "AI" },
+  // Plain-text vars MUST live here: `wrangler deploy` wipes dashboard
+  // variables that aren't declared in this file (secrets survive).
+  "vars": {
+    "NEXTAUTH_URL": "https://holdr.lol"
+  }
 }
