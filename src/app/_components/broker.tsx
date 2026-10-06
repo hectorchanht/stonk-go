@@ -33,6 +33,7 @@ import {
   Spinner,
   StatCard,
   usePager,
+  useTableSort,
   type DataColumn,
 } from "~/app/_components/ui";
 import { DividendIncome } from "~/app/_components/dividend-income";
@@ -327,7 +328,6 @@ function AnalyticsView({ data }: { data: Analytics }) {
         );
 
   const symPager = usePager(data.symbols, 10);
-  const tradePager = usePager(data.recentTrades, 10);
 
   const toneOf = (v: number | null): "pos" | "neg" | "neutral" =>
     v == null ? "neutral" : v > 0 ? "pos" : v < 0 ? "neg" : "neutral";
@@ -378,6 +378,7 @@ function AnalyticsView({ data }: { data: Analytics }) {
     {
       key: "date",
       header: "Date",
+      sortValue: (tr) => tr.tradeDate.replace(/\D/g, ""),
       render: (tr) => (
         <span className="whitespace-nowrap text-zinc-400">
           {fmtYmd(tr.tradeDate)}
@@ -387,6 +388,8 @@ function AnalyticsView({ data }: { data: Analytics }) {
     {
       key: "symbol",
       header: "Symbol",
+      sortValue: (tr) => tr.symbol,
+      sortDescFirst: false,
       render: (tr) => (
         <span className="font-semibold text-zinc-100">
           {tr.symbol}
@@ -402,6 +405,7 @@ function AnalyticsView({ data }: { data: Analytics }) {
       key: "qty",
       header: "Qty",
       align: "right",
+      sortValue: (tr) => tr.quantity,
       render: (tr) => (
         <span className="text-zinc-300">{qtyFmt(tr.quantity)}</span>
       ),
@@ -410,6 +414,7 @@ function AnalyticsView({ data }: { data: Analytics }) {
       key: "price",
       header: "Price",
       align: "right",
+      sortValue: (tr) => tr.tradePrice,
       render: (tr) => (
         <span className="text-zinc-300">
           {tr.tradePrice == null ? "—" : money(tr.tradePrice)}
@@ -420,6 +425,7 @@ function AnalyticsView({ data }: { data: Analytics }) {
       key: "pnl",
       header: "P/L",
       align: "right",
+      sortValue: (tr) => tr.realizedPnl,
       render: (tr) => (
         <span>
           {moneyFxSigned(tr.realizedPnl, tr.currency)}
@@ -428,6 +434,17 @@ function AnalyticsView({ data }: { data: Analytics }) {
       ),
     },
   ];
+
+  const tradeSort = useTableSort(tradeColumns, {
+    defaultKey: "date",
+    storageKey: "ibkr-trades",
+  });
+  const sortedTrades = tradeSort.applySort(data.recentTrades);
+  const tradePager = usePager(sortedTrades, 10);
+  const handleTradeSortChange = (key: string) => {
+    tradeSort.toggleSort(key);
+    tradePager.reset();
+  };
 
   return (
     <div className="mt-5 border-t border-zinc-800 pt-4">
@@ -488,6 +505,8 @@ function AnalyticsView({ data }: { data: Analytics }) {
                   columns={tradeColumns}
                   rows={tradePager.rows}
                   keyOf={(tr) => tr.id}
+                  sort={tradeSort.sort}
+                  onSortChange={handleTradeSortChange}
                   footer={
                     <Pagination
                       page={tradePager.page}

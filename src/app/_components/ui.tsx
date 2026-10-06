@@ -1,7 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Info } from "lucide-react";
+import {
+  compareSortValues,
+  resolveSortToggle,
+  sortRows,
+  type SortableColumn,
+  type SortDir,
+  type SortValue,
+  type TableSortState,
+} from "~/app/_components/table-sort";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  Info,
+} from "lucide-react";
 
 /**
  * Small ⓘ that explains a section. Hover/focus shows it on desktop,
@@ -208,11 +224,92 @@ export function StatCard({
 
 /* ---------------- unified table ---------------- */
 
-export interface DataColumn<T> {
-  key: string;
+export interface DataColumn<T> extends SortableColumn<T> {
   header: React.ReactNode;
   align?: "left" | "center" | "right";
   render: (row: T) => React.ReactNode;
+}
+
+// Pure sorting primitives live in ./table-sort (a .ts module so vitest can
+// import it under the repo's "jsx": "preserve" config); re-exported here so
+// table consumers keep importing from "~/app/_components/ui".
+export { compareSortValues, resolveSortToggle, sortRows };
+export type { SortableColumn, SortDir, SortValue, TableSortState };
+
+const SORT_STORAGE_PREFIX = "holdr.tablesort.";
+
+function loadSortState(storageKey?: string): TableSortState | null {
+  if (!storageKey) return null;
+  try {
+    const raw = window.localStorage.getItem(SORT_STORAGE_PREFIX + storageKey);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as { key?: unknown; dir?: unknown };
+    if (typeof p.key === "string" && (p.dir === 1 || p.dir === -1)) {
+      return { key: p.key, dir: p.dir };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/**
+ * Controlled sort state for a DataTable. Returns the active state, a
+ * toggle handler for header clicks, and applySort(rows) which stably
+ * sorts the FULL row list (call it before pagination). Optionally
+ * persists to localStorage via storageKey.
+ */
+export function useTableSort<T>(
+  columns: DataColumn<T>[],
+  opts?: { defaultKey?: string; storageKey?: string },
+): {
+  sort: TableSortState | null;
+  toggleSort: (key: string) => void;
+  applySort: (rows: T[]) => T[];
+} {
+  const [state, setState] = useState<TableSortState | null>(() => {
+    const loaded = loadSortState(opts?.storageKey);
+    if (loaded && columns.some((c) => c.key === loaded.key && c.sortValue)) {
+      return loaded;
+    }
+    const def =
+      columns.find((c) => c.key === opts?.defaultKey && c.sortValue) ??
+      columns.find((c) => c.sortValue);
+    if (!def) return null;
+    return { key: def.key, dir: def.sortDescFirst === false ? 1 : -1 };
+  });
+
+  const toggleSort = useCallback(
+    (key: string) => {
+      setState((prev) => {
+        const next = resolveSortToggle(prev, key, columns);
+        if (next && opts?.storageKey) {
+          try {
+            window.localStorage.setItem(
+              SORT_STORAGE_PREFIX + opts.storageKey,
+              JSON.stringify(next),
+            );
+          } catch {
+            /* ignore */
+          }
+        }
+        return next;
+      });
+    },
+    [columns, opts?.storageKey],
+  );
+
+  const applySort = useCallback(
+    (rows: T[]) => {
+      if (!state) return rows;
+      const col = columns.find((c) => c.key === state.key);
+      if (!col?.sortValue) return rows;
+      return sortRows(rows, col.sortValue, state.dir);
+    },
+    [columns, state],
+  );
+
+  return { sort: state, toggleSort, applySort };
 }
 
 /**
@@ -227,6 +324,8 @@ export function DataTable<T>({
   minWidth,
   emptyText,
   footer,
+  sort,
+  onSortChange,
 }: {
   columns: DataColumn<T>[];
   rows: T[];
@@ -234,9 +333,41 @@ export function DataTable<T>({
   minWidth?: string;
   emptyText?: string;
   footer?: React.ReactNode;
+  /**
+   * Controlled sort state (from useTableSort). When onSortChange is given,
+   * columns with sortValue render as tappable headers with direction arrows.
+   * The caller sorts the FULL row list (before pagination) via applySort.
+   */
+  sort?: TableSortState | null;
+  onSortChange?: (key: string) => void;
 }) {
   const alignCls = (a?: DataColumn<T>["align"]) =>
     a === "right" ? "text-right" : a === "center" ? "text-center" : "text-left";
+  const sortDirFor = (c: DataColumn<T>): SortDir | null =>
+    c.sortValue && onSortChange && sort && sort.key === c.key ? sort.dir : null;
+  const renderHeader = (c: DataColumn<T>) => {
+    if (!c.sortValue || !onSortChange) return c.header;
+    const activeDir = sortDirFor(c);
+    return (
+      <button
+        type="button"
+        onClick={() => onSortChange(c.key)}
+        aria-label={`Sort by ${typeof c.header === "string" ? c.header : c.key}`}
+        className={`inline-flex min-h-[44px] cursor-pointer items-center gap-1 uppercase hover:text-zinc-800 dark:hover:text-zinc-200 ${
+          activeDir != null ? "text-zinc-800 dark:text-zinc-100" : "text-zinc-500"
+        } ${c.align === "right" ? "flex-row-reverse" : ""}`}
+      >
+        {c.header}
+        {activeDir == null ? (
+          <ArrowUpDown size={12} aria-hidden className="opacity-40" />
+        ) : activeDir === 1 ? (
+          <ArrowUp size={12} aria-hidden />
+        ) : (
+          <ArrowDown size={12} aria-hidden />
+        )}
+      </button>
+    );
+  };
   return (
     <div>
       <div className="overflow-x-auto">
@@ -246,14 +377,24 @@ export function DataTable<T>({
         >
           <thead>
             <tr className="border-b border-zinc-200 dark:border-zinc-800 text-xs uppercase tracking-wider text-zinc-500">
-              {columns.map((c) => (
-                <th
-                  key={c.key}
-                  className={`px-3 py-2 font-medium ${alignCls(c.align)}`}
-                >
-                  {c.header}
-                </th>
-              ))}
+              {columns.map((c) => {
+                const d = sortDirFor(c);
+                return (
+                  <th
+                    key={c.key}
+                    className={`px-3 py-1 font-medium ${alignCls(c.align)}`}
+                    aria-sort={
+                      d == null
+                        ? undefined
+                        : d === 1
+                          ? "ascending"
+                          : "descending"
+                    }
+                  >
+                    {renderHeader(c)}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>

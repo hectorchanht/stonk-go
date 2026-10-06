@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { Bell, X } from "lucide-react";
+import { ArrowUpDown, Bell, X } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 
@@ -13,6 +13,19 @@ import { api, type RouterOutputs } from "~/trpc/react";
  */
 
 type AlertRow = RouterOutputs["alerts"]["list"][number];
+
+type PriceAlertSort = "symbol" | "target";
+const PA_SORT_KEY = "holdr.pricealert-sort";
+
+function loadPaSort(): PriceAlertSort {
+  try {
+    const v = window.localStorage.getItem(PA_SORT_KEY);
+    if (v === "target" || v === "symbol") return v;
+  } catch {
+    /* ignore */
+  }
+  return "symbol";
+}
 
 /** Native-currency prefix for display (HKEX codes are numeric). */
 const csym = (s: string) => (/^\d{1,5}$/.test(s.trim()) ? "HK$" : "$");
@@ -30,6 +43,16 @@ export function PriceAlerts() {
   const [target, setTarget] = useState("");
   const [direction, setDirection] = useState<"above" | "below">("above");
   const [error, setError] = useState<string | null>(null);
+  const [paSort, setPaSort] = useState<PriceAlertSort>(loadPaSort);
+
+  const changePaSort = (m: PriceAlertSort) => {
+    setPaSort(m);
+    try {
+      window.localStorage.setItem(PA_SORT_KEY, m);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const create = api.alerts.create.useMutation({
     onSuccess: () => {
@@ -71,8 +94,15 @@ export function PriceAlerts() {
   }
 
   const alerts = listQ.data ?? [];
-  const active = alerts.filter((a) => a.active);
-  const done = alerts.filter((a) => !a.active);
+  // Stable: ties keep server order.
+  const sortPa = (list: AlertRow[]) =>
+    [...list].sort((a, b) =>
+      paSort === "target"
+        ? a.targetPrice - b.targetPrice
+        : a.symbol.localeCompare(b.symbol),
+    );
+  const active = sortPa(alerts.filter((a) => a.active));
+  const done = sortPa(alerts.filter((a) => !a.active));
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -198,6 +228,35 @@ export function PriceAlerts() {
         </p>
       ) : (
         <>
+          {alerts.length > 1 && (
+            <div
+              className="flex items-center gap-1 border-b border-zinc-200 px-4 py-1 dark:border-zinc-800 sm:px-5"
+              role="group"
+              aria-label="Sort price alerts"
+            >
+              <ArrowUpDown size={13} className="mr-1 shrink-0 text-zinc-500" aria-hidden />
+              {(
+                [
+                  { mode: "symbol", label: "Symbol" },
+                  { mode: "target", label: "Target" },
+                ] as const
+              ).map(({ mode, label }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => changePaSort(mode)}
+                  aria-pressed={paSort === mode}
+                  className={`min-h-[44px] rounded-lg px-3 text-xs font-semibold ${
+                    paSort === mode
+                      ? "bg-zinc-700 text-zinc-100"
+                      : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           <ul className="divide-y divide-zinc-200/60 dark:divide-zinc-800/60">
             {active.map(row)}
           </ul>

@@ -58,6 +58,7 @@ import {
   StatCardSkeleton,
   downloadCsv,
   usePager,
+  useTableSort,
   type DataColumn,
 } from "~/app/_components/ui";
 import {
@@ -820,8 +821,6 @@ function TransactionList() {
     );
   }, [data, typeFilter, query]);
 
-  const pager = usePager(filtered, 12);
-
   const exportCsv = () =>
     downloadCsv(
       "holdr-transactions.csv",
@@ -842,6 +841,8 @@ function TransactionList() {
     {
       key: "type",
       header: "Type",
+      sortValue: (t) => t.type,
+      sortDescFirst: false,
       render: (t) => (
         <span
           className={`rounded px-2 py-0.5 text-xs font-bold ${
@@ -857,6 +858,8 @@ function TransactionList() {
     {
       key: "symbol",
       header: "Symbol",
+      sortValue: (t) => t.symbol,
+      sortDescFirst: false,
       render: (t) => (
         <>
           <span className="font-semibold text-zinc-900 dark:text-zinc-100">{t.symbol}</span>
@@ -880,6 +883,7 @@ function TransactionList() {
       key: "detail",
       header: "Detail",
       align: "right",
+      sortValue: (t) => t.quantity,
       render: (t) => (
         <span className="whitespace-nowrap text-zinc-600 dark:text-zinc-400">
           {t.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })} @{" "}
@@ -891,6 +895,7 @@ function TransactionList() {
       key: "date",
       header: "Date",
       align: "right",
+      sortValue: (t) => new Date(t.executedAt).getTime(),
       render: (t) => (
         <span className="whitespace-nowrap text-xs text-zinc-500">
           {new Date(t.executedAt).toLocaleDateString("en-US", {
@@ -925,6 +930,17 @@ function TransactionList() {
         ) : null,
     },
   ];
+
+  const txnSort = useTableSort(columns, {
+    defaultKey: "date",
+    storageKey: "txn",
+  });
+  // applySort is cheap (≤200 rows); recompute each render keeps deps simple.
+  const pager = usePager(txnSort.applySort(filtered), 12);
+  const handleTxnSortChange = (key: string) => {
+    txnSort.toggleSort(key);
+    pager.reset();
+  };
 
   return (
     <div className={`${card} overflow-hidden p-0`}>
@@ -982,6 +998,8 @@ function TransactionList() {
           columns={columns}
           rows={pager.rows}
           keyOf={(t) => t.id}
+          sort={txnSort.sort}
+          onSortChange={handleTxnSortChange}
           emptyText={
             query || typeFilter !== "ALL"
               ? "No transactions match that filter."

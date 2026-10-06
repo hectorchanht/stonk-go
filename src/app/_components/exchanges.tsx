@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   Bitcoin,
   Check,
   ChevronDown,
@@ -20,6 +23,7 @@ import {
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { useCurrency } from "~/app/_components/currency";
+import { sortRows, type SortDir } from "~/app/_components/ui";
 import { syncBinanceViaWs } from "~/app/_components/binance-ws";
 import {
   Code,
@@ -305,12 +309,70 @@ function GearMenu({
   );
 }
 
+type BalSortKey = "asset" | "qty" | "price" | "value";
+
 function BalancesTable({ data }: { data: SyncResult }) {
   const { fmt } = useCurrency();
   const money = (cents: number | null) =>
     cents == null ? "—" : fmt(cents / 100);
-  const rows = [...data.items].sort(
-    (a, b) => (b.valueCents ?? -1) - (a.valueCents ?? -1),
+  const [sortKey, setSortKey] = useState<BalSortKey>("value");
+  const [sortDir, setSortDir] = useState<SortDir>(-1);
+  const sortVal = (
+    r: SyncResult["items"][number],
+    k: BalSortKey,
+  ): string | number | bigint | null => {
+    switch (k) {
+      case "asset":
+        return r.asset;
+      case "qty": {
+        const n = Number(r.quantity);
+        return Number.isNaN(n) ? null : n;
+      }
+      case "price":
+        return r.priceUsd == null || Number.isNaN(Number(r.priceUsd))
+          ? null
+          : Number(r.priceUsd);
+      case "value":
+        return r.valueCents;
+    }
+  };
+  // Stable, view-only: ties keep sync order; unpriced rows sink to the bottom.
+  const rows = sortRows(data.items, (r) => sortVal(r, sortKey), sortDir);
+  const toggleSort = (k: BalSortKey) => {
+    if (sortKey === k) {
+      setSortDir((d) => (d === 1 ? -1 : 1));
+    } else {
+      setSortKey(k);
+      setSortDir(k === "asset" ? 1 : -1);
+    }
+  };
+  const sortTh = (
+    label: string,
+    k: BalSortKey,
+    align: "left" | "right" = "right",
+  ) => (
+    <button
+      type="button"
+      onClick={() => toggleSort(k)}
+      aria-label={`Sort by ${label}`}
+      aria-sort={
+        sortKey === k ? (sortDir === 1 ? "ascending" : "descending") : undefined
+      }
+      className={`inline-flex min-h-[44px] cursor-pointer items-center gap-1 uppercase hover:text-zinc-300 ${
+        sortKey === k ? "text-zinc-200" : "text-zinc-500"
+      } ${align === "right" ? "flex-row-reverse" : ""}`}
+    >
+      {label}
+      {sortKey === k ? (
+        sortDir === 1 ? (
+          <ArrowUp size={12} aria-hidden />
+        ) : (
+          <ArrowDown size={12} aria-hidden />
+        )
+      ) : (
+        <ArrowUpDown size={12} aria-hidden className="opacity-40" />
+      )}
+    </button>
   );
   // Long asset lists collapse: show the top 8, expand for the rest.
   const [showAll, setShowAll] = useState(false);
@@ -337,10 +399,10 @@ function BalancesTable({ data }: { data: SyncResult }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs uppercase tracking-wide text-zinc-500">
-              <th className="pb-2 pr-3">Asset</th>
-              <th className="pb-2 pr-3 text-right">Qty</th>
-              <th className="pb-2 pr-3 text-right">Price</th>
-              <th className="pb-2 text-right">Value</th>
+              <th className="pb-1 pr-3">{sortTh("Asset", "asset", "left")}</th>
+              <th className="pb-1 pr-3 text-right">{sortTh("Qty", "qty")}</th>
+              <th className="pb-1 pr-3 text-right">{sortTh("Price", "price")}</th>
+              <th className="pb-1 text-right">{sortTh("Value", "value")}</th>
             </tr>
           </thead>
           <tbody>

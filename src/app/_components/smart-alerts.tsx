@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ArrowUpDown,
   Bell,
   ChevronDown,
   TrendingDown,
@@ -30,6 +31,28 @@ interface Alert {
 
 const THRESHOLD_KEY = "holdr.alert-threshold";
 const DISMISSED_KEY = "holdr.alert-dismissed";
+const SORT_KEY = "holdr.alert-sort";
+
+type AlertSortMode = "severity" | "kind" | "symbol";
+
+const KIND_ORDER: Record<Alert["kind"], number> = {
+  spike: 0,
+  drop: 1,
+  "big-loser": 2,
+  concentration: 3,
+  "no-price": 4,
+  "no-basis": 5,
+};
+
+function loadSortMode(): AlertSortMode {
+  try {
+    const v = window.localStorage.getItem(SORT_KEY);
+    if (v === "kind" || v === "symbol" || v === "severity") return v;
+  } catch {
+    /* ignore */
+  }
+  return "severity";
+}
 
 function loadThreshold(): number {
   try {
@@ -151,6 +174,7 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
   const [dismissed, setDismissed] = useState<Record<string, number>>(loadDismissed);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [sortMode, setSortMode] = useState<AlertSortMode>(loadSortMode);
   // Long volatile days can produce many alerts — collapse the tail.
   const [showAll, setShowAll] = useState(false);
   const MAX_VISIBLE = 4;
@@ -173,10 +197,28 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
         const d = dismissed[a.id];
         return !d || now - d > 24 * 3600 * 1000;
       });
-    // Critical first, then warn, then info.
+    // Stable: ties keep scan order, so sorting never shuffles equal alerts.
     const order = { critical: 0, warn: 1, info: 2 };
-    return fresh.sort((a, b) => order[a.severity] - order[b.severity]);
-  }, [rows, threshold, dismissed]);
+    return fresh
+      .map((a, i) => ({ a, i }))
+      .sort((x, y) => {
+        if (sortMode === "kind")
+          return KIND_ORDER[x.a.kind] - KIND_ORDER[y.a.kind] || x.i - y.i;
+        if (sortMode === "symbol")
+          return x.a.symbol.localeCompare(y.a.symbol) || x.i - y.i;
+        return order[x.a.severity] - order[y.a.severity] || x.i - y.i;
+      })
+      .map(({ a }) => a);
+  }, [rows, threshold, dismissed, sortMode]);
+
+  const changeSortMode = (m: AlertSortMode) => {
+    setSortMode(m);
+    try {
+      window.localStorage.setItem(SORT_KEY, m);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const dismiss = (id: string) => {
     setDismissed((d) => {
@@ -225,6 +267,37 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
           Alert at ±{threshold}%
         </button>
       </div>
+
+      {alerts.length > 1 && (
+        <div
+          className="mb-2 flex items-center gap-1"
+          role="group"
+          aria-label="Sort alerts"
+        >
+          <ArrowUpDown size={13} className="mr-1 shrink-0 text-zinc-500" aria-hidden />
+          {(
+            [
+              { mode: "severity", label: "Severity" },
+              { mode: "kind", label: "Type" },
+              { mode: "symbol", label: "Symbol" },
+            ] as const
+          ).map(({ mode, label }) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => changeSortMode(mode)}
+              aria-pressed={sortMode === mode}
+              className={`min-h-[44px] rounded-lg px-3 text-xs font-semibold ${
+                sortMode === mode
+                  ? "bg-zinc-700 text-zinc-100"
+                  : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {showSettings && (
         <div className="mb-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-950/60 p-3">
