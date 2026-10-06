@@ -826,7 +826,7 @@ function HoldingsTable({
       <div className="sm:hidden">
         {pager.rows.map((r) => (
           <div
-            key={r.symbol}
+            key={r.id}
             className="border-b border-zinc-200 dark:border-zinc-800/60 px-3 py-3 last:border-0"
           >
             <div className="flex items-start justify-between gap-2">
@@ -919,7 +919,7 @@ function HoldingsTable({
         <DataTable
           columns={columns}
           rows={pager.rows}
-          keyOf={(r) => r.symbol}
+          keyOf={(r) => r.id}
           minWidth="760px"
           emptyText={query ? "No holdings match that filter." : "No positions yet."}
           footer={

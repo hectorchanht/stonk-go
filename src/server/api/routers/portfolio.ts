@@ -272,7 +272,9 @@ async function buildSummary(
     const totalPL =
       marketValue != null && costBasis != null ? marketValue - costBasis : null;
     rows.push({
-      id: `broker:${b.symbol}`,
+      // Label in the id: the same symbol can live on two brokers
+      // (e.g. BTC on Binance + Coinbase) — bare-symbol ids would collide.
+      id: `broker:${(b.label ?? "IBKR").toUpperCase()}:${b.symbol}`,
       symbol: b.symbol,
       currency,
       name: q?.name ?? null,

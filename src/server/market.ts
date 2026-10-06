@@ -39,9 +39,11 @@ export interface Quote {
 const CACHE_TTL_MS = 60_000;
 const quoteCache = new Map<string, { at: number; quote: Quote }>();
 
-/** Yahoo ticker for a symbol — HK codes need the .HK suffix. */
+/** Yahoo ticker for a symbol — HK codes need the .HK suffix (idempotent). */
 function yahooTicker(symbol: string): string {
-  return isHkCode(symbol) ? `${symbol.trim()}.HK` : symbol;
+  const s = symbol.trim();
+  if (/\.HK$/i.test(s)) return s;
+  return isHkCode(s) ? `${s}.HK` : s;
 }
 
 function emptyQuote(symbol: string): Quote {

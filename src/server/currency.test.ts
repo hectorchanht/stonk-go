@@ -13,6 +13,11 @@ describe("isHkCode", () => {
     expect(isHkCode("0700")).toBe(true);
     expect(isHkCode("5")).toBe(true);
   });
+  it("treats .HK-suffixed numerics as HKEX (not USD)", () => {
+    expect(isHkCode("2225.HK")).toBe(true);
+    expect(isHkCode("0700.HK")).toBe(true);
+    expect(inferCurrency("2225.HK")).toBe("HKD");
+  });
   it("rejects US symbols", () => {
     expect(isHkCode("AAPL")).toBe(false);
     expect(isHkCode("NVTS")).toBe(false);

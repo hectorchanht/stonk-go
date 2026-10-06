@@ -4,12 +4,14 @@
  */
 
 /**
- * HKEX stock codes are numeric (e.g. IBKR reports "2225" for 02225.HK).
- * No major US listing is purely numeric, so an all-digit symbol is
- * treated as a Hong Kong stock.
+ * HKEX stock codes are numeric (e.g. IBKR reports "2225" for 02225.HK,
+ * manual entries use "2225.HK"). No major US listing is purely numeric,
+ * so an all-digit symbol — with or without the .HK suffix — is treated
+ * as a Hong Kong stock.
  */
 export function isHkCode(symbol: string): boolean {
-  return /^\d{1,5}$/.test(symbol.trim());
+  const s = symbol.trim().toUpperCase().replace(/\.HK$/, "");
+  return /^\d{1,5}$/.test(s);
 }
 
 /**
