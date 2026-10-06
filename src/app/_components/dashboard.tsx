@@ -9,7 +9,6 @@ import {
   Bell,
   BellRing,
   Briefcase,
-  Building2,
   Download,
   GripVertical,
   Landmark,
@@ -941,6 +940,83 @@ function HeaderMenu() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Stock brokers: IBKR + Questrade grouped in one widget with tabs.     */
+/* Both cards stay mounted (inactive one hidden) so IBKR's auto-sync   */
+/* and position reporting keep working whichever tab is showing.       */
+/* ------------------------------------------------------------------ */
+
+const BROKER_TAB_KEY = "holdr.brokers.selected";
+type BrokerTab = "ibkr" | "questrade";
+
+function StockBrokers({
+  onPositions,
+}: {
+  onPositions: (p: BrokerPositionInput[]) => void;
+}) {
+  // Start on IBKR (avoids SSR hydration mismatch); persisted choice applied below.
+  const [tab, setTab] = useState<BrokerTab>("ibkr");
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(BROKER_TAB_KEY) === "questrade") {
+        setTab("questrade");
+      }
+    } catch {
+      /* ignore */
+    }
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      window.localStorage.setItem(BROKER_TAB_KEY, tab);
+    } catch {
+      /* ignore */
+    }
+  }, [tab, hydrated]);
+
+  const tabs: { id: BrokerTab; label: string }[] = [
+    { id: "ibkr", label: "Interactive Brokers" },
+    { id: "questrade", label: "Questrade" },
+  ];
+
+  return (
+    <div>
+      <div
+        role="tablist"
+        aria-label="Stock broker"
+        className="mb-3 flex overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700"
+      >
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`flex-1 px-3 py-2 text-sm font-semibold transition ${
+              tab === t.id
+                ? "bg-zinc-600 text-white"
+                : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-700"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className={tab === "ibkr" ? "" : "hidden"}>
+        <BrokerCard onPositions={onPositions} />
+      </div>
+      <div className={tab === "questrade" ? "" : "hidden"}>
+        <QuestradeCard />
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Widget registry: every dashboard section is a placeable widget.     */
 /* ------------------------------------------------------------------ */
 
@@ -1005,18 +1081,11 @@ const WIDGET_DEFS: WidgetDef[] = [
     info: "Set a target price per symbol — a scheduled check emails you when it hits. One-shot: a triggered alert deactivates itself. Requires sign-in.",
   },
   {
-    id: "ibkr",
-    title: "Interactive Brokers",
+    id: "brokers",
+    title: "Stock brokers",
     icon: Landmark,
-    defaultSpan: "half",
-    info: "Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour.",
-  },
-  {
-    id: "questrade",
-    title: "Questrade",
-    icon: Building2,
-    defaultSpan: "half",
-    info: "Read-only sync from Questrade via their official API. Positions stay grouped by currency and are never summed across currencies.",
+    defaultSpan: "full",
+    info: "Your stock broker accounts in one place — Interactive Brokers and Questrade. Read-only sync; switch tabs to view each.",
   },
   {
     id: "exchanges",
@@ -1231,11 +1300,8 @@ function DashboardInner() {
         case "price-alerts":
           body = <PriceAlerts />;
           break;
-        case "ibkr":
-          body = <BrokerCard onPositions={setBrokerPositions} />;
-          break;
-        case "questrade":
-          body = <QuestradeCard />;
+        case "brokers":
+          body = <StockBrokers onPositions={setBrokerPositions} />;
           break;
         case "exchanges":
           body = <ExchangeCards onPositions={setExchangePositions} />;

@@ -80,15 +80,17 @@ function loadSelected(): ExchangeName | null {
 interface BrowserCreds {
   k: string;
   s: string;
+  /** Set when these creds were restored from the account (not typed here). */
+  fromServer?: boolean;
 }
 
 function loadBinanceCreds(): BrowserCreds | null {
   try {
     const raw = localStorage.getItem(BINANCE_CREDS_KEY);
     if (!raw) return null;
-    const p = JSON.parse(raw) as { k?: unknown; s?: unknown };
+    const p = JSON.parse(raw) as { k?: unknown; s?: unknown; fromServer?: unknown };
     if (typeof p.k === "string" && p.k && typeof p.s === "string" && p.s) {
-      return { k: p.k, s: p.s };
+      return { k: p.k, s: p.s, fromServer: p.fromServer === true };
     }
     return null;
   } catch {
@@ -406,7 +408,10 @@ function ExchangeCard({
   const [snapshot, setSnapshot] = useState<{ at: string; data: SyncResult } | null>(null);
   const [browserCreds, setBrowserCreds] = useState<BrowserCreds | null>(null);
   const [browserBusy, setBrowserBusy] = useState(false);
+  /** "Save to my account" — on by default; uncheck for this-browser-only. */
+  const [storeOnline, setStoreOnline] = useState(true);
   const autoStarted = useRef(false);
+  const serverRestoreTried = useRef(false);
   const isBinance = exchange === "binance";
 
   const statusQ = api.exchanges.status.useQuery(undefined, { retry: false });
@@ -414,6 +419,12 @@ function ExchangeCard({
   const savedQ = api.exchanges.savedCredentials.useQuery(
     { exchange },
     { enabled: !!session?.user, retry: false },
+  );
+  /** Decrypted secret for this exchange — fetched lazily, only to restore a
+   * connection on a device that has no browser-stored credentials. */
+  const secretQ = api.exchanges.credentialSecret.useQuery(
+    { exchange },
+    { enabled: false, retry: false },
   );
 
   const balancesQ = api.exchanges.balances.useQuery(
@@ -437,7 +448,26 @@ function ExchangeCard({
   const handleSyncError = (e: { message: string }) => setError(e.message);
 
   const sync = api.exchanges.sync.useMutation({
-    onSuccess: handleSyncSuccess,
+    onSuccess: (d) => {
+      handleSyncSuccess(d);
+      // Default: store online too, so the connection follows the account
+      // across devices. (Keys were just proven working by this sync.)
+      // Skipped for keyless re-syncs (auto-sync) and when already saved.
+      if (
+        !isBinance &&
+        storeOnline &&
+        session?.user &&
+        !savedQ.data?.saved &&
+        apiKey.trim() &&
+        apiSecret.trim()
+      ) {
+        saveCreds.mutate({
+          exchange,
+          apiKey: apiKey.trim(),
+          apiSecret: apiSecret.trim(),
+        });
+      }
+    },
     onError: handleSyncError,
   });
 
@@ -465,6 +495,17 @@ function ExchangeCard({
           setBrowserCreds({ k: key, s: secret });
           setApiKey("");
           setApiSecret("");
+          // Default: store online too, so the user's other logged-in devices
+          // can pick the connection up (skip if the server already has it —
+          // e.g. this sync was itself restored from a saved key).
+          if (storeOnline && session?.user && !savedQ.data?.saved) {
+            saveCreds.mutate({
+              exchange: "binance",
+              apiKey: key,
+              apiSecret: secret,
+              skipVerify: true, // proven working by this browser sync
+            });
+          }
           handleSyncSuccess(d);
         },
         onError: handleSyncError,
@@ -605,6 +646,54 @@ function ExchangeCard({
     if (stale) void connectBinanceBrowser(creds.k, creds.s, { silent: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exchange]);
+
+  // Binance: no browser creds here, but the account has a key saved online
+  // (stored from another device) — pull it down and sync from this browser
+  // so the connection "shows up" on every logged-in device.
+  useEffect(() => {
+    if (!isBinance || serverRestoreTried.current) return;
+    if (!session?.user) return; // wait for the session
+    if (loadBinanceCreds()) return; // local creds win; handled by the effect above
+    serverRestoreTried.current = true;
+    const restore = async () => {
+      try {
+        const saved = await savedQ.refetch();
+        if (!saved.data?.saved) {
+          // Disconnected on another device after we restored from the
+          // account — drop our restored copy so we don't stay connected.
+          const local = loadBinanceCreds();
+          if (local?.fromServer) {
+            try {
+              localStorage.removeItem(BINANCE_CREDS_KEY);
+            } catch {
+              /* ignore */
+            }
+            setBrowserCreds(null);
+            setSnapshot(null);
+          }
+          return;
+        }
+        const sec = await secretQ.refetch();
+        if (!sec.data?.found) return;
+        const creds: BrowserCreds = {
+          k: sec.data.apiKey,
+          s: sec.data.apiSecret,
+          fromServer: true,
+        };
+        try {
+          localStorage.setItem(BINANCE_CREDS_KEY, JSON.stringify(creds));
+        } catch {
+          /* ignore */
+        }
+        setBrowserCreds(creds);
+        void connectBinanceBrowser(creds.k, creds.s, { silent: true });
+      } catch {
+        /* stay disconnected — the user can connect manually */
+      }
+    };
+    void restore();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exchange, session?.user]);
 
   // Report balances upward so the dashboard totals can include them.
   useEffect(() => {
@@ -765,6 +854,23 @@ function ExchangeCard({
                 className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
               />
             </label>
+            {session?.user && (
+              <label className="flex cursor-pointer items-start gap-2.5 text-sm text-zinc-200">
+                <input
+                  type="checkbox"
+                  checked={storeOnline}
+                  onChange={(e) => setStoreOnline(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-500"
+                />
+                <span>
+                  Save to my account
+                  <span className="block text-xs text-zinc-500">
+                    Syncs this connection across my logged-in devices. Uncheck
+                    to keep the key in this browser only.
+                  </span>
+                </span>
+              </label>
+            )}
             <div className="flex flex-wrap gap-2">
               <button
                 disabled={!valid || busy}
@@ -792,10 +898,23 @@ function ExchangeCard({
           {isBinance ? (
             <>
               <p className="mt-3 text-xs text-zinc-500">
-                Your key + secret stay in this browser — they sign requests
-                directly to Binance and <b>never reach our server</b>. Only the
-                resulting balances are sent for valuation. Use a{" "}
-                <b>read-only</b> key — Holdr has no trading code paths at all.
+                {storeOnline && session?.user ? (
+                  <>
+                    Your key is stored <b>encrypted on your account</b> so your
+                    other logged-in devices can sync it too. The syncing itself
+                    always happens in your browser (Binance blocks our
+                    servers) — the secret is only ever used on your own
+                    devices. Use a <b>read-only</b> key — Holdr has no trading
+                    code paths at all.
+                  </>
+                ) : (
+                  <>
+                    Your key + secret stay in this browser — they sign requests
+                    directly to Binance and <b>never reach our server</b>. Only the
+                    resulting balances are sent for valuation. Use a{" "}
+                    <b>read-only</b> key — Holdr has no trading code paths at all.
+                  </>
+                )}
               </p>
               <p className="mt-1 text-xs text-zinc-600">
                 Totals are in USD.

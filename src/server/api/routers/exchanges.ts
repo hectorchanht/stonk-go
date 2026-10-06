@@ -369,8 +369,12 @@ export const exchangesRouter = createTRPCRouter({
   /**
    * Save the caller's read-only API key + secret, AES-GCM encrypted.
    * The keys are verified with a live balances fetch BEFORE saving, so a
-   * typo surfaces immediately instead of on the next sync. Secrets are never
-   * returned by any endpoint (only the key's last 4 characters).
+   * typo surfaces immediately instead of on the next sync — unless
+   * skipVerify is set (Binance: the key was already proven working by a
+   * browser-side WebSocket sync; our server IPs are blocked by Binance so
+   * a server-side check would always fail).
+   * Secrets are never returned by any endpoint except credentialSecret
+   * below (only the key's last 4 characters elsewhere).
    */
   saveCredentials: protectedProcedure
     .input(
@@ -379,11 +383,15 @@ export const exchangesRouter = createTRPCRouter({
         apiKey: keySchema,
         apiSecret: secretSchema,
         label: z.string().max(100).optional(),
+        skipVerify: z.boolean().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      // Verify the keys work before storing them.
-      await fetchBalances(input.exchange, input.apiKey, input.apiSecret);
+      // Verify the keys work before storing them (unless the caller already
+      // proved them — Binance browser sync).
+      if (!input.skipVerify) {
+        await fetchBalances(input.exchange, input.apiKey, input.apiSecret);
+      }
       // encryptCredentials(token, queryId) — we store (apiKey, apiSecret)
       // in those two slots; decryptCredentials maps them back.
       const enc = await encryptCredentials(input.apiKey, input.apiSecret);
@@ -424,6 +432,26 @@ export const exchangesRouter = createTRPCRouter({
         }
       }
       return { saved: row != null, keyLast4 };
+    }),
+
+  /**
+   * Return the caller's decrypted API key + secret for an exchange.
+   *
+   * This deliberately relaxes the "secrets are never returned" rule:
+   * Binance can only be synced from the user's own browser (Binance blocks
+   * our server IPs), so a second logged-in device needs the secret to sync
+   * locally. Only the authenticated owner can fetch their own secrets, and
+   * the client only calls this when the user opted into storing online.
+   */
+  credentialSecret: protectedProcedure
+    .input(z.object({ exchange: exchangeEnum }))
+    .query(async ({ ctx, input }) => {
+      const row = await ctx.db.exchangeCredential.findFirst({
+        where: { userId: ctx.session.user.id, exchange: input.exchange },
+      });
+      if (!row) return { found: false as const };
+      const dec = await decryptCredentials(row.iv, row.encKey, row.encSecret);
+      return { found: true as const, apiKey: dec.token, apiSecret: dec.queryId };
     }),
 
   /** Delete the caller's saved credentials AND their stored balances. */
