@@ -11,6 +11,21 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 
+/**
+ * Locales the AI can reply in. The code is client-chosen (see
+ * ~/app/_components/locale.tsx) and allowlist-validated — it only selects
+ * among these pre-written prompts, never interpolates user text.
+ */
+export const SUPPORTED_LOCALES = ["en", "zh-Hant", "zh-Hans"] as const;
+export type AiLocale = (typeof SUPPORTED_LOCALES)[number];
+
+export function normalizeLocale(v: unknown): AiLocale {
+  return typeof v === "string" &&
+    (SUPPORTED_LOCALES as readonly string[]).includes(v)
+    ? (v as AiLocale)
+    : "en";
+}
+
 export interface InsightPosition {
   symbol: string;
   marketValue: number;
@@ -35,15 +50,37 @@ export interface InsightInput {
     price: number;
     date: string;
   }[];
+  /** Reply language for the insights. Validated against SUPPORTED_LOCALES. */
+  locale: string;
 }
 
-const SYSTEM_PROMPT =
-  "You are a sharp, plain-spoken portfolio analyst with a dash of WallStreetBets humor. " +
-  "You analyze a stock portfolio snapshot (all amounts in USD) and give short, genuinely useful insights. " +
-  "Cover: concentration risk, the biggest winners/losers and what likely drove them, today's notable movers, " +
-  "and ONE concrete suggestion. Each bullet under 25 words. No disclaimers, no headings, no intro — just the bullets.";
+const SYSTEM_PROMPTS: Record<AiLocale, string> = {
+  en:
+    "You are a sharp, plain-spoken portfolio analyst with a dash of WallStreetBets humor. " +
+    "You analyze a stock portfolio snapshot (all amounts in USD) and give short, genuinely useful insights. " +
+    "Cover: concentration risk, the biggest winners/losers and what likely drove them, today's notable movers, " +
+    "and ONE concrete suggestion. Each bullet under 25 words. No disclaimers, no headings, no intro — just the bullets.",
+  "zh-Hant":
+    "你係一個把炮、講嘢直接嘅港式散戶組合分析師，識啲 WallStreetBets 式幽默。" +
+    "你會分析一個股票組合 snapshot（金額全部係 USD），畀簡短但真係有用嘅見解。" +
+    "內容覆蓋：集中風險、最大贏家／輸家同埋背後可能嘅原因、今日最搶眼嘅郁動，同埋一個具體建議。" +
+    "每點唔超過 30 個中文字。唔要免責聲明、唔要標題、唔要開場白 — 直接畀 bullet points。" +
+    "全程用繁體中文（廣東話口語）回答。",
+  "zh-Hans":
+    "你是一位犀利、说话直接的股票组合分析师，带一点 WallStreetBets 式的幽默。" +
+    "你分析股票组合快照（金额均为 USD），给出简短但真正有用的见解。" +
+    "覆盖：集中度风险、最大赢家／输家及其可能原因、今日最值得注意的异动，以及一个具体建议。" +
+    "每条不超过 30 个汉字。不要免责声明、不要标题、不要开场白——直接给 bullet points。" +
+    "全程用简体中文回答。",
+};
 
-function buildPrompt(input: InsightInput): string {
+const BULLET_TAIL: Record<AiLocale, string> = {
+  en: `Give 4-6 bullets, each on its own line starting with "• ".`,
+  "zh-Hant": "畀 4-6 點，每點一行，開頭用「• 」。",
+  "zh-Hans": "给出 4-6 条，每条一行，开头用「• 」。",
+};
+
+function buildPrompt(input: InsightInput, locale: AiLocale): string {
   const pos = input.positions
     .map(
       (p) =>
@@ -69,7 +106,7 @@ function buildPrompt(input: InsightInput): string {
     `all-time P/L $${t.totalPL.toFixed(0)}` +
     (t.totalPLPct != null ? ` (${t.totalPLPct.toFixed(1)}%)` : "") +
     `.\n\nPositions:\n${pos}\n\nRecent trades:\n${trades}\n\n` +
-    `Give 4-6 bullets, each on its own line starting with "• ".`
+    BULLET_TAIL[locale]
   );
 }
 
@@ -90,11 +127,12 @@ export async function generateInsights(
   }
   if (!ai) return { unavailable: true, reason: "no-binding" };
 
+  const locale = normalizeLocale(input.locale);
   try {
     const res = (await ai.run(MODEL, {
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: buildPrompt(input) },
+        { role: "system", content: SYSTEM_PROMPTS[locale] },
+        { role: "user", content: buildPrompt(input, locale) },
       ],
       max_tokens: 700,
     })) as { response?: unknown };
