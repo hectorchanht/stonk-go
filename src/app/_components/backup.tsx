@@ -23,7 +23,22 @@ export function BackupButtons() {
     setStatus("Preparing backup…");
     const res = await backupQuery.refetch();
     if (res.data) {
-      const blob = new Blob([JSON.stringify(res.data, null, 2)], {
+      // Client-side preferences (currency, locale, layout, columns…).
+      // Everything under holdr.* is included; credentials never are.
+      const clientPrefs: Record<string, string> = {};
+      try {
+        for (let i = 0; i < window.localStorage.length; i++) {
+          const k = window.localStorage.key(i);
+          if (k?.startsWith("holdr.")) {
+            const v = window.localStorage.getItem(k);
+            if (v != null) clientPrefs[k] = v;
+          }
+        }
+      } catch {
+        /* storage unavailable */
+      }
+      const full = { ...res.data, clientPrefs };
+      const blob = new Blob([JSON.stringify(full, null, 2)], {
         type: "application/json",
       });
       const url = URL.createObjectURL(blob);
@@ -49,8 +64,12 @@ export function BackupButtons() {
           exportedAt?: unknown;
           transactions?: unknown;
           holdings?: unknown;
+          clientPrefs?: unknown;
         };
-        if (data.version !== 1 || !Array.isArray(data.transactions)) {
+        if (
+          (data.version !== 1 && data.version !== 2) ||
+          !Array.isArray(data.transactions)
+        ) {
           setStatus("Invalid backup file.");
           return;
         }
@@ -61,8 +80,26 @@ export function BackupButtons() {
         )
           return;
         setStatus("Restoring…");
+        // Restore client preferences first (independent of server).
+        if (
+          typeof data.clientPrefs === "object" &&
+          data.clientPrefs !== null &&
+          !Array.isArray(data.clientPrefs)
+        ) {
+          try {
+            for (const [k, v] of Object.entries(
+              data.clientPrefs as Record<string, unknown>,
+            )) {
+              if (k.startsWith("holdr.") && typeof v === "string") {
+                window.localStorage.setItem(k, v);
+              }
+            }
+          } catch {
+            /* storage unavailable */
+          }
+        }
         importMut.mutate({
-          version: 1,
+          version: data.version,
           transactions: data.transactions as Array<{
             symbol: string;
             type: string;

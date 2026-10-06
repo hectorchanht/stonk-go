@@ -882,15 +882,17 @@ export const portfolioRouter = createTRPCRouter({
 
   /** Export all user data as JSON for backup. */
   exportBackup: publicProcedure.query(async ({ ctx }) => {
-    const [transactions, holdings] = await Promise.all([
+    const [transactions, holdings, brokerPositions] = await Promise.all([
       ctx.db.transaction.findMany({ orderBy: [{ executedAt: "desc" }] }),
       ctx.db.holding.findMany({ orderBy: { symbol: "asc" } }),
+      ctx.db.brokerPosition.findMany({ orderBy: [{ symbol: "asc" }] }),
     ]);
     return {
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       transactions,
       holdings,
+      brokerPositions,
     };
   }),
 
@@ -898,7 +900,7 @@ export const portfolioRouter = createTRPCRouter({
   importBackup: publicProcedure
     .input(
       z.object({
-        version: z.literal(1),
+        version: z.union([z.literal(1), z.literal(2)]),
         transactions: z.array(
           z.object({
             symbol: z.string(),
@@ -913,6 +915,8 @@ export const portfolioRouter = createTRPCRouter({
           }),
         ),
         holdings: z.array(z.unknown()).optional(),
+        // v2 only — exported for verification; not restored (see below)
+        brokerPositions: z.array(z.unknown()).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -950,6 +954,9 @@ export const portfolioRouter = createTRPCRouter({
       for (const t of input.transactions) {
         await recomputeHolding(ctx.db, t.symbol);
       }
+      // Note: brokerPositions/exchangeBalances are exported for verification
+      // but not restored — they're live caches; re-sync IBKR/exchanges after
+      // restore to repopulate. Transactions are the source of truth.
       return { ok: true, restored: input.transactions.length };
     }),
 
