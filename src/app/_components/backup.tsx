@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Download, Upload } from "lucide-react";
+import { Download, Upload, RotateCcw } from "lucide-react";
 
 import { api } from "~/trpc/react";
 
@@ -50,6 +50,22 @@ export function BackupButtons() {
     },
     onError: (e) => setStatus(`Restore failed: ${e.message}`),
   });
+
+  const clearSnapMut = api.portfolio.clearSnapshots.useMutation({
+    onSuccess: (r) => setStatus(`Cleared ${r.cleared} snapshots.`),
+    onError: (e) => setStatus(`Reset failed: ${e.message}`),
+  });
+
+  const doResetSnapshots = () => {
+    if (
+      !window.confirm(
+        "Clear all daily snapshots? The performance chart rebuilds from your trade history; snapshots re-accumulate from today.",
+      )
+    )
+      return;
+    setStatus("Clearing snapshots…");
+    clearSnapMut.mutate();
+  };
 
   const doExport = async () => {
     setStatus("Preparing backup…");
@@ -190,6 +206,13 @@ export function BackupButtons() {
           onChange={doImport}
         />
       </div>
+      <button
+        type="button"
+        onClick={doResetSnapshots}
+        className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-2 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+      >
+        <RotateCcw size={13} /> Reset snapshots
+      </button>
       {status && <p className="mt-1.5 text-xs text-zinc-500">{status}</p>}
     </div>
   );

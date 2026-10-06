@@ -426,6 +426,7 @@ export interface AppDb {
     findMany(args: {
       orderBy: Array<{ date?: SortDir }>;
     }): Promise<PortfolioSnapshotRow[]>;
+    deleteMany(): Promise<{ count: number }>;
     upsert(args: {
       where: { date: string };
       create: {
@@ -1442,6 +1443,11 @@ export function createD1Db(d1: D1Database): AppDb {
         .first();
       if (!row) throw new Error("PortfolioSnapshot upsert failed");
       return mapPortfolioSnapshot(row as unknown as RawRow);
+    },
+
+    deleteMany: async () => {
+      const r = await d1.prepare(`DELETE FROM "PortfolioSnapshot"`).run();
+      return { count: r.meta.changes ?? 0 };
     },
   };
 

@@ -562,6 +562,16 @@ export const portfolioRouter = createTRPCRouter({
     }),
 
   /**
+   * Wipe all daily snapshots. The chart rebuilds from trade history, so
+   * snapshots are only a fallback for accounts with no trade log —
+   * resetting gives a clean series under the current valuation logic.
+   */
+  clearSnapshots: publicProcedure.mutation(async ({ ctx }) => {
+    const r = await ctx.db.portfolioSnapshot.deleteMany();
+    return { ok: true, cleared: r.count };
+  }),
+
+  /**
    * Equity curve for the Performance section — works from day one.
    *
    * Source priority:
