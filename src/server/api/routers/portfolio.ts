@@ -136,6 +136,9 @@ export interface Summary {
     /** Null when broker positions lack cost basis — can't be computed honestly. */
     totalPL: number | null;
     totalPLPct: number | null;
+    /** P/L on positions with a known cost basis — shown even when some broker rows lack cost. */
+    coveredPL: number | null;
+    coveredPLPct: number | null;
     holdingsCount: number;
     pricedCount: number;
     brokerCount: number;
@@ -266,6 +269,16 @@ async function buildSummary(
     brokerMissingBasis > 0
       ? null
       : rows.reduce((s, r) => s + (r.marketValue ?? 0), 0) - costBasis;
+  // P/L on the measurable portion. Holders want the number even when some
+  // broker positions lack cost basis — the excl. note keeps it honest.
+  const coveredRows = rows.filter(
+    (r) => r.marketValue != null && r.costBasis != null,
+  );
+  const coveredCost = coveredRows.reduce((s, r) => s + (r.costBasis ?? 0), 0);
+  const coveredPL =
+    coveredRows.length > 0
+      ? coveredRows.reduce((s, r) => s + (r.marketValue ?? 0), 0) - coveredCost
+      : null;
 
   for (const r of rows) {
     r.weightPct =
@@ -283,6 +296,11 @@ async function buildSummary(
       totalPL,
       totalPLPct:
         totalPL != null && costBasis > 0 ? (totalPL / costBasis) * 100 : null,
+      coveredPL,
+      coveredPLPct:
+        coveredPL != null && coveredCost > 0
+          ? (coveredPL / coveredCost) * 100
+          : null,
       holdingsCount: rows.length,
       pricedCount: rows.filter((r) => r.marketValue != null).length,
       brokerCount: broker.length,

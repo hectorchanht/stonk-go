@@ -30,6 +30,7 @@ import {
   Sparkles,
   TrendingUp,
   Trash2,
+  TriangleAlert,
   X,
   Zap,
 } from "lucide-react";
@@ -1919,6 +1920,7 @@ function DashboardInner() {
       /* ignore */
     }
   }, []);
+  const [missingOpen, setMissingOpen] = useState(false);
 
   // True historical value series backing the P/L period lookup. 35 days
   // covers the 1M option plus a weekend/holiday buffer. D1-cached server
@@ -1989,17 +1991,15 @@ function DashboardInner() {
 
   const t = data?.totals;
   const missingBasisNote =
-    t && t.brokerMissingBasis > 0
-      ? ` · excl. ${t.brokerMissingBasis} broker position${t.brokerMissingBasis === 1 ? "" : "s"} w/o cost basis`
-      : "";
+    t && t.brokerMissingBasis > 0 ? ` · excl. ${t.brokerMissingBasis}` : "";
   const dayTone: "pos" | "neg" | "neutral" =
     t?.dayPL == null ? "neutral" : t.dayPL > 0 ? "pos" : t.dayPL < 0 ? "neg" : "neutral";
   const totalTone: "pos" | "neg" | "neutral" =
-    t?.totalPL == null
+    t?.coveredPL == null
       ? "neutral"
-      : t.totalPL > 0
+      : t.coveredPL > 0
         ? "pos"
-        : t.totalPL < 0
+        : t.coveredPL < 0
           ? "neg"
           : "neutral";
 
@@ -2033,13 +2033,22 @@ function DashboardInner() {
           body = (
             <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
               <StatCard
-                label="Portfolio value"
+                label="Value"
                 value={money(t!.marketValue)}
                 info="Total market value of everything you hold, at live prices."
                 sub={
-                  t!.pricedCount < t!.holdingsCount
-                    ? `prices missing for ${t!.holdingsCount - t!.pricedCount}`
-                    : `${t!.holdingsCount} position${t!.holdingsCount === 1 ? "" : "s"}`
+                  t!.pricedCount < t!.holdingsCount ? (
+                    <button
+                      type="button"
+                      onClick={() => setMissingOpen(true)}
+                      className="inline-flex items-center gap-1 font-semibold text-amber-400 hover:text-amber-300"
+                    >
+                      <TriangleAlert size={12} />
+                      {t!.holdingsCount - t!.pricedCount} no price
+                    </button>
+                  ) : (
+                    `${t!.holdingsCount} position${t!.holdingsCount === 1 ? "" : "s"}`
+                  )
                 }
               />
               <StatCard
@@ -2085,16 +2094,16 @@ function DashboardInner() {
               />
               <StatCard
                 label="Total P/L"
-                value={money(t!.totalPL, { sign: true })}
-                info="All-time profit or loss: current value minus your total cost basis."
-                sub={`${pct(t!.totalPLPct, { sign: true })}${missingBasisNote}`}
+                value={money(t!.coveredPL, { sign: true })}
+                info="Gain or loss on positions with a known cost. Positions without cost basis are excluded — see below."
+                sub={`${pct(t!.coveredPLPct, { sign: true })}${missingBasisNote}`}
                 tone={totalTone}
               />
               <StatCard
-                label="Cost basis"
+                label="Cost"
                 value={money(t!.costBasis)}
                 info="Everything you've put in (buys + fees). Sells reduce it proportionally."
-                sub={`capital invested${missingBasisNote}`}
+                sub={`invested${missingBasisNote}`}
               />
             </div>
           );
@@ -2290,6 +2299,56 @@ function DashboardInner() {
         >
           <Plus size={22} />
         </button>
+      )}
+      {missingOpen && data && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center sm:p-4"
+          onClick={() => setMissingOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Positions without a price"
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-zinc-700 bg-zinc-900 p-4 sm:rounded-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-1 flex items-center justify-between">
+              <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-zinc-100">
+                <TriangleAlert size={14} className="text-amber-400" />
+                No price ·{" "}
+                {data.rows.filter((r) => r.marketValue == null).length}
+              </div>
+              <button
+                type="button"
+                onClick={() => setMissingOpen(false)}
+                aria-label="Close"
+                className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <p className="mb-3 text-xs text-zinc-500">
+              No live price — value not counted in the total.
+            </p>
+            <div className="grid gap-1.5">
+              {data.rows
+                .filter((r) => r.marketValue == null)
+                .map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between rounded-lg border border-zinc-800 px-3 py-2"
+                  >
+                    <span className="text-sm font-semibold text-zinc-100">
+                      {r.symbol}
+                    </span>
+                    <span className="text-xs uppercase text-zinc-500">
+                      {r.brokerLabel ?? "manual"}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
