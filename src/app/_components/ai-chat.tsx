@@ -177,45 +177,41 @@ export function AiChat({
       ? settings.model
       : providerMeta?.models[0]?.id ?? "";
 
-  // Request tracking for the stop button: bumping requestIdRef invalidates
-  // the in-flight request so a late response is ignored. `cancelled` hides
-  // the loading UI immediately while the orphaned request settles.
+  // Streaming state: tokens append to the last assistant message live.
+  // requestIdRef invalidates a superseded stream; abortRef cancels it.
   const requestIdRef = useRef(0);
-  const [cancelled, setCancelled] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const [streaming, setStreaming] = useState(false);
 
-  const _chatMut = api.ai.chat.useMutation({
-    onMutate: () => ({ requestId: ++requestIdRef.current }),
-    onSuccess: (res, _vars, ctx) => {
-      setCancelled(false);
-      if (ctx?.requestId !== requestIdRef.current) return; // stopped/superseded
-      setMessages((m) => [...m, { role: "assistant", content: res.text }]);
-    },
-    onError: (e, _vars, ctx) => {
-      setCancelled(false);
-      if (ctx?.requestId !== requestIdRef.current) return; // stopped/superseded
-      const msg = e.message.includes("NEEDS_API_KEY")
+  /** True while waiting for / streaming a response. */
+  const isLoading = streaming;
+
+  /** Map a stream error to the friendly message the UI shows. */
+  function friendlyError(msg: string): string {
+    return msg.includes("no-binding") || msg.includes("AI_UNAVAILABLE")
+      ? "AI is unavailable right now. Try again in a bit."
+      : msg.includes("needs-key") || msg.includes("NEEDS_API_KEY")
         ? "This provider needs an API key — open settings and add one."
-        : e.message.includes("AI_UNAVAILABLE")
-          ? "AI is unavailable right now. Try again in a bit."
-          : e.message.includes("PROVIDER_ERROR")
-            ? `Provider error: ${e.message.replace("PROVIDER_ERROR: ", "")}`
-            : "Couldn't get an answer. Try again.";
-      setError(msg);
-    },
-  });
-
-  /** True while waiting for a non-cancelled response. */
-  const isLoading = _chatMut.isPending && !cancelled;
+        : msg.startsWith("openai-") ||
+            msg.startsWith("anthropic-") ||
+            msg.startsWith("PROVIDER_ERROR")
+          ? `Provider error: ${msg.replace("PROVIDER_ERROR: ", "").slice(0, 160)}`
+          : "Couldn't get an answer. Try again.";
+  }
 
   const send = useCallback((question?: string) => {
     const q = (question ?? input).trim();
-    if (!q || isLoading) return;
-    setCancelled(false);
+    if (!q || streaming) return;
     setError(null);
     setInput("");
     const history = messages.slice(-10);
+    const reqId = ++requestIdRef.current;
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setStreaming(true);
     setMessages((m) => [...m, { role: "user", content: q }]);
-    _chatMut.mutate({
+
+    const body = {
       question: q,
       history,
       portfolio: snapshot,
@@ -230,13 +226,89 @@ export function AiChat({
       model: effectiveModel === providerMeta?.models[0]?.id ? null : effectiveModel || null,
       emojis: settings.emojis,
       followUps: settings.followUps,
-    });
-  }, [input, isLoading, _chatMut, messages, snapshot, locale, settings, effectiveModel, providerMeta]);
+    };
 
-  /** Stop button: invalidate the in-flight request; its late response is ignored. */
+    (async () => {
+      let full = "";
+      let addedAssistant = false;
+      const appendToken = (token: string) => {
+        full += token;
+        const snap = full;
+        if (!addedAssistant) {
+          addedAssistant = true;
+          setMessages((m) => [...m, { role: "assistant", content: snap }]);
+        } else {
+          setMessages((m) => {
+            const last = m[m.length - 1];
+            return last && last.role === "assistant"
+              ? [...m.slice(0, -1), { ...last, content: snap }]
+              : [...m, { role: "assistant", content: snap }];
+          });
+        }
+      };
+      try {
+        const res = await fetch("/api/ai/chat-stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: ac.signal,
+        });
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split("\n\n");
+          buf = parts.pop() ?? "";
+          for (const part of parts) {
+            for (const line of part.split("\n")) {
+              const t = line.trim();
+              if (!t.startsWith("data:")) continue;
+              const data = t.slice(5).trim();
+              if (data === "[DONE]") {
+                if (reqId !== requestIdRef.current) return; // stopped
+                if (!full.trim()) throw new Error("ai-error: empty stream");
+                setStreaming(false);
+                return;
+              }
+              let payload: unknown = null;
+              try {
+                payload = JSON.parse(data);
+              } catch {
+                continue;
+              }
+              if (payload && typeof payload === "object" && "error" in payload) {
+                throw new Error(String((payload as { error: unknown }).error));
+              }
+              if (typeof payload === "string" && payload) {
+                if (reqId !== requestIdRef.current) return; // stopped
+                appendToken(payload);
+              }
+            }
+          }
+        }
+        // Stream ended without [DONE].
+        if (reqId !== requestIdRef.current) return;
+        if (!full.trim()) throw new Error("ai-error: empty stream");
+        setStreaming(false);
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        if (reqId !== requestIdRef.current) return; // stopped
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(friendlyError(msg));
+        setStreaming(false);
+      }
+    })();
+  }, [input, streaming, messages, snapshot, locale, settings, effectiveModel, providerMeta]);
+
+  /** Stop button: abort the in-flight stream; a partial reply stays. */
   const stop = useCallback(() => {
     requestIdRef.current++;
-    setCancelled(true);
+    abortRef.current?.abort();
+    setStreaming(false);
   }, []);
 
   const toggleSkill = (id: string) =>
@@ -547,23 +619,30 @@ export function AiChat({
             my NVDA trade do?”
           </p>
         )}
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-          >
+        {messages.map((m, i) => {
+          const isLive =
+            streaming && i === messages.length - 1 && m.role === "assistant";
+          return (
             <div
-              className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-sm leading-relaxed ${
-                m.role === "user"
-                  ? "bg-emerald-800/60 text-emerald-50"
-                  : "bg-zinc-200/80 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100"
-              }`}
+              key={i}
+              className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
             >
-              {m.content}
+              <div
+                className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-sm leading-relaxed ${
+                  m.role === "user"
+                    ? "bg-emerald-800/60 text-emerald-50"
+                    : "bg-zinc-200/80 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100"
+                }`}
+              >
+                {m.content}
+                {isLive && (
+                  <span className="ml-0.5 inline-block h-4 w-[7px] translate-y-[3px] animate-pulse rounded-[1px] bg-emerald-500" />
+                )}
+              </div>
             </div>
-          </div>
-        ))}
-        {isLoading && (
+          );
+        })}
+        {streaming && messages[messages.length - 1]?.role !== "assistant" && (
           <div className="flex justify-start">
             <div className="rounded-xl bg-zinc-200/80 dark:bg-zinc-800/80 px-4 py-3">
               <TypingDots />

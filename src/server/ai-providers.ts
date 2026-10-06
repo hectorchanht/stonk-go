@@ -109,6 +109,75 @@ async function chatCloudflare(
   return { text };
 }
 
+/**
+ * Cloudflare Workers AI streaming via the production binding.
+ * Yields raw text tokens as the model produces them (`stream: true`
+ * returns an SSE stream of `data: {"response": "<token>"}` events).
+ */
+async function* streamCloudflare(
+  messages: ChatMessage[],
+  opts: ChatOptions,
+): AsyncGenerator<string, void, unknown> {
+  type AiBinding = {
+    run: (
+      model: string,
+      params: unknown,
+    ) => Promise<ReadableStream<Uint8Array>>;
+  };
+  let ai: AiBinding | null = null;
+  try {
+    const env = getCloudflareContext().env as { AI?: unknown };
+    if (env.AI && typeof (env.AI as AiBinding).run === "function") {
+      ai = env.AI as AiBinding;
+    }
+  } catch {
+    ai = null;
+  }
+  if (!ai) throw new Error("no-binding");
+
+  const model = opts.model ?? "@cf/qwen/qwen3-30b-a3b-fp8";
+  const stream = await ai.run(model, {
+    messages,
+    max_tokens: clamp(opts.maxTokens, 100, 4000, 1000),
+    temperature: clamp(opts.temperature, 0, 1, 0.7),
+    stream: true,
+  });
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let yielded = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop() ?? "";
+      for (const part of parts) {
+        for (const line of part.split("\n")) {
+          const t = line.trim();
+          if (!t.startsWith("data:")) continue;
+          const data = t.slice(5).trim();
+          if (data === "[DONE]") return;
+          try {
+            const json = JSON.parse(data) as { response?: unknown };
+            if (typeof json.response === "string" && json.response) {
+              yielded = true;
+              yield json.response;
+            }
+          } catch {
+            // Not a complete JSON event — skip it.
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (!yielded) throw new Error("ai-error: empty stream");
+}
+
 /** OpenAI chat completions (BYOK). */
 async function chatOpenAI(
   messages: ChatMessage[],
@@ -346,7 +415,6 @@ export async function* chatWithProviderStream(
     yield* streamAnthropic(messages, apiKey, o);
     return;
   }
-  // Cloudflare: fall back to non-streaming, yield as one chunk.
-  const { text } = await chatCloudflare(messages, o);
-  yield text;
+  // Cloudflare: true token streaming via Workers AI.
+  yield* streamCloudflare(messages, o);
 }
