@@ -146,6 +146,32 @@ function CollapsiblePositions({ positions }: { positions: PositionLike[] }) {
   );
 }
 
+/**
+ * Money value with the currency code on its own line above the number.
+ * The number itself never wraps (whitespace-nowrap).
+ */
+function MoneyStack({ usd, sign }: { usd: number | null; sign?: boolean }) {
+  const { currency, convert } = useCurrency();
+  if (usd == null || !Number.isFinite(usd)) return <>—</>;
+  const n = convert(usd);
+  const num = n.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const prefix = sign && n > 0 ? "+" : "";
+  return (
+    <span className="block">
+      <span className="block text-[0.65em] font-medium uppercase tracking-wider text-zinc-500">
+        {currency}
+      </span>
+      <span className="whitespace-nowrap">
+        {prefix}
+        {num}
+      </span>
+    </span>
+  );
+}
+
 /* ---------------- shared presentational pieces ---------------- */
 
 function PositionsTable({ positions }: { positions: PositionLike[] }) {
@@ -412,19 +438,17 @@ function AnalyticsView({ data }: { data: Analytics }) {
       <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Realized P/L"
-          value={
-            totalRealizedUsd == null ? "—" : money(totalRealizedUsd, { sign: true })
-          }
+          value={<MoneyStack usd={totalRealizedUsd} sign />}
           tone={toneOf(totalRealizedUsd)}
         />
         <StatCard
           label="Dividends"
-          value={money(t.dividends)}
+          value={<MoneyStack usd={t.dividends} />}
           tone={t.dividends != null && t.dividends > 0 ? "pos" : "neutral"}
         />
         <StatCard
           label="Commissions paid"
-          value={money(t.commissions)}
+          value={<MoneyStack usd={t.commissions} />}
           tone={t.commissions != null && t.commissions > 0 ? "neg" : "neutral"}
         />
         <StatCard label="Trades" value={String(t.trades)} />

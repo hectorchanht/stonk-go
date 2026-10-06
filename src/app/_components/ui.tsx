@@ -191,7 +191,7 @@ export function StatCard({
         {info && <InfoTip text={info} />}
       </div>
       <div
-        className={`mt-1 break-words font-bold tabular-nums leading-tight ${toneClass} text-[clamp(1.15rem,5vw,1.875rem)]`}
+        className={`mt-1 whitespace-nowrap font-bold tabular-nums leading-tight ${toneClass} text-[clamp(1.15rem,5vw,1.875rem)]`}
       >
         {value}
       </div>
