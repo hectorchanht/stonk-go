@@ -23,15 +23,17 @@ Tailwind. No API keys, no paid services, no required sign-in.
 
 Quotes are fetched server-side with a 60-second in-memory cache:
 
-1. **Yahoo Finance** chart API (`query1.finance.yahoo.com/v8/finance/chart`)
-   — no key required. A few daily bars give the latest price *and* the
-   previous close, which powers the day P/L column.
-2. **Stooq** CSV (`stooq.com/q/l/?s=…&f=sd2t2ohlcv&h&e=csv`) — fallback,
+1. **Finnhub** (`finnhub.io/api/v1/quote`) — real-time US quotes on the free
+   tier (60 calls/min). Used first when `FINNHUB_API_KEY` is set (free signup
+   at finnhub.io, then add it as a Worker secret / `.env` var).
+2. **Yahoo Finance** chart API (`query1.finance.yahoo.com/v8/finance/chart`)
+   — no key required, ~15min delayed. A few daily bars give the latest price
+   *and* the previous close, which powers the day P/L column.
+3. **Stooq** CSV (`stooq.com/q/l/?s=…&f=sd2t2ohlcv&h&e=csv`) — fallback,
    close price only.
 
-If both fail, the holding shows `—` and is excluded from value totals.
-Quotes are delayed (15+ min); this is a personal tracker, not a trading tool.
-Not financial advice.
+If all fail, the holding shows `—` and is excluded from value totals.
+Quotes are not financial advice.
 
 ## Getting started
 

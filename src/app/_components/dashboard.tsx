@@ -542,8 +542,8 @@ export function Dashboard() {
           <TransactionList />
 
           <footer className="pt-2 text-center text-xs text-zinc-600">
-            Prices: Yahoo Finance (Stooq fallback) · cached 60s · not financial
-            advice
+            Prices: Finnhub realtime when configured, else Yahoo (~15min
+            delayed, Stooq fallback) · cached 60s · not financial advice
           </footer>
         </>
       )}

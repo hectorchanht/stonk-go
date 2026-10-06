@@ -35,6 +35,9 @@ export const env = createEnv({
     // these from the worker env first, then process.env (local dev).
     IBKR_FLEX_TOKEN: z.string().optional(),
     IBKR_FLEX_QUERY_ID: z.string().optional(),
+    // Optional: Finnhub real-time quotes (free tier, 60 calls/min).
+    // Without it, quotes come from Yahoo Finance (~15min delayed).
+    FINNHUB_API_KEY: z.string().optional(),
   },
 
   /**
@@ -59,6 +62,7 @@ export const env = createEnv({
     DISCORD_CLIENT_SECRET: process.env.DISCORD_CLIENT_SECRET,
     IBKR_FLEX_TOKEN: process.env.IBKR_FLEX_TOKEN,
     IBKR_FLEX_QUERY_ID: process.env.IBKR_FLEX_QUERY_ID,
+    FINNHUB_API_KEY: process.env.FINNHUB_API_KEY,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

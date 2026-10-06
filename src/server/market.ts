@@ -1,14 +1,16 @@
 import "server-only";
 
+import { getCloudflareContext } from "@opennextjs/cloudflare";
+
 /**
- * Free, no-API-key quote source for the portfolio.
+ * Quote sources for the portfolio.
  *
- * Primary: Yahoo Finance v8 chart endpoint (public, no key). Pulling a few
- * daily bars gives us both the latest price and the previous close, which is
- * what powers the day P/L column.
- *
- * Fallback: Stooq's free CSV endpoint (e.g. https://stooq.com/q/l/?s=aapl.us
- * &f=sd2t2ohlcv&h&e=csv) — close price only, no day change.
+ * 1. Finnhub (https://finnhub.io/api/v1/quote) — real-time US quotes on the
+ *    free tier (60 calls/min). Used first when FINNHUB_API_KEY is set.
+ * 2. Yahoo Finance v8 chart endpoint (public, no key, ~15min delayed).
+ *    Pulling a few daily bars gives both the latest price and the previous
+ *    close, which powers the day P/L column.
+ * 3. Stooq's free CSV endpoint — close price only, no day change.
  *
  * Results are cached in-memory for 60s so a dashboard with N holdings does
  * not hammer the providers on every poll.
@@ -22,7 +24,7 @@ export interface Quote {
   dayChangePct: number | null;
   currency: string | null;
   fetchedAt: string; // ISO timestamp
-  source: "yahoo" | "stooq" | "unavailable";
+  source: "finnhub" | "yahoo" | "stooq" | "unavailable";
 }
 
 const CACHE_TTL_MS = 60_000;
@@ -38,6 +40,62 @@ function emptyQuote(symbol: string): Quote {
     currency: null,
     fetchedAt: new Date().toISOString(),
     source: "unavailable",
+  };
+}
+
+/** Finnhub API key when configured (worker env first, then process.env). */
+function getFinnhubKey(): string | null {
+  let key: unknown;
+  try {
+    // On Cloudflare Workers, dashboard secrets live on the worker env.
+    key = getCloudflareContext().env.FINNHUB_API_KEY;
+  } catch {
+    // Not in a worker request scope — local dev falls through to process.env.
+  }
+  key ??= process.env.FINNHUB_API_KEY;
+  return typeof key === "string" && key.length > 0 ? key : null;
+}
+
+async function fetchFinnhub(
+  symbol: string,
+  apiKey: string
+): Promise<Quote | null> {
+  const params = new URLSearchParams({ symbol, token: apiKey });
+  const res = await fetch(`https://finnhub.io/api/v1/quote?${params}`, {
+    headers: { "User-Agent": "Mozilla/5.0 (stonk-go portfolio)" },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) return null;
+
+  // { c: current, d: change, dp: pct change, h/l/o: day high/low/open,
+  //   pc: previous close, t: unix timestamp }
+  const j = (await res.json()) as {
+    c?: unknown;
+    pc?: unknown;
+    dp?: unknown;
+  };
+  const price =
+    typeof j.c === "number" && Number.isFinite(j.c) && j.c > 0 ? j.c : null;
+  if (price == null) return null;
+  const prevClose =
+    typeof j.pc === "number" && Number.isFinite(j.pc) && j.pc > 0
+      ? j.pc
+      : null;
+  const dp =
+    typeof j.dp === "number" && Number.isFinite(j.dp) ? j.dp : null;
+
+  return {
+    symbol: symbol.toUpperCase(),
+    // The quote endpoint carries no company name; Yahoo backfills it when
+    // it runs (or leave null — the UI tolerates it).
+    name: null,
+    price,
+    prevClose,
+    dayChangePct:
+      dp ?? (prevClose ? ((price - prevClose) / prevClose) * 100 : null),
+    currency: null,
+    fetchedAt: new Date().toISOString(),
+    source: "finnhub",
   };
 }
 
@@ -138,17 +196,18 @@ export async function getQuote(rawSymbol: string): Promise<Quote> {
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.quote;
 
   let quote: Quote | null = null;
-  try {
-    quote = await fetchYahoo(symbol);
-  } catch {
-    quote = null;
-  }
-  if (!quote) {
+  const finnhubKey = getFinnhubKey();
+  const providers: Array<() => Promise<Quote | null>> = [];
+  if (finnhubKey) providers.push(() => fetchFinnhub(symbol, finnhubKey));
+  providers.push(() => fetchYahoo(symbol), () => fetchStooq(symbol));
+
+  for (const provide of providers) {
     try {
-      quote = await fetchStooq(symbol);
+      quote = await provide();
     } catch {
       quote = null;
     }
+    if (quote) break;
   }
 
   const finalQuote = quote ?? emptyQuote(symbol);
