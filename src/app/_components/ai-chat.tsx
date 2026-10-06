@@ -228,7 +228,7 @@ export function AiChat({
       followUps: settings.followUps,
     };
 
-    (async () => {
+    void (async () => {
       let full = "";
       let addedAssistant = false;
       const appendToken = (token: string) => {
