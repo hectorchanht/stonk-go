@@ -5,6 +5,36 @@ import { Download, Upload } from "lucide-react";
 
 import { api } from "~/trpc/react";
 
+/**
+ * Minimal backup: only what a restore actually needs.
+ * - Server: transactions + price alerts (portfolio.exportBackup).
+ * - Client: UI config below. Everything else is re-synced, re-fetched,
+ *   or recomputed after a restore — and credentials are NEVER exported.
+ */
+const PREF_KEYS = new Set([
+  "holdr.currency",
+  "holdr.locale",
+  "holdr.ai-locale",
+  "holdr.theme",
+  "holdr.dashboard-layout.v1",
+  "holdr.holdings.columns",
+  "holdr.pnl.period",
+  "holdr.alert-threshold",
+  "holdr.alert-sort",
+  "holdr.alert-dismissed",
+  "holdr.pricealert-sort",
+  "holdr.ai-chat-settings",
+  "holdr.brokers.selected",
+  "holdr.crypto.selected",
+  "holdr.fx.usd",
+]);
+const PREF_PREFIXES = ["holdr.tablesort.", "holdr.tabletools."];
+
+function isBackupPref(key: string): boolean {
+  if (PREF_KEYS.has(key)) return true;
+  return PREF_PREFIXES.some((p) => key.startsWith(p));
+}
+
 export function BackupButtons() {
   const [status, setStatus] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -13,7 +43,9 @@ export function BackupButtons() {
   });
   const importMut = api.portfolio.importBackup.useMutation({
     onSuccess: (r) => {
-      setStatus(`Restored ${r.restored} transactions. Reloading…`);
+      const alerts =
+        r.alertsRestored > 0 ? ` and ${r.alertsRestored} price alerts` : "";
+      setStatus(`Restored ${r.restored} transactions${alerts}. Reloading…`);
       setTimeout(() => window.location.reload(), 1500);
     },
     onError: (e) => setStatus(`Restore failed: ${e.message}`),
@@ -23,13 +55,15 @@ export function BackupButtons() {
     setStatus("Preparing backup…");
     const res = await backupQuery.refetch();
     if (res.data) {
-      // Client-side preferences (currency, locale, layout, columns…).
-      // Everything under holdr.* is included; credentials never are.
+      // Client-side preferences: allowlisted UI config only.
+      // Snapshots, chat history and credentials (holdr.*.creds) are
+      // deliberately excluded — they're re-synced or must never leave
+      // the device.
       const clientPrefs: Record<string, string> = {};
       try {
         for (let i = 0; i < window.localStorage.length; i++) {
           const k = window.localStorage.key(i);
-          if (k?.startsWith("holdr.")) {
+          if (k && isBackupPref(k)) {
             const v = window.localStorage.getItem(k);
             if (v != null) clientPrefs[k] = v;
           }
@@ -67,7 +101,7 @@ export function BackupButtons() {
           clientPrefs?: unknown;
         };
         if (
-          (data.version !== 1 && data.version !== 2) ||
+          (data.version !== 1 && data.version !== 2 && data.version !== 3) ||
           !Array.isArray(data.transactions)
         ) {
           setStatus("Invalid backup file.");
@@ -90,7 +124,9 @@ export function BackupButtons() {
             for (const [k, v] of Object.entries(
               data.clientPrefs as Record<string, unknown>,
             )) {
-              if (k.startsWith("holdr.") && typeof v === "string") {
+              // Same allowlist as export — old v2 files may contain
+              // credentials/snapshots, which we refuse to write back.
+              if (isBackupPref(k) && typeof v === "string") {
                 window.localStorage.setItem(k, v);
               }
             }
@@ -111,7 +147,16 @@ export function BackupButtons() {
             source?: string;
             externalId?: string | null;
           }>,
-          holdings: [],
+          priceAlerts: Array.isArray(
+            (data as { priceAlerts?: unknown }).priceAlerts,
+          )
+            ? (data as { priceAlerts: Array<{
+                symbol: string;
+                targetPrice: number;
+                direction: string;
+                active?: boolean;
+              }> }).priceAlerts
+            : undefined,
         });
       } catch {
         setStatus("Invalid backup file.");

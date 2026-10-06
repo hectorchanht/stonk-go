@@ -903,19 +903,37 @@ export const portfolioRouter = createTRPCRouter({
       return { ok: true };
     }),
 
-  /** Export all user data as JSON for backup. */
+  /**
+   * Export the minimal backup: just enough to fully restore the user's
+   * config and data.
+   * - transactions: the source of truth (holdings recompute from these).
+   * - priceAlerts: user config (when logged in).
+   * - clientPrefs: embedded client-side (allowlisted UI config only).
+   * Deliberately excluded: holdings (recomputed), broker/exchange
+   * snapshots + Yahoo bars (re-synced/re-fetched), credentials (never).
+   */
   exportBackup: publicProcedure.query(async ({ ctx }) => {
-    const [transactions, holdings, brokerPositions] = await Promise.all([
+    const session = ctx.session;
+    const userId = session?.user?.id;
+    const [transactions, priceAlerts] = await Promise.all([
       ctx.db.transaction.findMany({ orderBy: [{ executedAt: "desc" }] }),
-      ctx.db.holding.findMany({ orderBy: { symbol: "asc" } }),
-      ctx.db.brokerPosition.findMany({ orderBy: [{ symbol: "asc" }] }),
+      userId
+        ? ctx.db.priceAlert.findMany({
+            where: { userId },
+            orderBy: [{ createdAt: "asc" }],
+          })
+        : Promise.resolve([]),
     ]);
     return {
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       transactions,
-      holdings,
-      brokerPositions,
+      priceAlerts: priceAlerts.map((a) => ({
+        symbol: a.symbol,
+        targetPrice: a.targetPrice,
+        direction: a.direction,
+        active: a.active,
+      })),
     };
   }),
 
@@ -923,7 +941,7 @@ export const portfolioRouter = createTRPCRouter({
   importBackup: publicProcedure
     .input(
       z.object({
-        version: z.union([z.literal(1), z.literal(2)]),
+        version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
         transactions: z.array(
           z.object({
             symbol: z.string(),
@@ -937,9 +955,22 @@ export const portfolioRouter = createTRPCRouter({
             externalId: z.string().nullable().optional(),
           }),
         ),
+        // Legacy payloads (accepted, ignored): v1 exported holdings,
+        // v2 exported brokerPositions for verification — neither was ever
+        // restored, and v3 no longer exports them.
         holdings: z.array(z.unknown()).optional(),
-        // v2 only — exported for verification; not restored (see below)
         brokerPositions: z.array(z.unknown()).optional(),
+        // v3: user price-alert config.
+        priceAlerts: z
+          .array(
+            z.object({
+              symbol: z.string(),
+              targetPrice: z.number(),
+              direction: z.string(),
+              active: z.boolean().optional(),
+            }),
+          )
+          .optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -977,10 +1008,43 @@ export const portfolioRouter = createTRPCRouter({
       for (const t of input.transactions) {
         await recomputeHolding(ctx.db, t.symbol);
       }
-      // Note: brokerPositions/exchangeBalances are exported for verification
-      // but not restored — they're live caches; re-sync IBKR/exchanges after
-      // restore to repopulate. Transactions are the source of truth.
-      return { ok: true, restored: input.transactions.length };
+      // Restore price alerts (v3, logged-in users only).
+      let alertsRestored = 0;
+      const session = ctx.session;
+      const userId = session?.user?.id;
+      if (userId && session && input.priceAlerts) {
+        const aExisting = await ctx.db.priceAlert.findMany({
+          where: { userId },
+        });
+        for (const a of aExisting) {
+          await ctx.db.priceAlert.delete({ where: { id: a.id } });
+        }
+        const email = session.user.email ?? "";
+        for (const pa of input.priceAlerts) {
+          if (pa.direction !== "above" && pa.direction !== "below") continue;
+          const created = await ctx.db.priceAlert.create({
+            data: {
+              userId,
+              email,
+              symbol: pa.symbol,
+              targetPrice: pa.targetPrice,
+              direction: pa.direction,
+            },
+          });
+          if (pa.active === false) {
+            await ctx.db.priceAlert.update({
+              where: { id: created.id },
+              data: { active: false },
+            });
+          }
+          alertsRestored++;
+        }
+      }
+      return {
+        ok: true,
+        restored: input.transactions.length,
+        alertsRestored,
+      };
     }),
 
   clearManualData: publicProcedure
