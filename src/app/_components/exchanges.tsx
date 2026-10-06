@@ -59,6 +59,51 @@ const EXCHANGE_META: Record<
 
 const AUTO_SYNC_AFTER_MS = 1 * 3600 * 1000;
 
+/** Browser-side Binance credentials (the secret never leaves this device). */
+const BINANCE_CREDS_KEY = "holdr.binance.creds";
+
+interface BrowserCreds {
+  k: string;
+  s: string;
+}
+
+function loadBinanceCreds(): BrowserCreds | null {
+  try {
+    const raw = localStorage.getItem(BINANCE_CREDS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as { k?: unknown; s?: unknown };
+    if (typeof p.k === "string" && p.k && typeof p.s === "string" && p.s) {
+      return { k: p.k, s: p.s };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/* NOTE: copy of the server-side binanceSignature in src/server/exchanges.ts.
+ * Duplicated on purpose and NOT imported: the server module must never enter
+ * the client bundle, and the browser needs the raw secret for HMAC signing
+ * anyway — the whole point of the browser-side flow is that the secret never
+ * leaves the user's device. */
+async function binanceBrowserSignature(
+  apiSecret: string,
+  queryString: string,
+): Promise<string> {
+  const te = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    te.encode(apiSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, te.encode(queryString));
+  return Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 const COINBASE_STEPS: GuideStep[] = [
   {
     icon: LogIn,
@@ -324,7 +369,10 @@ function ExchangeCard({
   const [apiSecret, setApiSecret] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<{ at: string; data: SyncResult } | null>(null);
+  const [browserCreds, setBrowserCreds] = useState<BrowserCreds | null>(null);
+  const [browserBusy, setBrowserBusy] = useState(false);
   const autoStarted = useRef(false);
+  const isBinance = exchange === "binance";
 
   const statusQ = api.exchanges.status.useQuery(undefined, { retry: false });
   const st: Status | undefined = statusQ.data?.exchanges[exchange];
@@ -338,22 +386,134 @@ function ExchangeCard({
     { enabled: !!session?.user && !!st?.configured, retry: false },
   );
 
+  const handleSyncSuccess = (data: SyncResult) => {
+    setError(null);
+    const snap = { at: new Date().toISOString(), data };
+    setSnapshot(snap);
+    try {
+      localStorage.setItem(meta.snapshotKey, JSON.stringify(snap));
+    } catch {
+      /* ignore */
+    }
+    void statusQ.refetch();
+    void balancesQ.refetch();
+    void savedQ.refetch();
+  };
+  const handleSyncError = (e: { message: string }) => setError(e.message);
+
   const sync = api.exchanges.sync.useMutation({
-    onSuccess: (data) => {
-      setError(null);
-      const snap = { at: new Date().toISOString(), data };
-      setSnapshot(snap);
-      try {
-        localStorage.setItem(meta.snapshotKey, JSON.stringify(snap));
-      } catch {
-        /* ignore */
-      }
-      void statusQ.refetch();
-      void balancesQ.refetch();
-      void savedQ.refetch();
-    },
-    onError: (e) => setError(e.message),
+    onSuccess: handleSyncSuccess,
+    onError: handleSyncError,
   });
+
+  // Browser-side Binance sync result goes through the same snapshot pipeline.
+  const directSync = api.exchanges.binanceDirectSync.useMutation();
+
+  const submitBinanceDirect = (
+    accountJson: unknown,
+    tickersJson: unknown,
+    key: string,
+    secret: string,
+  ) => {
+    directSync.mutate(
+      { accountJson, tickersJson, label: "browser" },
+      {
+        onSuccess: (d) => {
+          try {
+            localStorage.setItem(
+              BINANCE_CREDS_KEY,
+              JSON.stringify({ k: key, s: secret }),
+            );
+          } catch {
+            /* ignore */
+          }
+          setBrowserCreds({ k: key, s: secret });
+          setApiKey("");
+          setApiSecret("");
+          handleSyncSuccess(d);
+        },
+        onError: handleSyncError,
+      },
+    );
+  };
+
+  /**
+   * Binance connects from the USER'S BROWSER, not our server: Binance's CDN
+   * geo-blocks / WAF-blocks api.binance.com from Cloudflare Workers egress
+   * IPs (HTTP 403 before the key is checked), while a residential IP works.
+   * The secret is used here for HMAC signing and never leaves this device —
+   * only the fetched balances + public tickers are posted to the server for
+   * valuation and storage.
+   */
+  const connectBinanceBrowser = async (
+    key: string,
+    secret: string,
+    opts?: { silent?: boolean },
+  ) => {
+    const silent = opts?.silent ?? false;
+    const fail = (msg: string) => {
+      if (!silent) setError(msg);
+    };
+    setBrowserBusy(true);
+    try {
+      const timestamp = Date.now().toString();
+      const qs = `timestamp=${timestamp}&recvWindow=5000`;
+      let signature: string;
+      try {
+        signature = await binanceBrowserSignature(secret, qs);
+      } catch {
+        fail("Couldn't sign the request in this browser (WebCrypto unavailable).");
+        return;
+      }
+      let accountRes: Response;
+      let tickersRes: Response;
+      try {
+        [accountRes, tickersRes] = await Promise.all([
+          fetch(
+            `https://api.binance.com/api/v3/account?${qs}&signature=${signature}`,
+            { headers: { "X-MBX-APIKEY": key } },
+          ),
+          fetch("https://api.binance.com/api/v3/ticker/price"),
+        ]);
+      } catch (e) {
+        fail(
+          e instanceof TypeError
+            ? "Couldn't reach Binance directly from this browser. Check your connection — some networks block api.binance.com."
+            : "Couldn't reach Binance directly from this browser.",
+        );
+        return;
+      }
+      if (!accountRes.ok) {
+        let msg = `Binance request failed (HTTP ${accountRes.status}).`;
+        try {
+          const body = (await accountRes.json()) as {
+            msg?: unknown;
+            code?: unknown;
+          };
+          if (typeof body?.msg === "string" && body.msg) {
+            msg = `Binance: ${body.msg.slice(0, 200)}`;
+          }
+        } catch {
+          /* ignore parse errors */
+        }
+        fail(msg);
+        return;
+      }
+      let accountJson: unknown;
+      let tickersJson: unknown;
+      try {
+        accountJson = await accountRes.json();
+        tickersJson = tickersRes.ok ? await tickersRes.json() : [];
+      } catch {
+        fail("Couldn't parse Binance's response.");
+        return;
+      }
+      submitBinanceDirect(accountJson, tickersJson, key, secret);
+    } finally {
+      setBrowserBusy(false);
+    }
+  };
+
 
   const saveCreds = api.exchanges.saveCredentials.useMutation({
     onSuccess: () => {
@@ -382,6 +542,25 @@ function ExchangeCard({
     },
     onError: (e) => setError(e.message),
   });
+  const disconnectBinance = () => {
+    try {
+      localStorage.removeItem(BINANCE_CREDS_KEY);
+      localStorage.removeItem(meta.snapshotKey);
+    } catch {
+      /* ignore */
+    }
+    setBrowserCreds(null);
+    setApiKey("");
+    setApiSecret("");
+    setSnapshot(null);
+    setError(null);
+    onPositions?.([]);
+    // Also wipe server-side persisted balances for this exchange.
+    clearCreds.mutate({ exchange });
+    void statusQ.refetch();
+    void savedQ.refetch();
+    void balancesQ.refetch();
+  };
 
   useEffect(() => {
     setSnapshot(loadSnapshot(meta.snapshotKey));
@@ -389,10 +568,16 @@ function ExchangeCard({
   }, [exchange]);
 
   const configured = !!st?.configured;
-  const data: SyncResult | null = sync.data ?? snapshot?.data ?? null;
+  // Binance syncs from this browser (see connectBinanceBrowser); Coinbase
+  // still syncs server-side.
+  const syncData: SyncResult | null = isBinance ? directSync.data ?? null : sync.data ?? null;
+  const data: SyncResult | null = syncData ?? snapshot?.data ?? null;
+  const busy = isBinance ? browserBusy || directSync.isPending : sync.isPending;
 
   // Auto-sync once when saved credentials exist and the snapshot is stale.
+  // Coinbase: server-side sync with saved server credentials.
   useEffect(() => {
+    if (isBinance) return;
     if (!session?.user || !configured || autoStarted.current || sync.isPending || data) return;
     autoStarted.current = true;
     const snap = loadSnapshot(meta.snapshotKey);
@@ -400,6 +585,20 @@ function ExchangeCard({
     if (stale) sync.mutate({ exchange });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user, configured]);
+
+  // Binance: keys live in this browser — auto-sync silently in the
+  // background when browser creds exist and the snapshot is stale.
+  useEffect(() => {
+    if (!isBinance || autoStarted.current) return;
+    autoStarted.current = true;
+    const creds = loadBinanceCreds();
+    if (!creds) return;
+    setBrowserCreds(creds);
+    const snap = loadSnapshot(meta.snapshotKey);
+    const stale = !snap || Date.now() - new Date(snap.at).getTime() > AUTO_SYNC_AFTER_MS;
+    if (stale) void connectBinanceBrowser(creds.k, creds.s, { silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exchange]);
 
   // Report balances upward so the dashboard totals can include them.
   useEffect(() => {
@@ -425,7 +624,7 @@ function ExchangeCard({
   }, [data, balancesQ.data]);
 
   const lastSyncLabel = (() => {
-    const at = sync.data ? new Date() : st?.lastSyncedAt ? new Date(st.lastSyncedAt) : snapshot ? new Date(snapshot.at) : null;
+    const at = syncData ? new Date() : st?.lastSyncedAt ? new Date(st.lastSyncedAt) : snapshot ? new Date(snapshot.at) : null;
     return at
       ? at.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
       : null;
@@ -433,24 +632,45 @@ function ExchangeCard({
 
   const valid = apiKey.trim().length > 0 && apiSecret.trim().length > 0;
 
-  const gearItems: { label: React.ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean }[] = [
-    {
-      label: (
-        <>
-          <RefreshCw size={15} className={sync.isPending ? "animate-spin" : ""} />
-          {sync.isPending ? "Syncing…" : "Sync now"}
-        </>
-      ),
-      onClick: () => sync.mutate({ exchange }),
-      disabled: sync.isPending,
-    },
-    {
-      label: clearCreds.isPending ? "Removing…" : "Remove saved credentials",
-      onClick: () => clearCreds.mutate({ exchange }),
-      danger: true,
-      disabled: clearCreds.isPending,
-    },
-  ];
+  const gearItems: { label: React.ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean }[] = isBinance
+    ? [
+        {
+          label: (
+            <>
+              <RefreshCw size={15} className={busy ? "animate-spin" : ""} />
+              {busy ? "Syncing…" : "Sync now"}
+            </>
+          ),
+          onClick: () => {
+            const c = loadBinanceCreds();
+            if (c) void connectBinanceBrowser(c.k, c.s);
+          },
+          disabled: busy || !browserCreds,
+        },
+        {
+          label: "Disconnect",
+          onClick: disconnectBinance,
+          danger: true,
+        },
+      ]
+    : [
+        {
+          label: (
+            <>
+              <RefreshCw size={15} className={sync.isPending ? "animate-spin" : ""} />
+              {sync.isPending ? "Syncing…" : "Sync now"}
+            </>
+          ),
+          onClick: () => sync.mutate({ exchange }),
+          disabled: sync.isPending,
+        },
+        {
+          label: clearCreds.isPending ? "Removing…" : "Remove saved credentials",
+          onClick: () => clearCreds.mutate({ exchange }),
+          danger: true,
+          disabled: clearCreds.isPending,
+        },
+      ];
 
   return (
     <div className={card}>
@@ -459,13 +679,13 @@ function ExchangeCard({
           <h2 className="flex items-center gap-2 text-lg font-bold">
             <Bitcoin size={20} className={`shrink-0 ${meta.accent}`} />
             <span>{meta.title}</span>
-            {data && !sync.isPending && (
+            {data && !busy && (
               <span className="ml-2 inline-flex items-center gap-1.5 rounded-full border border-emerald-700/60 bg-emerald-900/40 px-2.5 py-0.5 align-middle text-[10px] font-extrabold tracking-wider text-emerald-300">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                 LIVE
               </span>
             )}
-            {sync.isPending && (
+            {busy && (
               <span className="ml-2 inline-flex items-center gap-1.5 rounded-full border border-amber-700/60 bg-amber-900/40 px-2.5 py-0.5 align-middle text-[10px] font-extrabold tracking-wider text-amber-300">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
                 SYNCING
@@ -473,17 +693,22 @@ function ExchangeCard({
             )}
           </h2>
           <p className="text-xs text-zinc-500">
-            {st?.keyLast4 ? (
+            {st?.keyLast4 || browserCreds ? (
               <>
                 <Check size={13} className="mr-1 inline text-emerald-400" />
-                Key …{st.keyLast4} saved{lastSyncLabel ? ` · synced ${lastSyncLabel}` : ""}
+                {browserCreds
+                  ? "Connected in this browser — key never leaves your device"
+                  : `Key …${st?.keyLast4} saved`}
+                {lastSyncLabel ? ` · synced ${lastSyncLabel}` : ""}
               </>
             ) : (
               <>Read-only balances — {meta.title} can never trade from here</>
             )}
           </p>
         </div>
-        {configured && <GearMenu items={gearItems} label={`${meta.title} settings`} />}
+        {(configured || browserCreds) && (
+          <GearMenu items={gearItems} label={`${meta.title} settings`} />
+        )}
       </div>
 
       {error && (
@@ -492,7 +717,7 @@ function ExchangeCard({
         </p>
       )}
 
-      {!configured && !data && (
+      {!(isBinance ? browserCreds : configured) && !data && (
         <>
           <p className="mt-1 text-sm text-zinc-400">
             Connect your {meta.title} account to pull balances (read-only).
@@ -536,13 +761,17 @@ function ExchangeCard({
             </label>
             <div className="flex flex-wrap gap-2">
               <button
-                disabled={!valid || sync.isPending}
-                onClick={() => sync.mutate({ exchange, apiKey: apiKey.trim(), apiSecret: apiSecret.trim() })}
+                disabled={!valid || busy}
+                onClick={() =>
+                  isBinance
+                    ? void connectBinanceBrowser(apiKey.trim(), apiSecret.trim())
+                    : sync.mutate({ exchange, apiKey: apiKey.trim(), apiSecret: apiSecret.trim() })
+                }
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
               >
-                {sync.isPending ? "Syncing…" : "Connect & sync"}
+                {busy ? "Syncing…" : "Connect & sync"}
               </button>
-              {session?.user && data && !saveCreds.isPending && (
+              {!isBinance && session?.user && data && !saveCreds.isPending && (
                 <button
                   onClick={() =>
                     saveCreds.mutate({ exchange, apiKey: apiKey.trim(), apiSecret: apiSecret.trim() })
@@ -554,15 +783,31 @@ function ExchangeCard({
               )}
             </div>
           </div>
-          <p className="mt-3 text-xs text-zinc-500">
-            Keys are encrypted on our server (AES-GCM) and only ever used to
-            read balances. Use a <b>read-only</b> key — Holdr has no trading
-            code paths at all.
-          </p>
-          <p className="mt-1 text-xs text-zinc-600">
-            Not signed in? Your keys stay in this browser for this sync only and
-            are never saved. Totals are in USD.
-          </p>
+          {isBinance ? (
+            <>
+              <p className="mt-3 text-xs text-zinc-500">
+                Your key + secret stay in this browser — they sign requests
+                directly to Binance and <b>never reach our server</b>. Only the
+                resulting balances are sent for valuation. Use a{" "}
+                <b>read-only</b> key — Holdr has no trading code paths at all.
+              </p>
+              <p className="mt-1 text-xs text-zinc-600">
+                Totals are in USD.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="mt-3 text-xs text-zinc-500">
+                Keys are encrypted on our server (AES-GCM) and only ever used to
+                read balances. Use a <b>read-only</b> key — Holdr has no trading
+                code paths at all.
+              </p>
+              <p className="mt-1 text-xs text-zinc-600">
+                Not signed in? Your keys stay in this browser for this sync only and
+                are never saved. Totals are in USD.
+              </p>
+            </>
+          )}
         </>
       )}
 

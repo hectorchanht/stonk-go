@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   addDecimal,
+  binancePriceFetcherFromTickers,
   binanceSignature,
   coinbaseSignature,
   decimalToString,
@@ -29,6 +30,7 @@ import {
   parseCoinbaseAccounts,
   parseDecimal,
   roundToCents,
+  validateBinanceDirectPayload,
   valuate,
   type PriceFetcher,
 } from "./exchanges";
@@ -361,5 +363,110 @@ describe("price fetchers", () => {
     expect(called).toBe(0);
     expect(isUsdPegged("USDC")).toBe(true);
     expect(isUsdPegged("BTC")).toBe(false);
+  });
+});
+
+describe("binancePriceFetcherFromTickers (browser-side price map)", () => {
+  const tickers = [
+    { symbol: "BTCUSDT", price: "67000.12" },
+    { symbol: "ETHUSDT", price: "3500.5" },
+    { symbol: "DOGEUSDT", price: "not-a-number" },
+  ];
+
+  it("pegs stablecoins at 1 without a lookup", async () => {
+    const f = binancePriceFetcherFromTickers(tickers);
+    expect(await f("USDT")).toEqual({ price: "1", source: "peg:1" });
+    expect(await f("usdc")).toEqual({ price: "1", source: "peg:1" });
+  });
+
+  it("hits the USDT pair for priced assets", async () => {
+    const f = binancePriceFetcherFromTickers(tickers);
+    expect(await f("BTC")).toEqual({
+      price: "67000.12",
+      source: "binance:ticker/price:BTCUSDT",
+    });
+    expect(await f("eth")).toEqual({
+      price: "3500.5",
+      source: "binance:ticker/price:ETHUSDT",
+    });
+  });
+
+  it("returns null for a missing pair", async () => {
+    const f = binancePriceFetcherFromTickers(tickers);
+    expect(await f("XRP")).toBeNull();
+    expect(await f("USDT")).not.toBeNull(); // pegged, not pair-dependent
+  });
+
+  it("skips malformed ticker prices", async () => {
+    const f = binancePriceFetcherFromTickers(tickers);
+    expect(await f("DOGE")).toBeNull();
+  });
+
+  it("valuates end-to-end with the ticker map (exact math + reconciliation)", async () => {
+    const balances = parseBinanceAccount({
+      balances: [
+        { asset: "BTC", free: "0.05", locked: "0" },
+        { asset: "USDT", free: "100.00", locked: "0" },
+        { asset: "XRP", free: "10", locked: "0" }, // no XRPUSDT ticker -> unpriced
+      ],
+    });
+    const v = await valuate(
+      balances,
+      binancePriceFetcherFromTickers(tickers),
+      "2026-10-06T00:00:00.000Z",
+    );
+    expect(v.pricedCount).toBe(2);
+    expect(v.unpriced).toEqual(["XRP"]);
+    // 0.05 * 67000.12 = 3350.006 -> 335001c (half-up); 100 USDT -> 10000c
+    expect(v.totalCents).toBe(335001n + 10000n);
+    expect(v.reconciled).toBe(true);
+  });
+});
+
+describe("validateBinanceDirectPayload (untrusted browser input)", () => {
+  const goodAccount = {
+    balances: [
+      { asset: "BTC", free: "0.05", locked: "0.00" },
+      { asset: "ETH", free: "2.5", locked: "0" },
+    ],
+  };
+  const goodTickers = [
+    { symbol: "BTCUSDT", price: "67000.12" },
+    { symbol: "ETHUSDT", price: "3500.5" },
+  ];
+
+  it("accepts a well-formed payload", () => {
+    const out = validateBinanceDirectPayload(goodAccount, goodTickers);
+    expect(out.balances).toHaveLength(2);
+    expect(out.balances[0]).toMatchObject({ asset: "BTC", quantity: "0.05" });
+    expect(out.tickers).toHaveLength(2);
+  });
+
+  it("rejects garbage accountJson", () => {
+    for (const bad of [null, undefined, "nope", 42, [], {}, { balances: "nope" }, { balances: [{ asset: 42 }] }]) {
+      expect(() => validateBinanceDirectPayload(bad, goodTickers)).toThrow(
+        "Invalid Binance response payload.",
+      );
+    }
+  });
+
+  it("rejects garbage tickersJson", () => {
+    for (const bad of [null, undefined, "nope", 42, {}, [{ symbol: "BTCUSDT" }], [{ symbol: "BTCUSDT", price: 42 }]]) {
+      expect(() => validateBinanceDirectPayload(goodAccount, bad)).toThrow(
+        "Invalid Binance response payload.",
+      );
+    }
+  });
+
+  it("tolerates extra fields but still parses balances exactly", () => {
+    const out = validateBinanceDirectPayload(
+      {
+        makerCommission: 10,
+        balances: [{ asset: "BTC", free: "0.1", locked: "0.2", extra: true }],
+      },
+      goodTickers,
+    );
+    expect(out.balances).toHaveLength(1);
+    expect(out.balances[0]?.quantity).toBe("0.3");
   });
 });

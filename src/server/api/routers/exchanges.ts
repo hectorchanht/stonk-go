@@ -4,10 +4,12 @@ import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "~/server/api/trpc";
 import {
   ExchangeError,
+  binancePriceFetcherFromTickers,
   fetchBinanceBalances,
   fetchBinancePrice,
   fetchCoinbaseBalances,
   fetchCoinbasePrice,
+  validateBinanceDirectPayload,
   valuate,
   type ExchangeName,
   type NativeBalance,
@@ -263,6 +265,101 @@ export const exchangesRouter = createTRPCRouter({
 
       return {
         exchange: input.exchange,
+        persisted,
+        syncedAt: new Date(),
+        ...toValuationJson(v),
+      };
+    }),
+
+  /**
+   * Browser-side Binance sync.
+   *
+   * Binance's CDN geo-blocks / WAF-blocks api.binance.com from Cloudflare
+   * Workers egress IPs (HTTP 403 before the API key is even checked), so the
+   * signed account + ticker requests now run in the USER'S BROWSER and only
+   * the RESULTS are posted here for valuation + storage. The API secret
+   * never leaves the user's device — no credentials are involved in this
+   * mutation at all.
+   *
+   * Client payloads are untrusted: shapes are validated defensively and
+   * garbage is rejected with BAD_REQUEST. Number math reuses the exact
+   * parseBinanceAccount + valuate pipeline (same as server-side sync), so
+   * totals and reconciliation are identical.
+   */
+  binanceDirectSync: publicProcedure
+    .input(
+      z.object({
+        accountJson: z.unknown(),
+        tickersJson: z.unknown(),
+        label: z.string().max(80).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      let payload: ReturnType<typeof validateBinanceDirectPayload>;
+      try {
+        payload = validateBinanceDirectPayload(input.accountJson, input.tickersJson);
+      } catch {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Invalid Binance response payload.",
+        });
+      }
+      const nowIso = new Date().toISOString();
+      const v = await valuate(
+        payload.balances,
+        binancePriceFetcherFromTickers(payload.tickers),
+        nowIso,
+      );
+
+      if (!v.reconciled) {
+        console.warn(
+          `[exchanges] reconciliation failed for binance (browser sync): ` +
+            `drift=${v.driftCents}c over ${v.pricedCount} priced assets`,
+        );
+      }
+
+      // Persist exactly like exchanges.sync does for binance: same tables,
+      // same rows. No credentials exist in this flow, so persistence is
+      // driven by login state alone.
+      const userId = ctx.session?.user?.id;
+      const persisted = userId != null;
+      if (persisted && userId) {
+        await ctx.db.exchangeBalance.deleteMany({
+          where: { userId, exchange: "binance" },
+        });
+        if (v.items.length > 0) {
+          await ctx.db.exchangeBalance.createMany({
+            data: v.items.map((i) => ({
+              userId,
+              exchange: "binance",
+              asset: i.asset,
+              quantity: i.quantity,
+              priceUsd: i.priceUsd,
+              priceSource: i.priceSource,
+              priceAt: i.priceAt,
+              valueCents: i.valueCents == null ? null : i.valueCents.toString(),
+              currency: "USD",
+            })),
+          });
+        }
+        await ctx.db.exchangeSync.create({
+          data: {
+            userId,
+            exchange: "binance",
+            assetCount: v.items.length,
+            pricedCount: v.pricedCount,
+            totalCents: v.totalCents.toString(),
+            driftCents: v.driftCents.toString(),
+            ok: v.reconciled,
+            note: v.reconciled
+              ? null
+              : `Rounding drift ${v.driftCents}c exceeded the ${v.pricedCount}-asset bound`,
+          },
+        });
+      }
+
+      return {
+        exchange: "binance" as const,
         persisted,
         syncedAt: new Date(),
         ...toValuationJson(v),

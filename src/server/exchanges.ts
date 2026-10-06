@@ -14,6 +14,8 @@
  * surfaced, never hidden.
  */
 
+import { z } from "zod";
+
 const te = new TextEncoder();
 
 /* ------------------------------------------------------------------ */
@@ -441,6 +443,78 @@ export async function fetchBinancePrice(
   } catch {
     return null;
   }
+}
+
+/**
+ * Build a PriceFetcher from a batch of ticker rows, e.g. the response of
+ * GET /api/v3/ticker/price (every symbol's price in one call). Used by the
+ * browser-side Binance sync: the browser fetches the public tickers itself
+ * and hands them to the server for valuation, so no server-side price fetch
+ * is needed.
+ *
+ * Stablecoins peg at exactly 1 USD; other assets look up ${asset}USDT.
+ * Missing or malformed prices return null (asset stays unpriced, never
+ * zeroed). Price strings are validated with parseDecimal — no floats.
+ */
+export function binancePriceFetcherFromTickers(
+  tickers: Array<{ symbol: string; price: string }>,
+): PriceFetcher {
+  const bySymbol = new Map<string, string>();
+  for (const t of tickers) {
+    const symbol = (t.symbol ?? "").toUpperCase();
+    const price = (t.price ?? "").trim();
+    if (!symbol || !price) continue;
+    try {
+      parseDecimal(price); // validates the string; throws on garbage
+      if (!bySymbol.has(symbol)) bySymbol.set(symbol, price);
+    } catch {
+      /* skip malformed price strings */
+    }
+  }
+  return async (asset: string) => {
+    const upper = asset.toUpperCase();
+    if (isUsdPegged(upper)) return { price: "1", source: "peg:1" };
+    const hit = bySymbol.get(`${upper}USDT`);
+    if (hit == null) return null;
+    return { price: hit, source: `binance:ticker/price:${upper}USDT` };
+  };
+}
+
+/**
+ * Validate the untrusted payloads the browser posts for a Binance direct
+ * sync (the raw GET /api/v3/account + GET /api/v3/ticker/price responses).
+ * Throws a plain Error on garbage — the router converts it to a BAD_REQUEST
+ * TRPCError. Balance parsing still goes through parseBinanceAccount, so the
+ * exact-decimal number discipline is preserved.
+ */
+export function validateBinanceDirectPayload(
+  accountJson: unknown,
+  tickersJson: unknown,
+): { balances: NativeBalance[]; tickers: Array<{ symbol: string; price: string }> } {
+  const accountParsed = z
+    .object({
+      balances: z.array(
+        z
+          .object({
+            asset: z.string(),
+            free: z.string().optional(),
+            locked: z.string().optional(),
+          })
+          .passthrough(),
+      ),
+    })
+    .passthrough()
+    .safeParse(accountJson);
+  const tickersParsed = z
+    .array(z.object({ symbol: z.string(), price: z.string() }).passthrough())
+    .safeParse(tickersJson);
+  if (!accountParsed.success || !tickersParsed.success) {
+    throw new Error("Invalid Binance response payload.");
+  }
+  return {
+    balances: parseBinanceAccount(accountParsed.data),
+    tickers: tickersParsed.data.map((t) => ({ symbol: t.symbol, price: t.price })),
+  };
 }
 
 /* ------------------------------------------------------------------ */
