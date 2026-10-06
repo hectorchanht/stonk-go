@@ -242,7 +242,14 @@ function AnalyticsView({ data }: { data: Analytics }) {
       key: "symbol",
       header: "Symbol",
       render: (s) => (
-        <span className="font-semibold text-zinc-100">{s.symbol}</span>
+        <span className="font-semibold text-zinc-100">
+          {s.symbol}
+          {data.names?.[s.symbol] && (
+            <span className="block text-xs font-normal text-zinc-500">
+              {data.names[s.symbol]}
+            </span>
+          )}
+        </span>
       ),
     },
     {
@@ -281,7 +288,14 @@ function AnalyticsView({ data }: { data: Analytics }) {
       key: "symbol",
       header: "Symbol",
       render: (tr) => (
-        <span className="font-semibold text-zinc-100">{tr.symbol}</span>
+        <span className="font-semibold text-zinc-100">
+          {tr.symbol}
+          {data.names?.[tr.symbol] && (
+            <span className="block text-xs font-normal text-zinc-500">
+              {data.names[tr.symbol]}
+            </span>
+          )}
+        </span>
       ),
     },
     {

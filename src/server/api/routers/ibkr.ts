@@ -18,6 +18,24 @@ import {
   type ImportStats,
 } from "~/server/ibkr-import";
 import { decryptCredentials, encryptCredentials } from "~/server/crypto";
+import { resolveSymbolNames } from "~/server/market";
+
+/**
+ * Analytics plus display names for HKEX numeric codes (IBKR reports HK
+ * stocks by number, e.g. "2225", with no company name). Best-effort —
+ * missing names resolve to null and the UI falls back to the raw symbol.
+ */
+async function analyticsWithNames(
+  trades: TradeLike[],
+  cashFlows: CashFlowLike[],
+) {
+  const analytics = computeAnalytics(trades, cashFlows);
+  const names = await resolveSymbolNames([
+    ...analytics.symbols.map((s) => s.symbol),
+    ...analytics.recentTrades.map((t) => t.symbol),
+  ]);
+  return { ...analytics, names };
+}
 
 const SETUP_HINT =
   "IBKR is not connected. In Client Portal: Reports > Flex Queries (create an Activity query with the Open Positions, Trades and Cash Transactions sections, note its ID), then Settings > Reporting > Flex Web Service (generate a token). Set IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID as environment variables/secrets — or paste your token + query ID below; it stays in your browser and is only sent to IBKR when you sync.";
@@ -225,7 +243,7 @@ export const ibkrRouter = createTRPCRouter({
     return {
       persisted: !transient,
       positions: result.positions,
-      analytics: computeAnalytics(tradeLikes, cashLikes),
+      analytics: await analyticsWithNames(tradeLikes, cashLikes),
       syncedAt: now,
       // Normalized trades, so the browser can merge them into the
       // transaction log via portfolio.importIbkrTrades (owner only).
@@ -328,6 +346,6 @@ export const ibkrRouter = createTRPCRouter({
     const cashFlows = await ctx.db.brokerCashFlow.findMany({
       orderBy: [{ dateTime: "desc" }],
     });
-    return computeAnalytics(trades, cashFlows);
+    return analyticsWithNames(trades, cashFlows);
   }),
 });

@@ -30,6 +30,20 @@ export interface Quote {
 const CACHE_TTL_MS = 60_000;
 const quoteCache = new Map<string, { at: number; quote: Quote }>();
 
+/**
+ * HKEX stock codes are numeric (e.g. IBKR reports "2225" for 02225.HK).
+ * No major US listing is purely numeric, so an all-digit symbol is
+ * treated as a Hong Kong stock.
+ */
+export function isHkCode(symbol: string): boolean {
+  return /^\d{1,5}$/.test(symbol.trim());
+}
+
+/** Yahoo ticker for a symbol — HK codes need the .HK suffix. */
+function yahooTicker(symbol: string): string {
+  return isHkCode(symbol) ? `${symbol.trim()}.HK` : symbol;
+}
+
 function emptyQuote(symbol: string): Quote {
   return {
     symbol,
@@ -102,7 +116,7 @@ async function fetchFinnhub(
 async function fetchYahoo(symbol: string): Promise<Quote | null> {
   const res = await fetch(
     `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-      symbol
+      yahooTicker(symbol)
     )}?interval=1d&range=5d`,
     {
       headers: { "User-Agent": "Mozilla/5.0 (Holdr portfolio)" },
@@ -139,7 +153,9 @@ async function fetchYahoo(symbol: string): Promise<Quote | null> {
   const prevClose = closes.length > 1 ? closes[closes.length - 2]! : null;
 
   return {
-    symbol: result.meta?.symbol ?? symbol.toUpperCase(),
+    // Keep the caller's symbol as the key (for HK codes Yahoo reports
+    // "2225.HK", but holdings are keyed by "2225").
+    symbol: symbol.toUpperCase(),
     name: result.meta?.longName ?? result.meta?.shortName ?? null,
     price,
     prevClose,
@@ -219,4 +235,23 @@ export async function getQuote(rawSymbol: string): Promise<Quote> {
 export async function getQuotes(symbols: string[]): Promise<Quote[]> {
   const unique = [...new Set(symbols.map((s) => s.trim().toUpperCase()))];
   return Promise.all(unique.map((s) => getQuote(s)));
+}
+
+/**
+ * Resolve display names for HKEX numeric codes (e.g. "2225" → the listed
+ * company name) via the quote layer. Non-HK symbols resolve to null —
+ * their names come from elsewhere. Never throws; results ride the 60s
+ * quote cache.
+ */
+export async function resolveSymbolNames(
+  symbols: string[],
+): Promise<Record<string, string | null>> {
+  const hkCodes = [
+    ...new Set(
+      symbols.map((s) => s.trim().toUpperCase()).filter((s) => isHkCode(s)),
+    ),
+  ];
+  if (hkCodes.length === 0) return {};
+  const quotes = await getQuotes(hkCodes);
+  return Object.fromEntries(quotes.map((q) => [q.symbol, q.name]));
 }
