@@ -43,7 +43,7 @@ function loadLocale(): LocaleCode {
 const Ctx = createContext<{
   locale: LocaleCode;
   setLocale: (l: LocaleCode) => void;
-}>({ locale: "en", setLocale: () => {} });
+}>({ locale: "en", setLocale: () => undefined });
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
   // undefined = not yet loaded (avoids SSR mismatch); falls back to "en".
