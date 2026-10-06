@@ -159,6 +159,21 @@ export const ibkrRouter = createTRPCRouter({
 
     let tradeImport: ImportStats | null = null;
     if (!transient) {
+      // Questrade shares these tables under the "questrade:" accountId
+      // prefix. The legacy env-mode snapshot replaces the WHOLE table, so
+      // it must refuse to run while another broker's rows exist rather
+      // than silently wiping them.
+      const hasQuestradeRows = (
+        await ctx.db.brokerPosition.findMany({ orderBy: [{ symbol: "asc" }] })
+      ).some((r) => r.accountId.startsWith("questrade:"));
+      if (hasQuestradeRows) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message:
+            "IBKR server-mode sync is disabled while Questrade data is stored (it would wipe it). " +
+            "Sync IBKR from the browser card instead, or disconnect Questrade first.",
+        });
+      }
       // Replace the whole snapshot. Sequential statements: D1 has no
       // interactive transactions, and these lists are small.
       await ctx.db.brokerPosition.deleteMany();

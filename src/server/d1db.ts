@@ -172,6 +172,13 @@ type SortDir = "asc" | "desc";
 
 interface BulkInsertable<TData> {
   deleteMany(): Promise<{ count: number }>;
+  /**
+   * Scoped delete for the shared broker tables: Questrade rows live under
+   * the "questrade:" accountId prefix, and syncs must only replace their
+   * own broker's rows. Optional because the local-dev Prisma client does
+   * not implement it — broker syncs require the D1 binding.
+   */
+  deleteByAccountPrefix?(prefix: string): Promise<{ count: number }>;
   createMany(args: { data: TData[] }): Promise<{ count: number }>;
 }
 
@@ -219,6 +226,11 @@ export interface AppDb {
       orderBy: Array<{ symbol?: SortDir; accountId?: SortDir }>;
     }): Promise<BrokerPositionRow[]>;
     deleteMany(): Promise<{ count: number }>;
+    /**
+     * Scoped delete: only rows whose accountId starts with `prefix`
+     * (Questrade syncs use "questrade:"). Optional — see BulkInsertable.
+     */
+    deleteByAccountPrefix?(prefix: string): Promise<{ count: number }>;
     createMany(args: {
       data: Array<{
         accountId: string;
@@ -586,6 +598,10 @@ function mapPushSubscription(r: RawRow): PushSubscriptionRow {
 }
 
 export function createD1Db(d1: D1Database): AppDb {
+  /** Escape a prefix for a LIKE pattern (prefix% match). */
+  const likePrefix = (prefix: string) =>
+    prefix.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_") + "%";
+
   const orderClause = (
     orderBy: Array<Record<string, "asc" | "desc" | undefined>>,
   ): string => {
@@ -612,6 +628,13 @@ export function createD1Db(d1: D1Database): AppDb {
     },
     deleteMany: async () => {
       const r = await d1.prepare(`DELETE FROM "BrokerTrade"`).run();
+      return { count: r.meta.changes ?? 0 };
+    },
+    deleteByAccountPrefix: async (prefix) => {
+      const r = await d1
+        .prepare(`DELETE FROM "BrokerTrade" WHERE "accountId" LIKE ? ESCAPE '\\'`)
+        .bind(likePrefix(prefix))
+        .run();
       return { count: r.meta.changes ?? 0 };
     },
     createMany: async (args) => {
@@ -666,6 +689,13 @@ export function createD1Db(d1: D1Database): AppDb {
       const r = await d1.prepare(`DELETE FROM "BrokerCashFlow"`).run();
       return { count: r.meta.changes ?? 0 };
     },
+    deleteByAccountPrefix: async (prefix) => {
+      const r = await d1
+        .prepare(`DELETE FROM "BrokerCashFlow" WHERE "accountId" LIKE ? ESCAPE '\\'`)
+        .bind(likePrefix(prefix))
+        .run();
+      return { count: r.meta.changes ?? 0 };
+    },
     createMany: async (args) => {
       const now = new Date().toISOString();
       let count = 0;
@@ -711,6 +741,14 @@ export function createD1Db(d1: D1Database): AppDb {
 
     deleteMany: async () => {
       const r = await d1.prepare(`DELETE FROM "BrokerPosition"`).run();
+      return { count: r.meta.changes ?? 0 };
+    },
+
+    deleteByAccountPrefix: async (prefix) => {
+      const r = await d1
+        .prepare(`DELETE FROM "BrokerPosition" WHERE "accountId" LIKE ? ESCAPE '\\'`)
+        .bind(likePrefix(prefix))
+        .run();
       return { count: r.meta.changes ?? 0 };
     },
 

@@ -22,6 +22,7 @@ import {
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { BrokerCard } from "~/app/_components/broker";
+import { QuestradeCard } from "~/app/_components/questrade";
 import { ExchangeCards, type ExchangePositionLike } from "~/app/_components/exchanges";
 import {
   PerformanceSection,
@@ -1166,6 +1167,14 @@ function DashboardInner() {
             info="Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour. Synced trades merge into your transaction log (marked IBKR) so holdings and cost basis stay in one place — your manual entries are never touched. Stock splits are auto-adjusted against IBKR's positions. IBKR publishes end-of-day reports, so today's trades appear after the next report; there is no live push."
           >
             <BrokerCard onPositions={setBrokerPositions} />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="questrade"
+            title="Questrade"
+            info="Read-only sync from Questrade via their official API. Paste a manual authorization token once — it rotates automatically on every sync. Positions stay grouped by currency and are never summed across currencies; trade analysis converts to USD with public FX rates. Questrade positions are shown here only (not merged into Holdings) until the portfolio summary converts currencies explicitly."
+          >
+            <QuestradeCard />
           </CollapsibleSection>
 
           <CollapsibleSection

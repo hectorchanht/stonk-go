@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Holdr push notification service worker
 self.addEventListener("push", (event) => {
   const data = event.data ? event.data.json() : {};
