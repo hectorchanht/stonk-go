@@ -1,9 +1,9 @@
 import { TRPCError } from "@trpc/server";
-import { type Prisma, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
 
 import { getQuote, getQuotes, type Quote } from "~/server/market";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
+import { type AppDb } from "~/server/db";
 
 /**
  * Portfolio domain.
@@ -23,10 +23,8 @@ const symbolSchema = z
   .max(16)
   .transform((s) => s.toUpperCase().replace(/\s+/g, ""));
 
-type DbTx = Prisma.TransactionClient;
-
 /** Recompute a holding from its full transaction history. */
-async function recomputeHolding(tx: DbTx, symbol: string) {
+async function recomputeHolding(tx: AppDb, symbol: string) {
   const txns = await tx.transaction.findMany({
     where: { symbol },
     orderBy: [{ executedAt: "asc" }, { id: "asc" }],
@@ -91,7 +89,7 @@ export interface Summary {
   };
 }
 
-async function buildSummary(ctx: { db: PrismaClient }): Promise<Summary> {
+async function buildSummary(ctx: { db: AppDb }): Promise<Summary> {
   const holdings = await ctx.db.holding.findMany({ orderBy: { symbol: "asc" } });
   const quotes = await getQuotes(holdings.map((h) => h.symbol));
   const bySymbol = new Map<string, Quote>(quotes.map((q) => [q.symbol, q]));
@@ -187,63 +185,65 @@ export const portfolioRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      return ctx.db.$transaction(async (tx) => {
-        const txn = await tx.transaction.create({
-          data: {
-            symbol: input.symbol,
-            type: input.type,
-            quantity: input.quantity,
-            price: input.price,
-            fees: input.fees,
-            executedAt: input.executedAt,
-            note: input.note ? input.note : undefined,
-          },
-        });
-        // Throws BAD_REQUEST if a sell exceeds the held quantity.
-        await recomputeHolding(tx, input.symbol);
-
-        // Backfill the company name from the quote feed when we learn it.
-        try {
-          const quote = await getQuote(input.symbol);
-          if (quote.name) {
-            await tx.holding.updateMany({
-              where: { symbol: input.symbol, name: null },
-              data: { name: quote.name },
-            });
-          }
-        } catch {
-          /* name backfill is best-effort */
-        }
-
-        return txn;
+      // NOTE: no interactive $transaction here — Cloudflare D1 does not
+      // support them ("Cloudflare D1 does not support interactive
+      // transactions"). The statements run sequentially instead; D1 is
+      // single-writer so this is safe for a personal portfolio app.
+      const db = ctx.db;
+      const txn = await db.transaction.create({
+        data: {
+          symbol: input.symbol,
+          type: input.type,
+          quantity: input.quantity,
+          price: input.price,
+          fees: input.fees,
+          executedAt: input.executedAt,
+          note: input.note ? input.note : undefined,
+        },
       });
+      // Throws BAD_REQUEST if a sell exceeds the held quantity.
+      await recomputeHolding(db, input.symbol);
+
+      // Backfill the company name from the quote feed when we learn it.
+      try {
+        const quote = await getQuote(input.symbol);
+        if (quote.name) {
+          await db.holding.updateMany({
+            where: { symbol: input.symbol, name: null },
+            data: { name: quote.name },
+          });
+        }
+      } catch {
+        /* name backfill is best-effort */
+      }
+
+      return txn;
     }),
 
   /** Delete one transaction; the holding is recomputed from the rest. */
   deleteTransaction: publicProcedure
     .input(z.object({ id: z.string().min(1) }))
     .mutation(async ({ ctx, input }) => {
-      return ctx.db.$transaction(async (tx) => {
-        const existing = await tx.transaction.findUnique({
-          where: { id: input.id },
-        });
-        if (!existing) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Transaction not found" });
-        }
-        await tx.transaction.delete({ where: { id: input.id } });
-        await recomputeHolding(tx, existing.symbol);
-        return { ok: true };
+      // Sequential, not an interactive $transaction (unsupported on D1).
+      const db = ctx.db;
+      const existing = await db.transaction.findUnique({
+        where: { id: input.id },
       });
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Transaction not found" });
+      }
+      await db.transaction.delete({ where: { id: input.id } });
+      await recomputeHolding(db, existing.symbol);
+      return { ok: true };
     }),
 
   /** Delete a holding AND its entire transaction history for that symbol. */
   deleteHolding: publicProcedure
     .input(z.object({ symbol: symbolSchema }))
     .mutation(async ({ ctx, input }) => {
-      return ctx.db.$transaction(async (tx) => {
-        await tx.transaction.deleteMany({ where: { symbol: input.symbol } });
-        await tx.holding.deleteMany({ where: { symbol: input.symbol } });
-        return { ok: true };
-      });
+      // Sequential, not an interactive $transaction (unsupported on D1).
+      await ctx.db.transaction.deleteMany({ where: { symbol: input.symbol } });
+      await ctx.db.holding.deleteMany({ where: { symbol: input.symbol } });
+      return { ok: true };
     }),
 });

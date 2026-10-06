@@ -1,53 +1,50 @@
 import type { D1Database } from "@cloudflare/workers-types";
-import { PrismaClient, type Prisma } from "@prisma/client";
-import { PrismaD1 } from "@prisma/adapter-d1";
+import { PrismaClient } from "@prisma/client";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 import { env } from "~/env";
+import { createD1Db, type AppDb } from "~/server/d1db";
 
-const createPrismaClient = () => {
-  const log: Prisma.LogLevel[] =
-    env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"];
-
-  // On Cloudflare Workers the D1 binding carries the database, but it is
-  // only visible inside a request: getCloudflareContext() throws at module
-  // scope (worker startup). Everywhere else (local dev, plain Node hosts)
-  // the client falls back to DATABASE_URL.
-  let d1: D1Database | undefined;
-  try {
-    d1 = getCloudflareContext().env.DB ?? undefined;
-  } catch {
-    d1 = undefined;
-  }
-
-  if (d1) {
-    return new PrismaClient({
-      adapter: new PrismaD1(d1),
-      log,
-    });
-  }
-
-  console.error(
-    "[db] D1 binding `DB` did not resolve; falling back to DATABASE_URL. " +
-      "On Cloudflare Workers this means getCloudflareContext() had no request scope."
-  );
-  return new PrismaClient({ log });
-};
+export type { AppDb };
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
 /**
- * Get a Prisma client for the current request.
- *
- * MUST be called inside a request (route handler, RSC render, tRPC context
- * factory). A client built at module scope would miss the D1 binding and
- * fail every query in production. In dev the client is cached on globalThis
- * across hot reloads.
+ * Real Prisma client, used for local dev (sqlite file) and for NextAuth's
+ * PrismaAdapter. Never queried on Cloudflare Workers — Prisma's query
+ * engine cannot load there.
  */
-export function getDb(): PrismaClient {
-  if (env.NODE_ENV === "production") return createPrismaClient();
-  globalForPrisma.prisma ??= createPrismaClient();
+function getPrismaClient(): PrismaClient {
+  if (env.NODE_ENV === "production") return new PrismaClient();
+  globalForPrisma.prisma ??= new PrismaClient();
   return globalForPrisma.prisma;
+}
+
+/** Prisma client for NextAuth's adapter. Auth has no providers configured, so this is never queried. */
+export function getAuthDb(): PrismaClient {
+  return getPrismaClient();
+}
+
+/**
+ * Get the database for the current request.
+ *
+ * On Cloudflare Workers this returns a D1-backed client: Prisma's query
+ * engine resolves its native binary via fs.readdir at runtime, which the
+ * Workers runtime does not implement ("[unenv] fs.readdir is not
+ * implemented yet!"). The D1 binding is plain SQL over HTTP, so we talk
+ * to it directly (see ~/server/d1db.ts).
+ *
+ * Everywhere else (local dev, plain Node hosts) this returns Prisma over
+ * DATABASE_URL (sqlite file).
+ */
+export function getDb(): AppDb {
+  try {
+    const d1 = getCloudflareContext().env.DB as D1Database | undefined;
+    if (d1) return createD1Db(d1);
+  } catch {
+    // Not inside a worker request scope — fall through to Prisma.
+  }
+  return getPrismaClient();
 }

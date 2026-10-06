@@ -8,7 +8,7 @@ import { type Adapter } from "next-auth/adapters";
 import DiscordProvider from "next-auth/providers/discord";
 
 import { env } from "~/env";
-import { getDb } from "~/server/db";
+import { getAuthDb } from "~/server/db";
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -73,7 +73,7 @@ export const getAuthOptions = (): NextAuthOptions => ({
       },
     }),
   },
-  adapter: PrismaAdapter(getDb()) as Adapter,
+  adapter: PrismaAdapter(getAuthDb()) as Adapter,
   providers,
 });
 
