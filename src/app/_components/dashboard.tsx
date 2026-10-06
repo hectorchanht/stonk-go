@@ -41,6 +41,15 @@ import {
 } from "~/app/_components/performance";
 import { PriceAlerts } from "~/app/_components/price-alerts";
 import {
+  PNL_PERIODS,
+  PNL_PERIOD_KEY,
+  parsePnlPeriodKey,
+  pnlForPeriod,
+  pnlPeriodDays,
+  shortDate,
+  type PnlPeriodKey,
+} from "~/app/_components/pnl-period";
+import {
   DataTable,
   Pagination,
   RowSkeleton,
@@ -1155,6 +1164,55 @@ function DashboardInner() {
   // positions arrive after first paint).
   useSnapshotRecorder(!!data && !isLoading && !isError, brokerInput);
 
+  // Selectable P/L comparison period for the overview card (1D/1W/2W/1M).
+  // SSR-safe: defaults to 1D, corrected from localStorage after mount.
+  const [pnlPeriod, setPnlPeriod] = useState<PnlPeriodKey>("1D");
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(PNL_PERIOD_KEY);
+      if (raw) setPnlPeriod(parsePnlPeriodKey(raw));
+    } catch {
+      /* storage unavailable — keep default */
+    }
+  }, []);
+  const selectPnlPeriod = useCallback((key: PnlPeriodKey) => {
+    setPnlPeriod(key);
+    try {
+      window.localStorage.setItem(PNL_PERIOD_KEY, key);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // True historical value series backing the P/L period lookup. 35 days
+  // covers the 1M option plus a weekend/holiday buffer. D1-cached server
+  // side, so this is cheap after the first build.
+  const { data: pnlCurve } = api.portfolio.equityCurve.useQuery(
+    { days: 35, brokerPositions: brokerInput },
+    { staleTime: 300_000, refetchInterval: 300_000 },
+  );
+
+  const periodDays = pnlPeriodDays(pnlPeriod);
+  const periodPnl = useMemo(
+    () =>
+      data?.totals
+        ? pnlForPeriod(
+            pnlCurve?.points ?? [],
+            data.totals.marketValue,
+            periodDays,
+          )
+        : null,
+    [pnlCurve, data, periodDays],
+  );
+  const periodPnlTone: "pos" | "neg" | "neutral" =
+    periodPnl == null
+      ? "neutral"
+      : periodPnl.pnl > 0
+        ? "pos"
+        : periodPnl.pnl < 0
+          ? "neg"
+          : "neutral";
+
   // WSB flair is judged from the trade log — manual holdings only.
   const manualSymbols = useMemo(
     () =>
@@ -1249,11 +1307,45 @@ function DashboardInner() {
                 }
               />
               <StatCard
-                label="Day P/L"
-                value={money(t!.dayPL, { sign: true })}
-                info="Today's gain or loss versus yesterday's closing prices."
-                sub="vs previous close"
-                tone={dayTone}
+                label={periodPnl ? `${pnlPeriod} P/L` : "Day P/L"}
+                value={money(periodPnl ? periodPnl.pnl : t!.dayPL, {
+                  sign: true,
+                })}
+                info={
+                  periodPnl
+                    ? `Gain or loss versus the portfolio value ${periodDays} day${periodDays === 1 ? "" : "s"} ago (${shortDate(periodPnl.compareDate)}).`
+                    : "Today's gain or loss versus yesterday's closing prices."
+                }
+                sub={
+                  periodPnl
+                    ? `vs ${shortDate(periodPnl.compareDate)}${periodPnl.clamped ? " · earliest" : ""}`
+                    : "vs previous close"
+                }
+                tone={periodPnl ? periodPnlTone : dayTone}
+                footer={
+                  <div
+                    className="mt-2 flex gap-1"
+                    role="group"
+                    aria-label="P/L comparison period"
+                  >
+                    {PNL_PERIODS.map((p) => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => selectPnlPeriod(p.key)}
+                        aria-pressed={pnlPeriod === p.key}
+                        title={`Compare vs ${p.days} day${p.days === 1 ? "" : "s"} ago`}
+                        className={`flex-1 rounded-md px-1 py-1 text-[11px] font-semibold leading-none transition-colors ${
+                          pnlPeriod === p.key
+                            ? "bg-zinc-700 text-white dark:bg-zinc-200 dark:text-zinc-900"
+                            : "text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                        }`}
+                      >
+                        {p.key}
+                      </button>
+                    ))}
+                  </div>
+                }
               />
               <StatCard
                 label="Total P/L"
@@ -1325,7 +1417,22 @@ function DashboardInner() {
         </WidgetSection>
       );
     },
-    [data, t, flair, brokerInput, layout, money, dayTone, totalTone, missingBasisNote],
+    [
+      data,
+      t,
+      flair,
+      brokerInput,
+      layout,
+      money,
+      dayTone,
+      totalTone,
+      missingBasisNote,
+      pnlPeriod,
+      periodDays,
+      periodPnl,
+      periodPnlTone,
+      selectPnlPeriod,
+    ],
   );
 
   const headerBtn =

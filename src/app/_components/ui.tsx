@@ -171,12 +171,15 @@ export function StatCard({
   sub,
   tone,
   info,
+  footer,
 }: {
   label: string;
   value: React.ReactNode;
   sub?: React.ReactNode;
   tone?: "pos" | "neg" | "neutral";
   info?: string;
+  /** Optional extra row rendered below `sub` (e.g. a period selector). */
+  footer?: React.ReactNode;
 }) {
   const toneClass =
     tone === "pos"
@@ -198,6 +201,7 @@ export function StatCard({
       {sub != null && sub !== "" && (
         <div className="mt-1 truncate text-sm text-zinc-500">{sub}</div>
       )}
+      {footer}
     </div>
   );
 }
