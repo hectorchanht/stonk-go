@@ -2,17 +2,23 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   BINANCE_WS_ACCOUNT_ID,
+  BINANCE_WS_MYTRADES_LIMIT,
   BINANCE_WS_RECV_WINDOW_MS,
   BINANCE_WS_TICKERS_ID,
   BINANCE_WS_TIME_ID,
   BINANCE_WS_TIME_TIMEOUT_MS,
   BINANCE_WS_URL,
   buildAccountStatusRequest,
+  buildMyTradesRequest,
   buildTickerPriceRequest,
   buildTimeRequest,
+  binanceTradePairs,
   extractServerTime,
+  lastTradeId,
+  myTradesPayload,
   parseWsResponse,
   signedRequestPayload,
+  syncBinanceMyTrades,
   syncBinanceViaWs,
   wsErrorMessage,
 } from "./binance-ws";
@@ -408,5 +414,197 @@ describe("syncBinanceViaWs time sync", () => {
       error: "Couldn't sign the request in this browser (WebCrypto unavailable).",
     });
     expect(ws.closed).toBe(true);
+  });
+});
+
+describe("buildMyTradesRequest", () => {
+  it("builds a signed myTrades request with a unique id per page", () => {
+    const r1 = buildMyTradesRequest("k", "sig", 123, "BTCUSDT", null);
+    expect(r1.method).toBe("myTrades");
+    expect(r1.id).toBe("binance-ws-mytrades:BTCUSDT:start");
+    expect(r1.params).toMatchObject({
+      apiKey: "k",
+      signature: "sig",
+      timestamp: 123,
+      symbol: "BTCUSDT",
+      limit: BINANCE_WS_MYTRADES_LIMIT,
+    });
+    expect(r1.params).not.toHaveProperty("fromId");
+
+    const r2 = buildMyTradesRequest("k", "sig", 123, "BTCUSDT", 5001);
+    expect(r2.id).toBe("binance-ws-mytrades:BTCUSDT:5001");
+    expect(r2.params.fromId).toBe(5001);
+    expect(r2.id).not.toBe(r1.id);
+  });
+});
+
+describe("myTradesPayload", () => {
+  it("covers every param (sorted) except the signature", () => {
+    expect(myTradesPayload("k", 123, "BTCUSDT", null)).toBe(
+      "apiKey=k&limit=1000&recvWindow=60000&symbol=BTCUSDT&timestamp=123",
+    );
+    expect(myTradesPayload("k", 123, "BTCUSDT", 42)).toBe(
+      "apiKey=k&fromId=42&limit=1000&recvWindow=60000&symbol=BTCUSDT&timestamp=123",
+    );
+  });
+});
+
+describe("lastTradeId", () => {
+  it("returns the largest numeric id", () => {
+    expect(lastTradeId([{ id: 3 }, { id: 10 }, { id: 7 }])).toBe(10);
+    expect(lastTradeId([])).toBeNull();
+    expect(lastTradeId([{ noid: 1 }, { id: "x" }])).toBeNull();
+  });
+});
+
+describe("syncBinanceMyTrades (mocked socket)", () => {
+  const realWs = (globalThis as Record<string, unknown>).WebSocket;
+
+  /** Minimal fake WebSocket: scripted incoming frames, records sent. */
+  function mockSocket(frames: Array<Record<string, unknown>>) {
+    const sent: string[] = [];
+    let closed = false;
+    let onopen: (() => void) | null = null;
+    let onmessage: ((ev: { data: string }) => void) | null = null;
+    const sock = {
+      sent,
+      close: () => {
+        closed = true;
+      },
+      set onopen(f: () => void) {
+        onopen = f;
+      },
+      set onmessage(f: (ev: { data: string }) => void) {
+        onmessage = f;
+      },
+      send: (s: string) => {
+        sent.push(s);
+        // After each send, deliver the next scripted frame.
+        const next = frames.shift();
+        if (next && onmessage) {
+          queueMicrotask(() =>
+            onmessage!({ data: JSON.stringify(next) }),
+          );
+        }
+      },
+    };
+    void closed;
+    (globalThis as Record<string, unknown>).WebSocket = function (
+      this: unknown,
+      _url: string,
+    ) {
+      void this;
+      void _url;
+      queueMicrotask(() => onopen && onopen());
+      return sock;
+    } as unknown as typeof WebSocket;
+    return sock;
+  }
+
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).WebSocket = realWs;
+  });
+
+  it("fetches one page per symbol and resolves the raw rows", async () => {
+    const t1 = { id: 1, symbol: "BTCUSDT", price: "60000", qty: "0.1", quoteQty: "6000", commission: "0", commissionAsset: "USDT", time: 1, isBuyer: true };
+    const t2 = { id: 2, symbol: "ETHUSDT", price: "3000", qty: "1", quoteQty: "3000", commission: "0", commissionAsset: "USDT", time: 2, isBuyer: true };
+    mockSocket([
+      { id: BINANCE_WS_TIME_ID, status: 200, result: { serverTime: 1700000000000 } },
+      { id: "binance-ws-mytrades:BTCUSDT:start", status: 200, result: [t1] },
+      { id: "binance-ws-mytrades:ETHUSDT:start", status: 200, result: [t2] },
+    ]);
+    const res = await syncBinanceMyTrades({
+      apiKey: "k",
+      sign: async () => "sig",
+      symbols: ["BTCUSDT", "ETHUSDT"],
+      timeoutMs: 5000,
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.pairs).toHaveLength(2);
+    expect(res.pairs[0]!.symbol).toBe("BTCUSDT");
+    expect(res.pairs[0]!.trades).toEqual([t1]);
+    expect(res.pairs[1]!.trades).toEqual([t2]);
+  });
+
+  it("paginates with fromId until a short page", async () => {
+    const page1 = Array.from({ length: BINANCE_WS_MYTRADES_LIMIT }, (_, i) => ({ id: i + 1 }));
+    const page2 = [{ id: BINANCE_WS_MYTRADES_LIMIT + 1 }];
+    mockSocket([
+      { id: BINANCE_WS_TIME_ID, status: 200, result: { serverTime: 1700000000000 } },
+      { id: "binance-ws-mytrades:BTCUSDT:start", status: 200, result: page1 },
+      { id: `binance-ws-mytrades:BTCUSDT:${BINANCE_WS_MYTRADES_LIMIT + 1}`, status: 200, result: page2 },
+    ]);
+    const res = await syncBinanceMyTrades({
+      apiKey: "k",
+      sign: async () => "sig",
+      symbols: ["BTCUSDT"],
+      timeoutMs: 5000,
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.pairs[0]!.trades).toHaveLength(BINANCE_WS_MYTRADES_LIMIT + 1);
+  });
+
+  it("skips a failed pair but keeps the others", async () => {
+    mockSocket([
+      { id: BINANCE_WS_TIME_ID, status: 200, result: { serverTime: 1700000000000 } },
+      { id: "binance-ws-mytrades:BADUSDT:start", status: 400, error: { code: -1121, msg: "Invalid symbol." } },
+      { id: "binance-ws-mytrades:BTCUSDT:start", status: 200, result: [{ id: 1 }] },
+    ]);
+    const res = await syncBinanceMyTrades({
+      apiKey: "k",
+      sign: async () => "sig",
+      symbols: ["BADUSDT", "BTCUSDT"],
+      timeoutMs: 5000,
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.pairs).toHaveLength(2);
+    expect(res.pairs[0]!.error).toMatch(/Invalid symbol/);
+    expect(res.pairs[0]!.trades).toEqual([]);
+    expect(res.pairs[1]!.trades).toEqual([{ id: 1 }]);
+  });
+
+  it("aborts everything on a fatal (bad key) error", async () => {
+    mockSocket([
+      { id: BINANCE_WS_TIME_ID, status: 200, result: { serverTime: 1700000000000 } },
+      { id: "binance-ws-mytrades:BTCUSDT:start", status: 400, error: { code: -2015, msg: "Invalid API-key." } },
+    ]);
+    const res = await syncBinanceMyTrades({
+      apiKey: "k",
+      sign: async () => "sig",
+      symbols: ["BTCUSDT"],
+      timeoutMs: 5000,
+    });
+    expect(res.ok).toBe(false);
+  });
+
+  it("resolves empty without opening work for no symbols", async () => {
+    const res = await syncBinanceMyTrades({ apiKey: "k", sign: async () => "sig", symbols: [] });
+    expect(res).toEqual({ ok: true, pairs: [] });
+  });
+});
+
+describe("binanceTradePairs", () => {
+  const account = {
+    balances: [
+      { asset: "BTC", free: "0.5", locked: "0" },
+      { asset: "ETH", free: "10", locked: "0" },
+      { asset: "USDT", free: "1500", locked: "0" },
+      { asset: "SLP", free: "8109", locked: "0" }, // delisted: no USDT pair
+      { asset: "ZERO", free: "0", locked: "0" }, // zero balance
+    ],
+  };
+  const tickers = [{ symbol: "BTCUSDT" }, { symbol: "ETHUSDT" }, { symbol: "BNBUSDT" }];
+
+  it("picks USDT pairs for non-zero, non-stable balances only", () => {
+    expect(binanceTradePairs(account, tickers)).toEqual(["BTCUSDT", "ETHUSDT"]);
+  });
+
+  it("returns [] for garbage input", () => {
+    expect(binanceTradePairs(null, tickers)).toEqual([]);
+    expect(binanceTradePairs(account, null)).toEqual([]);
+    expect(binanceTradePairs({}, [])).toEqual([]);
   });
 });

@@ -118,6 +118,10 @@ export interface ExchangeBalanceRow {
   /** Integer USD cents as text; null when unpriced. */
   valueCents: string | null;
   currency: string;
+  /** Average cost in USD from real trade history; null when unknowable. */
+  avgCostUsd: string | null;
+  /** How many real fills avgCostUsd was computed from; null when unknown. */
+  costTradeCount: number | null;
   syncedAt: Date;
 }
 
@@ -322,6 +326,8 @@ export interface AppDb {
         priceAt?: string | null;
         valueCents?: string | null;
         currency?: string;
+        avgCostUsd?: string | null;
+        costTradeCount?: number | null;
       }>;
     }): Promise<{ count: number }>;
   };
@@ -607,6 +613,9 @@ function mapExchangeBalance(r: RawRow): ExchangeBalanceRow {
     priceAt: (r.priceAt as string | null) ?? null,
     valueCents: (r.valueCents as string | null) ?? null,
     currency: (r.currency as string) ?? "USD",
+    avgCostUsd: (r.avgCostUsd as string | null) ?? null,
+    costTradeCount:
+      r.costTradeCount == null ? null : Number(r.costTradeCount as number),
     syncedAt: toDate(r.syncedAt),
   };
 }
@@ -1049,8 +1058,9 @@ export function createD1Db(d1: D1Database): AppDb {
           .prepare(
             `INSERT INTO "ExchangeBalance"
                ("id", "userId", "exchange", "asset", "quantity", "priceUsd",
-                "priceSource", "priceAt", "valueCents", "currency", "syncedAt")
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                "priceSource", "priceAt", "valueCents", "currency", "syncedAt",
+                "avgCostUsd", "costTradeCount")
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             crypto.randomUUID(),
@@ -1064,6 +1074,8 @@ export function createD1Db(d1: D1Database): AppDb {
             b.valueCents ?? null,
             b.currency ?? "USD",
             now,
+            b.avgCostUsd ?? null,
+            b.costTradeCount ?? null,
           )
           .run();
         count++;

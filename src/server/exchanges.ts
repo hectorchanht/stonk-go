@@ -2,8 +2,8 @@
  * Read-only clients for Coinbase (Advanced Trade), Binance (Spot) and Kraken.
  *
  * Runs on Cloudflare Workers and Node with zero dependencies (WebCrypto +
- * global fetch only). NEVER calls trading/order endpoints — balances and
- * public prices only.
+ * global fetch only). NEVER calls trading/order endpoints — balances, spot
+ * trade history (read-only fills, for cost basis) and public prices only.
  *
  * Number discipline (Hector's requirement): exchange balance endpoints return
  * NATIVE asset quantities (e.g. "0.05" BTC), never fiat values. We keep the
@@ -63,6 +63,39 @@ export function addDecimal(a: Decimal, b: Decimal): Decimal {
 /** a * b, exact. */
 export function mulDecimal(a: Decimal, b: Decimal): Decimal {
   return { int: a.int * b.int, scale: a.scale + b.scale };
+}
+
+/**
+ * a / b, rounded half-up to `scale` decimal places. Exact BigInt math —
+ * no floats. Throws ExchangeError on division by zero.
+ */
+export function divDecimal(a: Decimal, b: Decimal, scale: number): Decimal {
+  if (b.int === 0n) throw new ExchangeError("binance", "Division by zero.");
+  const neg = (a.int < 0n) !== (b.int < 0n);
+  const ai = a.int < 0n ? -a.int : a.int;
+  const bi = b.int < 0n ? -b.int : b.int;
+  // a/b = (ai * 10^b.scale) / (bi * 10^a.scale); scale up for `scale` decimals.
+  const num = ai * 10n ** BigInt(b.scale + scale);
+  const den = bi * 10n ** BigInt(a.scale);
+  let q = num / den;
+  if ((num % den) * 2n >= den) q += 1n; // half-up
+  return { int: neg ? -q : q, scale };
+}
+
+/** a - b, exact. */
+export function subDecimal(a: Decimal, b: Decimal): Decimal {
+  const scale = Math.max(a.scale, b.scale);
+  const ai = a.int * 10n ** BigInt(scale - a.scale);
+  const bi = b.int * 10n ** BigInt(scale - b.scale);
+  return { int: ai - bi, scale };
+}
+
+/** Compare two decimals: -1 | 0 | 1. */
+export function cmpDecimal(a: Decimal, b: Decimal): number {
+  const scale = Math.max(a.scale, b.scale);
+  const ai = a.int * 10n ** BigInt(scale - a.scale);
+  const bi = b.int * 10n ** BigInt(scale - b.scale);
+  return ai < bi ? -1 : ai > bi ? 1 : 0;
 }
 
 export function isZeroDecimal(d: Decimal): boolean {
@@ -534,6 +567,228 @@ export function validateBinanceDirectPayload(
     balances: parseBinanceAccount(accountParsed.data),
     tickers: tickersParsed.data.map((t) => ({ symbol: t.symbol, price: t.price })),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Binance spot trade history → real cost basis                        */
+/*                                                                     */
+/* GET /api/v3/myTrades (or the WS API `myTrades` method — same shape) */
+/* returns every fill the account ever made on one pair. From those     */
+/* REAL trades we compute each asset's average cost in USDT, which the  */
+/* app treats as USD 1:1 (the same peg:1 convention the valuation side  */
+/* already uses for USDT balances).                                    */
+/*                                                                     */
+/* HONESTY RULES — Hector: "make sure all numbers are real".           */
+/* - Only trades quoted in a USD-pegged stablecoin feed the cost basis. */
+/*   A trade quoted in BTC/ETH/BNB has a real price, but expressing it  */
+/*   in USDT would need that quote asset's historical price — which we  */
+/*   don't have. We skip those trades instead of inventing a rate.      */
+/* - Commissions fold into cost ONLY when denominated in the base or    */
+/*   quote asset (exact, no FX needed). Anything else is ignored.       */
+/* - A sell can never reduce the tracked quantity below zero (deposits  */
+/*   have no trade history): the sell is clamped to the held quantity.  */
+/* Every number out of here is derived from actual exchange fills.      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Quote assets we split trading pairs on, longest first so "BTCUSDT"
+ * splits as BTC/USDT and not B/T... — suffix match against this list.
+ */
+const QUOTE_ASSETS = [
+  "USDT", "USDC", "FDUSD", "TUSD", "BUSD", "DAI", "USDP",
+  "BTC", "ETH", "BNB", "EUR", "GBP",
+];
+
+/** Split "BTCUSDT" into { base: "BTC", quote: "USDT" }; null when unknown. */
+export function splitSymbolPair(pair: string): { base: string; quote: string } | null {
+  const upper = pair.toUpperCase().trim();
+  for (const q of QUOTE_ASSETS) {
+    if (upper.length > q.length && upper.endsWith(q)) {
+      return { base: upper.slice(0, upper.length - q.length), quote: q };
+    }
+  }
+  return null;
+}
+
+/** One validated Binance spot fill. Prices/qtys are exact decimal strings. */
+export interface BinanceSpotTrade {
+  /** Trading pair, e.g. "BTCUSDT". */
+  pair: string;
+  baseAsset: string;
+  quoteAsset: string;
+  tradeId: number;
+  /** Fill price in the quote asset. */
+  price: string;
+  /** Base-asset quantity filled. */
+  qty: string;
+  /** Quote-asset total (price × qty), as reported by the exchange. */
+  quoteQty: string;
+  commission: string;
+  commissionAsset: string;
+  time: number;
+  /** true = the account bought the base asset. */
+  isBuyer: boolean;
+}
+
+const myTradeRow = z
+  .object({
+    price: z.string(),
+    qty: z.string(),
+    quoteQty: z.string(),
+    commission: z.string().optional(),
+    commissionAsset: z.string().optional(),
+    time: z.number().optional(),
+    id: z.number().optional(),
+    isBuyer: z.boolean(),
+  })
+  .passthrough();
+
+/**
+ * Parse one pair's myTrades response into validated fills. Malformed rows
+ * are skipped (never fail the whole sync); zero-quantity or non-positive
+ * price rows are dropped — they carry no cost information.
+ */
+export function parseBinanceMyTrades(pair: string, body: unknown): BinanceSpotTrade[] {
+  const split = splitSymbolPair(pair);
+  if (!split) return [];
+  const rows = Array.isArray(body) ? body : [];
+  const out: BinanceSpotTrade[] = [];
+  for (const raw of rows) {
+    const parsed = myTradeRow.safeParse(raw);
+    if (!parsed.success) continue;
+    const r = parsed.data;
+    let price: Decimal, qty: Decimal, quoteQty: Decimal, commission: Decimal;
+    try {
+      price = parseDecimal(r.price);
+      qty = parseDecimal(r.qty);
+      quoteQty = parseDecimal(r.quoteQty);
+      commission = parseDecimal(r.commission ?? "0");
+    } catch {
+      continue;
+    }
+    if (isZeroDecimal(qty) || isNegativeDecimal(qty)) continue;
+    if (isZeroDecimal(price) || isNegativeDecimal(price)) continue;
+    if (isZeroDecimal(quoteQty) || isNegativeDecimal(quoteQty)) continue;
+    if (isNegativeDecimal(commission)) continue;
+    out.push({
+      pair: pair.toUpperCase(),
+      baseAsset: split.base,
+      quoteAsset: split.quote,
+      tradeId: typeof r.id === "number" && Number.isFinite(r.id) ? r.id : -1,
+      price: decimalToString(price),
+      qty: decimalToString(qty),
+      quoteQty: decimalToString(quoteQty),
+      commission: decimalToString(commission),
+      commissionAsset: (r.commissionAsset ?? "").toUpperCase(),
+      time: typeof r.time === "number" && Number.isFinite(r.time) ? r.time : 0,
+      isBuyer: r.isBuyer,
+    });
+  }
+  // Oldest first, so the average-cost walk is chronological.
+  out.sort((a, b) => a.time - b.time || a.tradeId - b.tradeId);
+  return out;
+}
+
+/**
+ * Validate the browser-posted myTrades payload: an array of
+ * { symbol: "<PAIR>", trades: <raw myTrades array> }. Untrusted input —
+ * shapes are checked, garbage pairs are dropped, garbage rows are skipped
+ * by parseBinanceMyTrades. Throws a plain Error on a non-array payload.
+ */
+export function validateBinanceTradesPayload(
+  payload: unknown,
+): Array<{ symbol: string; trades: BinanceSpotTrade[] }> {
+  if (payload == null) return [];
+  const parsed = z
+    .array(z.object({ symbol: z.string(), trades: z.array(z.unknown()) }).passthrough())
+    .safeParse(payload);
+  if (!parsed.success) throw new Error("Invalid Binance trades payload.");
+  const out: Array<{ symbol: string; trades: BinanceSpotTrade[] }> = [];
+  for (const entry of parsed.data) {
+    const symbol = entry.symbol.toUpperCase().trim();
+    if (!symbol) continue;
+    const trades = parseBinanceMyTrades(symbol, entry.trades);
+    if (trades.length > 0) out.push({ symbol, trades });
+  }
+  return out;
+}
+
+export interface AssetCostBasis {
+  asset: string;
+  /** Average cost in USDT (== USD by the app's peg:1 convention), exact decimal string; null when unknowable. */
+  avgCostUsd: string | null;
+  /** Number of REAL trades this basis was computed from. */
+  tradeCount: number;
+}
+
+/**
+ * Average cost per asset from real Binance spot fills.
+ *
+ * - USD-pegged assets cost exactly $1 (peg:1, same as valuation).
+ * - Other assets: only fills quoted in a USD-pegged stablecoin count.
+ *   Non-pegged-quote fills (e.g. ETHBTC) are skipped — see HONESTY RULES.
+ * - Average-cost method: buys add quoteQty to the cost pool; sells remove
+ *   cost proportionally and never drive the tracked quantity negative.
+ * - Commission folds in exactly when it's in the base asset (reduces the
+ *   received quantity) or the quote asset (adds to cost). Otherwise ignored.
+ */
+export function computeBinanceCostBasis(
+  perPair: Array<{ symbol: string; trades: BinanceSpotTrade[] }>,
+): AssetCostBasis[] {
+  const byAsset = new Map<string, BinanceSpotTrade[]>();
+  for (const { trades } of perPair) {
+    for (const t of trades) {
+      const arr = byAsset.get(t.baseAsset);
+      if (arr) arr.push(t);
+      else byAsset.set(t.baseAsset, [t]);
+    }
+  }
+  const out: AssetCostBasis[] = [];
+  for (const [asset, trades] of byAsset) {
+    if (isUsdPegged(asset)) {
+      out.push({ asset, avgCostUsd: "1", tradeCount: 0 });
+      continue;
+    }
+    const usable = trades.filter((t) => isUsdPegged(t.quoteAsset));
+    let qty = { int: 0n, scale: 0 } as Decimal;
+    let cost = { int: 0n, scale: 0 } as Decimal;
+    let used = 0;
+    for (const t of usable) {
+      const q = parseDecimal(t.qty);
+      const qq = parseDecimal(t.quoteQty);
+      const comm = parseDecimal(t.commission);
+      const commAsset = t.commissionAsset;
+      if (t.isBuyer) {
+        let addQty = q;
+        let addCost = qq;
+        if (!isZeroDecimal(comm)) {
+          if (commAsset === t.baseAsset) addQty = subDecimal(addQty, comm);
+          else if (commAsset === t.quoteAsset) addCost = addDecimal(addCost, comm);
+          // else: can't convert without historical FX — ignored (honest).
+        }
+        if (isNegativeDecimal(addQty) || isZeroDecimal(addQty)) continue;
+        qty = addDecimal(qty, addQty);
+        cost = addDecimal(cost, addCost);
+        used++;
+      } else {
+        if (isZeroDecimal(qty)) continue; // nothing tracked — deposit sale; skip
+        // Clamp the sell to the tracked quantity (deposits have no cost basis).
+        const sellQty = cmpDecimal(q, qty) > 0 ? qty : q;
+        const ratio = divDecimal(sellQty, qty, 12);
+        cost = subDecimal(cost, mulDecimal(cost, ratio));
+        qty = subDecimal(qty, sellQty);
+        if (isNegativeDecimal(cost)) cost = { int: 0n, scale: 0 };
+        if (isNegativeDecimal(qty)) qty = { int: 0n, scale: 0 };
+        used++;
+      }
+    }
+    out.push({
+      asset,
+      avgCostUsd: isZeroDecimal(qty) ? null : decimalToString(divDecimal(cost, qty, 8)),
+      tradeCount: used,
+    });
+  }
+  return out.sort((a, b) => a.asset.localeCompare(b.asset));
 }
 
 /* ------------------------------------------------------------------ */

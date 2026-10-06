@@ -29,7 +29,7 @@ import {
   useTableTools,
   type DataColumn,
 } from "~/app/_components/ui";
-import { syncBinanceViaWs } from "~/app/_components/binance-ws";
+import { syncBinanceViaWs, syncBinanceMyTrades, binanceTradePairs } from "~/app/_components/binance-ws";
 import {
   Code,
   SetupGuide,
@@ -377,6 +377,9 @@ function BalancesTable({ data }: { data: SyncResult }) {
   const { fmt } = useCurrency();
   const money = (cents: number | null) =>
     cents == null ? "—" : fmt(cents / 100);
+  // Only show the cost column when at least one asset has a real basis —
+  // Coinbase/Kraken never compute one, so their tables stay unchanged.
+  const showCost = data.items.some((r) => r.avgCostUsd != null);
 
   const columns: DataColumn<BalRow>[] = [
     {
@@ -422,6 +425,35 @@ function BalancesTable({ data }: { data: SyncResult }) {
       sortValue: (r) => r.valueCents,
       render: (r) => <span className="tabular-nums">{money(r.valueCents)}</span>,
     },
+    ...(showCost
+      ? [
+          {
+            key: "avgcost",
+            header: "Avg cost",
+            align: "right" as const,
+            sortValue: (r: BalRow) =>
+              r.avgCostUsd == null || Number.isNaN(Number(r.avgCostUsd))
+                ? null
+                : Number(r.avgCostUsd),
+            render: (r: BalRow) => (
+              <span
+                className="tabular-nums text-zinc-400"
+                title={
+                  r.avgCostUsd == null
+                    ? "No trade history — cost unknown, never estimated"
+                    : r.costTradeCount != null && r.costTradeCount > 0
+                      ? `Average cost from ${r.costTradeCount} real Binance spot fills`
+                      : "USD-pegged — cost is $1 by definition"
+                }
+              >
+                {r.avgCostUsd == null
+                  ? "—"
+                  : money(Math.round(Number(r.avgCostUsd) * 100))}
+              </span>
+            ),
+          },
+        ]
+      : []),
   ];
 
   const tools = useTableTools<BalRow>({ storageKey: "ex-bal-tools" });
@@ -453,6 +485,12 @@ function BalancesTable({ data }: { data: SyncResult }) {
       {data.unpriced.length > 0 && (
         <p className="mt-1 text-xs text-zinc-500">
           No price for {data.unpriced.join(", ")} — quantities shown, excluded from total.
+        </p>
+      )}
+      {data.costTrades > 0 && (
+        <p className="mt-1 text-xs text-zinc-500">
+          Avg cost from {data.costTrades} real Binance spot fills
+          {data.costAssets > 0 ? ` across ${data.costAssets} assets` : ""} — no estimates.
         </p>
       )}
       <div className="mt-3 overflow-hidden rounded-xl border border-zinc-800">
@@ -518,6 +556,8 @@ function ExchangeCard({
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Progress note for the second Binance phase (trade-history fetch).
+  const [syncNote, setSyncNote] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<{ at: string; data: SyncResult } | null>(null);
   const [browserCreds, setBrowserCreds] = useState<BrowserCreds | null>(null);
   const [browserBusy, setBrowserBusy] = useState(false);
@@ -592,9 +632,10 @@ function ExchangeCard({
     tickersJson: unknown,
     key: string,
     secret: string,
+    tradesJson?: Array<{ symbol: string; trades: unknown[] }>,
   ) => {
     directSync.mutate(
-      { accountJson, tickersJson, label: "browser" },
+      { accountJson, tickersJson, tradesJson, label: "browser" },
       {
         onSuccess: (d) => {
           try {
@@ -661,7 +702,35 @@ function ExchangeCard({
         fail(result.error);
         return;
       }
-      submitBinanceDirect(result.accountJson, result.tickersJson, key, secret);
+      // Phase 2 (best-effort): real spot trade history for cost basis.
+      // Balances stand alone — if this fails, cost just stays unknown
+      // (honest "no cost", never a fabricated number).
+      let tradesJson: Array<{ symbol: string; trades: unknown[] }> | undefined;
+      try {
+        const pairs = binanceTradePairs(result.accountJson, result.tickersJson);
+        if (pairs.length > 0) {
+          const tradesRes = await syncBinanceMyTrades({
+            apiKey: key,
+            sign: (payload) => binanceBrowserSignature(secret, payload),
+            symbols: pairs,
+            onProgress: (doneN, totalN, symbol) =>
+              setSyncNote(`Fetching trade history… ${doneN}/${totalN} (${symbol})`),
+          });
+          if (tradesRes.ok) {
+            tradesJson = tradesRes.pairs.map((p) => ({
+              symbol: p.symbol,
+              trades: p.trades,
+            }));
+          } else {
+            console.warn(`[binance] trade history fetch failed: ${tradesRes.error}`);
+          }
+        }
+      } catch (e) {
+        console.warn("[binance] trade history fetch failed:", e);
+      } finally {
+        setSyncNote(null);
+      }
+      submitBinanceDirect(result.accountJson, result.tickersJson, key, secret, tradesJson);
     } finally {
       setBrowserBusy(false);
     }
@@ -819,12 +888,20 @@ function ExchangeCard({
         priceSource: b.priceSource,
         priceAt: b.priceAt,
         valueCents: b.valueCents,
+        avgCostUsd: b.avgCostUsd,
+        costTradeCount: b.costTradeCount,
       }));
     onPositions?.(
       (items ?? []).map((i) => ({
         symbol: i.asset,
         quantity: Number(i.quantity),
         markPrice: i.priceUsd == null ? null : Number(i.priceUsd),
+        // Real average cost from the account's own trade history (Binance);
+        // null = unknown — the dashboard never fabricates it.
+        costBasisPrice:
+          i.avgCostUsd == null || Number.isNaN(Number(i.avgCostUsd))
+            ? null
+            : Number(i.avgCostUsd),
         label: meta.title.toUpperCase(),
         currency: "USD",
       })),
@@ -923,6 +1000,13 @@ function ExchangeCard({
       {error && (
         <p className="mt-3 rounded-lg border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-300">
           {error}
+        </p>
+      )}
+
+      {syncNote && (
+        <p className="mt-3 text-sm text-zinc-400">
+          <span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-zinc-600 border-t-emerald-400 align-[-2px]" />
+          {syncNote}
         </p>
       )}
 

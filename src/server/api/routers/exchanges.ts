@@ -5,6 +5,7 @@ import { createTRPCRouter, protectedProcedure, publicProcedure } from "~/server/
 import {
   ExchangeError,
   binancePriceFetcherFromTickers,
+  computeBinanceCostBasis,
   fetchBinanceBalances,
   fetchBinancePrice,
   fetchCoinbaseBalances,
@@ -12,7 +13,9 @@ import {
   fetchKrakenBalances,
   fetchKrakenPrice,
   validateBinanceDirectPayload,
+  validateBinanceTradesPayload,
   valuate,
+  type BinanceSpotTrade,
   type ExchangeName,
   type NativeBalance,
   type PriceFetcher,
@@ -101,7 +104,7 @@ async function resolveCreds(
   throw new TRPCError({ code: "PRECONDITION_FAILED", message: SETUP_HINTS[exchange] });
 }
 
-function toValuationJson(v: Valuation) {
+function toValuationJson(v: Valuation, costByAsset?: Map<string, { avgCostUsd: string | null; tradeCount: number }>) {
   return {
     items: v.items.map((i) => ({
       asset: i.asset,
@@ -110,13 +113,36 @@ function toValuationJson(v: Valuation) {
       priceSource: i.priceSource,
       priceAt: i.priceAt,
       valueCents: i.valueCents == null ? null : Number(i.valueCents),
+      avgCostUsd: costByAsset?.get(i.asset)?.avgCostUsd ?? null,
+      costTradeCount: costByAsset?.get(i.asset)?.tradeCount ?? null,
     })),
     totalCents: Number(v.totalCents),
     driftCents: Number(v.driftCents),
     reconciled: v.reconciled,
     pricedCount: v.pricedCount,
     unpriced: v.unpriced,
+    costAssets: costByAsset ? [...costByAsset.values()].filter((c) => c.avgCostUsd != null).length : 0,
+    costTrades: costByAsset ? [...costByAsset.values()].reduce((s, c) => s + c.tradeCount, 0) : 0,
   };
+}
+
+/**
+ * Real cost basis per asset from browser-posted myTrades history.
+ * Returns a map asset -> { avgCostUsd, tradeCount }. Empty map when no
+ * trades were posted — every asset then honestly reports unknown cost.
+ */
+function binanceCostByAsset(tradesJson: unknown): Map<string, { avgCostUsd: string | null; tradeCount: number }> {
+  const out = new Map<string, { avgCostUsd: string | null; tradeCount: number }>();
+  let perPair: Array<{ symbol: string; trades: BinanceSpotTrade[] }>;
+  try {
+    perPair = validateBinanceTradesPayload(tradesJson);
+  } catch {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid Binance trades payload." });
+  }
+  for (const b of computeBinanceCostBasis(perPair)) {
+    out.set(b.asset, { avgCostUsd: b.avgCostUsd, tradeCount: b.tradeCount });
+  }
+  return out;
 }
 
 export const exchangesRouter = createTRPCRouter({
@@ -197,6 +223,8 @@ export const exchangesRouter = createTRPCRouter({
           priceSource: r.priceSource,
           priceAt: r.priceAt,
           valueCents: r.valueCents == null ? null : centsToNumber(r.valueCents),
+          avgCostUsd: r.avgCostUsd,
+          costTradeCount: r.costTradeCount,
           currency: r.currency,
           syncedAt: r.syncedAt,
         })),
@@ -296,6 +324,13 @@ export const exchangesRouter = createTRPCRouter({
       z.object({
         accountJson: z.unknown(),
         tickersJson: z.unknown(),
+        /**
+         * Optional raw myTrades history per pair, posted by the browser
+         * after the balance sync: [{ symbol: "BTCUSDT", trades: [...] }].
+         * The server computes each asset's real average cost basis from
+         * these fills (USDT-quoted only — never estimated).
+         */
+        tradesJson: z.unknown().optional(),
         label: z.string().max(80).optional(),
       }),
     )
@@ -315,6 +350,9 @@ export const exchangesRouter = createTRPCRouter({
         binancePriceFetcherFromTickers(payload.tickers),
         nowIso,
       );
+      // Real cost basis from the account's own fill history (best-effort:
+      // absent when the browser skipped the trades fetch).
+      const costByAsset = binanceCostByAsset(input.tradesJson);
 
       if (!v.reconciled) {
         console.warn(
@@ -344,6 +382,8 @@ export const exchangesRouter = createTRPCRouter({
               priceAt: i.priceAt,
               valueCents: i.valueCents == null ? null : i.valueCents.toString(),
               currency: "USD",
+              avgCostUsd: costByAsset.get(i.asset)?.avgCostUsd ?? null,
+              costTradeCount: costByAsset.get(i.asset)?.tradeCount ?? null,
             })),
           });
         }
@@ -367,7 +407,7 @@ export const exchangesRouter = createTRPCRouter({
         exchange: "binance" as const,
         persisted,
         syncedAt: new Date(),
-        ...toValuationJson(v),
+        ...toValuationJson(v, costByAsset),
       };
     }),
 

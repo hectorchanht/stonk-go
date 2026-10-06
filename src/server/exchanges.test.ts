@@ -19,8 +19,11 @@ import {
   addDecimal,
   binancePriceFetcherFromTickers,
   binanceSignature,
+  cmpDecimal,
   coinbaseSignature,
+  computeBinanceCostBasis,
   decimalToString,
+  divDecimal,
   fetchBinancePrice,
   fetchCoinbasePrice,
   fetchKrakenPrice,
@@ -30,11 +33,15 @@ import {
   mapKrakenAsset,
   mulDecimal,
   parseBinanceAccount,
+  parseBinanceMyTrades,
   parseCoinbaseAccounts,
   parseDecimal,
   parseKrakenBalance,
   roundToCents,
+  splitSymbolPair,
+  subDecimal,
   validateBinanceDirectPayload,
+  validateBinanceTradesPayload,
   valuate,
   type PriceFetcher,
 } from "./exchanges";
@@ -580,5 +587,222 @@ describe("fetchKrakenPrice", () => {
     expect(await fetchKrakenPrice("USD", fetcher)).toEqual({ price: "1", source: "peg:1" });
     expect(await fetchKrakenPrice("USDT", fetcher)).toEqual({ price: "1", source: "peg:1" });
     expect(called).toBe(0);
+  });
+});
+
+describe("divDecimal / subDecimal / cmpDecimal", () => {
+  it("divides exactly to the requested scale, half-up", () => {
+    // 100 / 3 = 33.33333333 (8dp)
+    expect(decimalToString(divDecimal(parseDecimal("100"), parseDecimal("3"), 8))).toBe("33.33333333");
+    // 1 / 8 = 0.12500000
+    expect(decimalToString(divDecimal(parseDecimal("1"), parseDecimal("8"), 8))).toBe("0.12500000");
+    // half-up: 1 / 200 = 0.005 -> 0.01 at 2dp
+    expect(decimalToString(divDecimal(parseDecimal("1"), parseDecimal("200"), 2))).toBe("0.01");
+    // exact: 10 / 4 = 2.5
+    expect(decimalToString(divDecimal(parseDecimal("10"), parseDecimal("4"), 2))).toBe("2.50");
+  });
+
+  it("throws on division by zero", () => {
+    expect(() => divDecimal(parseDecimal("1"), parseDecimal("0"), 8)).toThrow();
+  });
+
+  it("subDecimal and cmpDecimal", () => {
+    expect(decimalToString(subDecimal(parseDecimal("10.5"), parseDecimal("3.25")))).toBe("7.25");
+    expect(cmpDecimal(parseDecimal("1"), parseDecimal("2"))).toBe(-1);
+    expect(cmpDecimal(parseDecimal("2"), parseDecimal("1"))).toBe(1);
+    expect(cmpDecimal(parseDecimal("1.0"), parseDecimal("1"))).toBe(0);
+  });
+});
+
+describe("splitSymbolPair", () => {
+  it("splits common pairs on the longest quote match", () => {
+    expect(splitSymbolPair("BTCUSDT")).toEqual({ base: "BTC", quote: "USDT" });
+    expect(splitSymbolPair("ETHBTC")).toEqual({ base: "ETH", quote: "BTC" });
+    expect(splitSymbolPair("BNBUSDC")).toEqual({ base: "BNB", quote: "USDC" });
+    expect(splitSymbolPair("SOLFDUSD")).toEqual({ base: "SOL", quote: "FDUSD" });
+  });
+
+  it("returns null for unknown pairs", () => {
+    expect(splitSymbolPair("XYZ")).toBeNull();
+    expect(splitSymbolPair("USDT")).toBeNull();
+  });
+});
+
+const trade = (over: Record<string, unknown>) => ({
+  symbol: "BTCUSDT",
+  id: 1,
+  orderId: 100,
+  price: "60000",
+  qty: "0.5",
+  quoteQty: "30000",
+  commission: "0",
+  commissionAsset: "USDT",
+  time: 1700000000000,
+  isBuyer: true,
+  isMaker: false,
+  ...over,
+});
+
+describe("parseBinanceMyTrades", () => {
+  it("parses real-shaped myTrades rows", () => {
+    const rows = parseBinanceMyTrades("BTCUSDT", [
+      trade({ id: 2, time: 1700000001000 }),
+      trade({ id: 1, time: 1700000000000 }),
+    ]);
+    expect(rows).toHaveLength(2);
+    // sorted oldest-first
+    expect(rows[0]!.tradeId).toBe(1);
+    expect(rows[0]).toMatchObject({
+      pair: "BTCUSDT",
+      baseAsset: "BTC",
+      quoteAsset: "USDT",
+      price: "60000",
+      qty: "0.5",
+      isBuyer: true,
+    });
+  });
+
+  it("skips malformed rows but keeps the good ones", () => {
+    const rows = parseBinanceMyTrades("BTCUSDT", [
+      trade({}),
+      { garbage: true },
+      trade({ qty: "0" }), // zero qty -> dropped
+      trade({ price: "-5" }), // negative price -> dropped
+      trade({ price: "not-a-number" }),
+    ]);
+    expect(rows).toHaveLength(1);
+  });
+
+  it("returns [] for unknown pairs and non-arrays", () => {
+    expect(parseBinanceMyTrades("NOPE", [trade({})])).toEqual([]);
+    expect(parseBinanceMyTrades("BTCUSDT", null)).toEqual([]);
+    expect(parseBinanceMyTrades("BTCUSDT", { not: "array" })).toEqual([]);
+  });
+});
+
+describe("validateBinanceTradesPayload", () => {
+  it("accepts null/undefined (no trades posted)", () => {
+    expect(validateBinanceTradesPayload(null)).toEqual([]);
+    expect(validateBinanceTradesPayload(undefined)).toEqual([]);
+  });
+
+  it("validates each pair entry and parses its trades", () => {
+    const out = validateBinanceTradesPayload([
+      { symbol: "BTCUSDT", trades: [trade({})] },
+      { symbol: "ETHUSDT", trades: [] }, // empty -> dropped
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.symbol).toBe("BTCUSDT");
+    expect(out[0]!.trades).toHaveLength(1);
+  });
+
+  it("throws on a non-array payload", () => {
+    expect(() => validateBinanceTradesPayload({ nope: 1 })).toThrow();
+  });
+});
+
+describe("computeBinanceCostBasis", () => {
+  const basisOf = (trades: Array<ReturnType<typeof trade>>, pair = "BTCUSDT") => {
+    const parsed = parseBinanceMyTrades(pair, trades);
+    return computeBinanceCostBasis([{ symbol: pair, trades: parsed }]);
+  };
+
+  it("averages multiple buys", () => {
+    // 0.5 BTC @ 60000 (30000) + 0.5 BTC @ 80000 (40000) -> avg 70000
+    const [b] = basisOf([
+      trade({ id: 1, price: "60000", qty: "0.5", quoteQty: "30000", time: 1 }),
+      trade({ id: 2, price: "80000", qty: "0.5", quoteQty: "40000", time: 2 }),
+    ]);
+    expect(b!.asset).toBe("BTC");
+    expect(b!.avgCostUsd).toBe("70000.00000000");
+    expect(b!.tradeCount).toBe(2);
+  });
+
+  it("sells reduce quantity and cost proportionally (average-cost)", () => {
+    // Buy 1 BTC @ 60000, sell 0.5 @ 70000 -> 0.5 BTC left @ 60000 avg
+    const [b] = basisOf([
+      trade({ id: 1, price: "60000", qty: "1", quoteQty: "60000", time: 1, isBuyer: true }),
+      trade({ id: 2, price: "70000", qty: "0.5", quoteQty: "35000", time: 2, isBuyer: false }),
+    ]);
+    expect(b!.avgCostUsd).toBe("60000.00000000");
+    expect(b!.tradeCount).toBe(2);
+  });
+
+  it("a full sell leaves no cost basis (null, not zero)", () => {
+    const [b] = basisOf([
+      trade({ id: 1, price: "60000", qty: "1", quoteQty: "60000", time: 1, isBuyer: true }),
+      trade({ id: 2, price: "70000", qty: "1", quoteQty: "70000", time: 2, isBuyer: false }),
+    ]);
+    expect(b!.avgCostUsd).toBeNull();
+  });
+
+  it("clamps sells that exceed the tracked quantity (deposits have no history)", () => {
+    // No buys at all — a sale of deposited coins must not go negative.
+    const [b] = basisOf([
+      trade({ id: 1, price: "70000", qty: "1", quoteQty: "70000", time: 1, isBuyer: false }),
+    ]);
+    expect(b!.avgCostUsd).toBeNull();
+    expect(b!.tradeCount).toBe(0);
+  });
+
+  it("folds quote-asset commission into cost exactly", () => {
+    // Buy 1 BTC, quoteQty 60000, commission 15 USDT -> cost 60015
+    const [b] = basisOf([
+      trade({ id: 1, price: "60000", qty: "1", quoteQty: "60000", commission: "15", commissionAsset: "USDT", time: 1 }),
+    ]);
+    expect(b!.avgCostUsd).toBe("60015.00000000");
+  });
+
+  it("reduces quantity for base-asset commission exactly", () => {
+    // Buy 1 BTC, commission 0.001 BTC -> 0.999 BTC @ 60000/0.999
+    const [b] = basisOf([
+      trade({ id: 1, price: "60000", qty: "1", quoteQty: "60000", commission: "0.001", commissionAsset: "BTC", time: 1 }),
+    ]);
+    expect(b!.avgCostUsd).toBe("60060.06006006"); // 60000 / 0.999
+  });
+
+  it("ignores commissions in other assets (no historical FX to convert)", () => {
+    const [b] = basisOf([
+      trade({ id: 1, price: "60000", qty: "1", quoteQty: "60000", commission: "0.5", commissionAsset: "BNB", time: 1 }),
+    ]);
+    expect(b!.avgCostUsd).toBe("60000.00000000");
+    expect(b!.tradeCount).toBe(1);
+  });
+
+  it("skips non-USD-pegged-quote trades instead of inventing a rate", () => {
+    // ETHBTC trade: real, but its USDT cost is unknowable without historical BTC price.
+    const parsed = parseBinanceMyTrades("ETHBTC", [
+      { ...trade({}), symbol: "ETHBTC", price: "0.05", qty: "10", quoteQty: "0.5", id: 1, time: 1 },
+    ]);
+    const [b] = computeBinanceCostBasis([{ symbol: "ETHBTC", trades: parsed }]);
+    expect(b!.asset).toBe("ETH");
+    expect(b!.avgCostUsd).toBeNull();
+    expect(b!.tradeCount).toBe(0);
+  });
+
+  it("prices USD-pegged assets at exactly 1", () => {
+    const parsed = parseBinanceMyTrades("USDCUSDT", [
+      trade({ id: 1, price: "1", qty: "100", quoteQty: "100", time: 1 }),
+    ]);
+    const [u] = computeBinanceCostBasis([{ symbol: "USDCUSDT", trades: parsed }]);
+    expect(u!.asset).toBe("USDC");
+    expect(u!.avgCostUsd).toBe("1");
+    expect(u!.tradeCount).toBe(0);
+  });
+
+  it("handles a realistic mixed history", () => {
+    const [b] = basisOf(
+      [
+        trade({ id: 1, price: "50000", qty: "0.2", quoteQty: "10000", time: 1 }),
+        trade({ id: 2, price: "60000", qty: "0.1", quoteQty: "6000", time: 2 }),
+        trade({ id: 3, price: "70000", qty: "0.15", quoteQty: "10500", time: 3, isBuyer: false }),
+        trade({ id: 4, price: "55000", qty: "0.1", quoteQty: "5500", time: 4 }),
+      ],
+    );
+    // buys: 0.2+0.1+0.1 = 0.4 BTC, cost 10000+6000+5500 = 21500
+    // sell 0.15 of 0.3 held -> removes half the 16000 cost -> 8000; qty 0.15
+    // then buy 0.1 -> qty 0.25, cost 13500 -> avg 54000
+    expect(b!.avgCostUsd).toBe("54000.00000000");
+    expect(b!.tradeCount).toBe(4);
   });
 });

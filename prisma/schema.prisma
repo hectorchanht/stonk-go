@@ -210,6 +210,12 @@ model ExchangeBalance {
     priceAt     String?  // ISO timestamp of the price fetch
     valueCents  String?  // integer USD cents as text, null when unpriced
     currency    String   @default("USD")
+    // Real cost basis: average cost in USD from the account's actual spot
+    // trade history (Binance myTrades), exact decimal string. Null when the
+    // cost is unknowable (no trade history — e.g. transferred in). Never
+    // estimated: unknown stays null so P/L can't silently fake it.
+    avgCostUsd     String?
+    costTradeCount Int?   // how many real fills avgCostUsd was computed from
     syncedAt    DateTime @default(now())
     user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
