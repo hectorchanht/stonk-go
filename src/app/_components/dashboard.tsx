@@ -1115,35 +1115,35 @@ function DashboardInner() {
             info="Your full trade history, newest first. Deleting one recomputes the holding."
             defaultOpen={false}
           >
+            <div className="mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setTxnOpen(true);
+                  const t0 = Date.now();
+                  const tryScroll = () => {
+                    const el = document.getElementById("section-log-txn");
+                    if (el) {
+                      el.scrollIntoView({ behavior: "smooth", block: "start" });
+                      window.setTimeout(() => {
+                        document
+                          .getElementById("txn-symbol")
+                          ?.focus({ preventScroll: true });
+                      }, 450);
+                    } else if (Date.now() - t0 < 2000) {
+                      requestAnimationFrame(tryScroll);
+                    }
+                  };
+                  requestAnimationFrame(tryScroll);
+                }}
+                className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800/60 px-3 py-1.5 text-sm font-medium text-zinc-200 transition hover:bg-zinc-700 active:scale-95"
+              >
+                <Plus size={16} />
+                Log transaction
+              </button>
+            </div>
             <TransactionList />
           </CollapsibleSection>
-
-          <button
-            type="button"
-            onClick={() => {
-              setTxnOpen(true);
-              const t0 = Date.now();
-              const tryScroll = () => {
-                const el = document.getElementById("section-log-txn");
-                if (el) {
-                  el.scrollIntoView({ behavior: "smooth", block: "start" });
-                  window.setTimeout(() => {
-                    document
-                      .getElementById("txn-symbol")
-                      ?.focus({ preventScroll: true });
-                  }, 450);
-                } else if (Date.now() - t0 < 2000) {
-                  requestAnimationFrame(tryScroll);
-                }
-              };
-              requestAnimationFrame(tryScroll);
-            }}
-            title="Log a transaction"
-            aria-label="Log a transaction"
-            className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-600 text-white shadow-xl shadow-emerald-950/50 transition hover:bg-emerald-500 active:scale-95"
-          >
-            <Plus size={26} strokeWidth={2.5} />
-          </button>
 
           <footer className="pt-2 text-center text-xs text-zinc-600">
             Prices: Finnhub realtime when configured, else Yahoo (~15min
