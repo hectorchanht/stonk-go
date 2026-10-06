@@ -189,6 +189,7 @@ export const ibkrRouter = createTRPCRouter({
             currency: p.currency,
             quantity: p.quantity,
             markPrice: p.markPrice,
+            costBasisPrice: p.costBasisPrice,
           })),
         });
       }

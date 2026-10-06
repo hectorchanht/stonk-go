@@ -50,6 +50,7 @@ export interface BrokerPositionRow {
   currency: string;
   quantity: number;
   markPrice: number | null;
+  costBasisPrice: number | null;
   syncedAt: Date;
 }
 
@@ -265,6 +266,7 @@ export interface AppDb {
         currency: string;
         quantity: number;
         markPrice?: number | null;
+        costBasisPrice?: number | null;
       }>;
     }): Promise<{ count: number }>;
   };
@@ -538,6 +540,7 @@ function mapBrokerPosition(r: RawRow): BrokerPositionRow {
     currency: r.currency as string,
     quantity: r.quantity as number,
     markPrice: (r.markPrice as number | null) ?? null,
+    costBasisPrice: (r.costBasisPrice as number | null) ?? null,
     syncedAt: toDate(r.syncedAt),
   };
 }
@@ -890,8 +893,8 @@ export function createD1Db(d1: D1Database): AppDb {
           .prepare(
             `INSERT INTO "BrokerPosition"
                ("id", "accountId", "symbol", "description", "assetCategory",
-                "currency", "quantity", "markPrice", "syncedAt")
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                "currency", "quantity", "markPrice", "costBasisPrice", "syncedAt")
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             crypto.randomUUID(),
@@ -902,6 +905,7 @@ export function createD1Db(d1: D1Database): AppDb {
             d.currency,
             d.quantity,
             d.markPrice ?? null,
+            d.costBasisPrice ?? null,
             now,
           )
           .run();

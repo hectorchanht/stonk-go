@@ -190,3 +190,96 @@ describe("mergeCurveLegs", () => {
     expect(stats.unusableSkipped).toBe(4); // USD.HKD filtered before counting
   });
 });
+
+describe("mergeCurveLegs opening balances", () => {
+  const flex = (
+    symbol: string,
+    tradeDate: string,
+    quantity: number,
+    tradePrice: number | null,
+  ) => ({ symbol, tradeDate, quantity, tradePrice, commission: null });
+  const pos = (symbol: string, quantity: number, costBasisPrice: number | null) => ({
+    symbol,
+    quantity,
+    costBasisPrice,
+  });
+
+  it("anchors positions with no Flex trades at broker cost (window start)", () => {
+    // NVDA: bought before the Flex window, 3 shares @ $187.72 real cost.
+    const { legs, stats } = mergeCurveLegs([], [flex("GDRX", "20251003", 111, 4.5)], [
+      pos("NVDA", 3, 187.72),
+    ]);
+    const nvda = legs.filter((l) => l.symbol === "NVDA");
+    expect(nvda).toHaveLength(1);
+    expect(nvda[0]).toMatchObject({
+      type: "BUY",
+      quantity: 3,
+      price: 187.72,
+      source: "ibkr",
+    });
+    expect(nvda[0]!.executedAt.toISOString().slice(0, 10)).toBe("2025-10-03");
+    expect(stats.openingBalances).toBe(1);
+  });
+
+  it("adds pre-window remainder + in-window trades for partials (NTLA)", () => {
+    // NTLA: position 98, Flex net -40 (sold 98, bought 58 in-window).
+    const { legs, stats } = mergeCurveLegs(
+      [],
+      [flex("NTLA", "20251014", 58, 10), flex("NTLA", "20251020", -98, 12)],
+      [pos("NTLA", 98, 11)],
+    );
+    const ntla = legs.filter((l) => l.symbol === "NTLA");
+    // opening 138 @ 11 + buy 58 + sell 98 = final 98, never negative
+    expect(ntla).toHaveLength(3);
+    expect(ntla[0]).toMatchObject({ type: "BUY", quantity: 138, price: 11 });
+    let qty = 0;
+    for (const l of ntla) qty += l.type === "BUY" ? l.quantity : -l.quantity;
+    expect(qty).toBe(98);
+    expect(stats.openingBalances).toBe(1);
+    expect(stats.fromBrokerTrades).toBe(2);
+  });
+
+  it("uses pure cost anchor when a split scrambles quantities (NVX)", () => {
+    // NVX: position 69, Flex net 698.1 (reverse split) — raw trades unusable.
+    const { legs, stats } = mergeCurveLegs(
+      [],
+      [flex("NVX", "20251003", 698.1, 1)],
+      [pos("NVX", 69, 10.46)],
+    );
+    const nvx = legs.filter((l) => l.symbol === "NVX");
+    expect(nvx).toHaveLength(1);
+    expect(nvx[0]).toMatchObject({ type: "BUY", quantity: 69, price: 10.46 });
+    expect(stats.openingBalances).toBe(1);
+    expect(stats.fromBrokerTrades).toBe(0);
+  });
+
+  it("never lets a symbol go negative mid-history", () => {
+    const { legs } = mergeCurveLegs(
+      [],
+      [flex("NTLA", "20251014", 58, 10), flex("NTLA", "20251020", -98, 12)],
+      [pos("NTLA", 98, 11)],
+    );
+    let qty = 0;
+    for (const l of legs.filter((x) => x.symbol === "NTLA")) {
+      qty += l.type === "BUY" ? l.quantity : -l.quantity;
+      expect(qty).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("skips opening when the broker reports no cost basis", () => {
+    const { legs, stats } = mergeCurveLegs([], [], [pos("XYZ", 10, null)]);
+    expect(legs.filter((l) => l.symbol === "XYZ")).toHaveLength(0);
+    expect(stats.noCostBasis).toBe(1);
+  });
+
+  it("round-trips Flex symbols with no current position (AAPL sold off)", () => {
+    const { legs, stats } = mergeCurveLegs(
+      [],
+      [flex("AAPL", "20251003", 2, 258.6), flex("AAPL", "20260123", -2, 249.3)],
+      [],
+    );
+    expect(legs).toHaveLength(2);
+    expect(stats.fromBrokerTrades).toBe(2);
+    expect(stats.openingBalances).toBe(0);
+  });
+});

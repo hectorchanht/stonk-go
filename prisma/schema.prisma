@@ -73,6 +73,7 @@ model BrokerPosition {
     currency      String
     quantity      Float
     markPrice     Float?
+    costBasisPrice Float? // per-share cost basis from the broker (IBKR Flex); null when the broker doesn't report it
     syncedAt      DateTime @default(now())
 
     @@index([accountId])

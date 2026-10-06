@@ -483,19 +483,27 @@ export async function importIbkrTrades(
 
 /**
  * A trade leg shaped for the performance curve (performance.ts TradeLeg).
- * Built from the Transaction log PLUS the raw Flex BrokerTrade rows, so
- * the true historical-value curve covers positions whose trades never made
- * it into the log (mergeIbkrTrades skips symbols it can't reconcile —
- * e.g. buys older than the Flex query's date range).
+ * Built from three real data sources — never invented:
  *
- * Rules (honesty first):
- * - Symbols that HAVE Transaction rows use the log ONLY. The log is
- *   split-adjusted and reconciled; mixing in the raw Flex rows would
- *   double-count across stock splits.
- * - Symbols with no Transaction rows contribute their raw Flex trades
- *   (real dates, prices, quantities — never invented).
+ * 1. The Transaction log (source of truth where it exists — split-adjusted
+ *    and reconciled by mergeIbkrTrades).
+ * 2. Raw Flex BrokerTrade rows, for symbols the log doesn't cover whose
+ *    trades fully explain the current position.
+ * 3. Window-start opening balances: for positions the trades can't fully
+ *    explain (bought before the Flex query's date range, or a stock split
+ *    the raw trades don't reflect), one BUY leg at the Flex window's first
+ *    date for the unexplained quantity at the broker's own costBasisPrice.
+ *    No buy date is invented — the leg is explicitly anchored at the start
+ *    of our data, and stats.openingBalances counts them for honest UI.
+ *
+ * Honesty rules:
+ * - Symbols WITH Transaction rows use the log ONLY (mixing raw Flex rows
+ *   would double-count across stock splits).
  * - "USD.HKD" is a currency conversion, not a holding — excluded.
- * - Rows without a usable price or date are skipped (reported in stats).
+ * - Rows without a usable price or date are skipped (counted).
+ * - Opening quantities can never go negative: when (position − flexNet)
+ *   isn't a sane positive number (e.g. a split makes flexNet dwarf the
+ *   position), the whole position is anchored at cost instead.
  */
 export interface CurveLeg {
   symbol: string;
@@ -512,8 +520,12 @@ export interface CurveLegStats {
   fromTransactions: number;
   /** Legs contributed from raw Flex BrokerTrade rows. */
   fromBrokerTrades: number;
-  /** BrokerTrade symbols skipped: the Transaction log already covers them. */
+  /** Opening-balance legs anchored at the Flex window start. */
+  openingBalances: number;
+  /** Symbols whose history comes from the Transaction log. */
   symbolsCoveredByLog: number;
+  /** Positions skipped: no usable broker cost basis. */
+  noCostBasis: number;
   /** BrokerTrade rows skipped: no price, bad date, or zero quantity. */
   unusableSkipped: number;
 }
@@ -524,6 +536,12 @@ interface BrokerTradeLike {
   quantity: number;
   tradePrice: number | null;
   commission: number | null;
+}
+
+export interface BrokerPositionLike {
+  symbol: string;
+  quantity: number;
+  costBasisPrice: number | null;
 }
 
 /** Pure merge — testable without a database. */
@@ -538,11 +556,14 @@ export function mergeCurveLegs(
     source: string;
   }>,
   brokerTrades: BrokerTradeLike[],
+  brokerPositions: BrokerPositionLike[] = [],
 ): { legs: CurveLeg[]; stats: CurveLegStats } {
   const stats: CurveLegStats = {
     fromTransactions: 0,
     fromBrokerTrades: 0,
+    openingBalances: 0,
     symbolsCoveredByLog: 0,
+    noCostBasis: 0,
     unusableSkipped: 0,
   };
   const legs: CurveLeg[] = txns.map((t) => ({
@@ -556,56 +577,142 @@ export function mergeCurveLegs(
   }));
   stats.fromTransactions = legs.length;
 
-  const logSymbols = new Set(
-    txns.map((t) => normSymbol(t.symbol)),
-  );
+  const logSymbols = new Set(txns.map((t) => normSymbol(t.symbol)));
+  stats.symbolsCoveredByLog = logSymbols.size;
+
+  // Validate + group Flex trades (log symbols excluded — see above).
   const bySymbol = new Map<string, BrokerTradeLike[]>();
   for (const b of brokerTrades) {
     const sym = normSymbol(b.symbol);
     if (!sym || sym === "USD.HKD") continue;
     if (logSymbols.has(sym)) continue;
+    const executedAt = parseTradeDate(b.tradeDate);
+    if (
+      !executedAt ||
+      b.tradePrice == null ||
+      !(b.tradePrice > 0) ||
+      !Number.isFinite(b.quantity) ||
+      b.quantity === 0
+    ) {
+      stats.unusableSkipped++;
+      continue;
+    }
     const arr = bySymbol.get(sym);
     if (arr) arr.push(b);
     else bySymbol.set(sym, [b]);
   }
-  stats.symbolsCoveredByLog = logSymbols.size;
 
-  for (const [sym, rows] of bySymbol) {
+  const toLeg = (sym: string, r: BrokerTradeLike): CurveLeg => ({
+    symbol: sym,
+    type: r.quantity > 0 ? "BUY" : "SELL",
+    quantity: Math.abs(r.quantity),
+    price: r.tradePrice!,
+    fees: r.commission == null ? null : Math.abs(r.commission),
+    executedAt: parseTradeDate(r.tradeDate)!,
+    source: "ibkr",
+  });
+
+  // Anchor date for opening balances: the Flex window's first trade date.
+  // We only know a position was held from here on — never invent earlier.
+  let anchorDate: Date | null = null;
+  for (const rows of bySymbol.values()) {
     for (const r of rows) {
-      const executedAt = parseTradeDate(r.tradeDate);
-      if (
-        !executedAt ||
-        r.tradePrice == null ||
-        !(r.tradePrice > 0) ||
-        !Number.isFinite(r.quantity) ||
-        r.quantity === 0
-      ) {
-        stats.unusableSkipped++;
-        continue;
-      }
-      legs.push({
-        symbol: sym,
-        type: r.quantity > 0 ? "BUY" : "SELL",
-        quantity: Math.abs(r.quantity),
-        price: r.tradePrice,
-        fees: r.commission == null ? null : Math.abs(r.commission),
-        executedAt,
-        source: "ibkr",
-      });
-      stats.fromBrokerTrades++;
+      const d = parseTradeDate(r.tradeDate)!;
+      if (!anchorDate || d < anchorDate) anchorDate = d;
     }
   }
+  if (!anchorDate) {
+    for (const l of legs) {
+      if (!anchorDate || l.executedAt < anchorDate) anchorDate = l.executedAt;
+    }
+  }
+  const anchor = anchorDate ?? new Date();
+
+  const posBySymbol = new Map<string, BrokerPositionLike>();
+  for (const p of brokerPositions) {
+    const sym = normSymbol(p.symbol);
+    if (sym) posBySymbol.set(sym, p);
+  }
+
+  const handledFlex = new Set<string>();
+  for (const [sym, p] of posBySymbol) {
+    if (logSymbols.has(sym)) continue;
+    if (!Number.isFinite(p.quantity) || p.quantity === 0) continue;
+    const rows = bySymbol.get(sym) ?? [];
+    const net = rows.reduce((s, r) => s + r.quantity, 0);
+    const qty = p.quantity;
+
+    if (
+      rows.length > 0 &&
+      Math.abs(net - qty) / Math.max(Math.abs(qty), 1e-9) <= 0.01
+    ) {
+      // Flex trades fully explain the position — real history.
+      for (const r of rows) legs.push(toLeg(sym, r));
+      stats.fromBrokerTrades += rows.length;
+      handledFlex.add(sym);
+      continue;
+    }
+    if (!(p.costBasisPrice != null && p.costBasisPrice > 0)) {
+      stats.noCostBasis++;
+      handledFlex.add(sym);
+      continue;
+    }
+    const openingQty = qty - net;
+    if (
+      rows.length > 0 &&
+      openingQty > 0 &&
+      openingQty <= 3 * Math.abs(qty)
+    ) {
+      // Pre-window holding + in-window trades: anchor the unexplained
+      // remainder at broker cost, then the real trades on top.
+      legs.push({
+        symbol: sym,
+        type: "BUY",
+        quantity: openingQty,
+        price: p.costBasisPrice,
+        fees: null,
+        executedAt: anchor,
+        source: "ibkr",
+      });
+      stats.openingBalances++;
+      for (const r of rows) legs.push(toLeg(sym, r));
+      stats.fromBrokerTrades += rows.length;
+    } else {
+      // No usable trade split (no trades, or a split scrambles the
+      // quantities): anchor the whole position at broker cost.
+      legs.push({
+        symbol: sym,
+        type: "BUY",
+        quantity: Math.abs(qty),
+        price: p.costBasisPrice,
+        fees: null,
+        executedAt: anchor,
+        source: "ibkr",
+      });
+      stats.openingBalances++;
+    }
+    handledFlex.add(sym);
+  }
+
+  // Flex symbols with no current position: completed round trips.
+  for (const [sym, rows] of bySymbol) {
+    if (handledFlex.has(sym)) continue;
+    for (const r of rows) legs.push(toLeg(sym, r));
+    stats.fromBrokerTrades += rows.length;
+  }
+
   legs.sort((a, b) => a.executedAt.getTime() - b.executedAt.getTime());
   return { legs, stats };
 }
 
-/** Full curve legs: Transaction log + raw Flex trades (for the router). */
+/** Full curve legs: Transaction log + Flex trades + opening balances. */
 export async function curveTradeLegs(
   db: AppDb,
 ): Promise<{ legs: CurveLeg[]; stats: CurveLegStats }> {
-  const [txns, brokerTrades] = await Promise.all([
+  const [txns, brokerTrades, brokerPositions] = await Promise.all([
     db.transaction.findMany({ orderBy: [{ executedAt: "asc" }] }),
     db.brokerTrade.findMany({ orderBy: [{ tradeDate: "asc" }] }),
+    db.brokerPosition.findMany({ orderBy: [{ symbol: "asc" }] }),
   ]);
-  return mergeCurveLegs(txns, brokerTrades);
+  return mergeCurveLegs(txns, brokerTrades, brokerPositions);
 }
