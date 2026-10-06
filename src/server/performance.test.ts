@@ -5,6 +5,9 @@ import {
   downsamplePoints,
   buildDailyHoldings,
   aggregateDailyValue,
+  buildSourcedDailyHoldings,
+  aggregateDailyValueBySource,
+  bucketMonthly,
   latestBarOnOrBefore,
 } from "./performance";
 
@@ -198,5 +201,172 @@ describe("latestBarOnOrBefore", () => {
     expect(latestBarOnOrBefore(bars, "2024-01-09")!.date).toBe("2024-01-08");
     expect(latestBarOnOrBefore(bars, "2024-01-10")!.date).toBe("2024-01-10");
     expect(latestBarOnOrBefore(bars, "2024-01-07")).toBeNull();
+  });
+});
+
+describe("buildSourcedDailyHoldings", () => {
+  const fx = (_date: string, currency: string) =>
+    currency === "HKD" ? 1 / 7.8 : 1;
+  const trades = [
+    {
+      symbol: "AAPL",
+      type: "BUY",
+      quantity: 10,
+      price: 100,
+      fees: null,
+      executedAt: new Date("2026-10-01T15:30:00Z"),
+      source: "ibkr",
+    },
+    {
+      symbol: "AAPL",
+      type: "BUY",
+      quantity: 5,
+      price: 110,
+      fees: null,
+      executedAt: new Date("2026-10-02T15:30:00Z"),
+      source: "manual",
+    },
+    {
+      symbol: "AAPL",
+      type: "SELL",
+      quantity: 4,
+      price: 120,
+      fees: 2,
+      executedAt: new Date("2026-10-03T15:30:00Z"),
+      source: "ibkr",
+    },
+  ];
+
+  it("keeps quantities and invested separated by source", () => {
+    const days = buildSourcedDailyHoldings(trades, fx);
+    const d1 = days.find((x) => x.date === "2026-10-01")!;
+    expect(d1.qtyBySource).toEqual({ ibkr: { AAPL: 10 } });
+    expect(d1.investedBySource.ibkr).toBeCloseTo(1000, 6);
+    expect(d1.investedBySource.manual ?? 0).toBe(0);
+
+    const d2 = days.find((x) => x.date === "2026-10-02")!;
+    expect(d2.qtyBySource.ibkr).toEqual({ AAPL: 10 });
+    expect(d2.qtyBySource.manual).toEqual({ AAPL: 5 });
+    expect(d2.investedBySource.manual).toBeCloseTo(550, 6);
+
+    const d3 = days.find((x) => x.date === "2026-10-03")!;
+    expect(d3.qtyBySource.ibkr).toEqual({ AAPL: 6 });
+    // sell removes (4*120 − 2) = 478 from ibkr's invested
+    expect(d3.investedBySource.ibkr).toBeCloseTo(1000 - 478, 6);
+    // manual untouched by the ibkr sell
+    expect(d3.investedBySource.manual).toBeCloseTo(550, 6);
+  });
+
+  it("normalizes source keys and returns [] with no usable trades", () => {
+    expect(buildSourcedDailyHoldings([], fx)).toEqual([]);
+    const days = buildSourcedDailyHoldings(
+      [
+        {
+          symbol: "AAPL",
+          type: "BUY",
+          quantity: 1,
+          price: 100,
+          fees: null,
+          executedAt: new Date("2026-10-01T15:30:00Z"),
+          source: "  IBKR ",
+        },
+      ],
+      fx,
+    );
+    expect(Object.keys(days[0]!.qtyBySource)).toEqual(["ibkr"]);
+  });
+});
+
+describe("aggregateDailyValueBySource", () => {
+  it("values each source separately and reports missing symbols once", () => {
+    const fx = () => 1;
+    const bars = {
+      AAPL: [
+        { date: "2026-10-01", close: 100, adjclose: 100 },
+        { date: "2026-10-02", close: 110, adjclose: 110 },
+      ],
+    };
+    const trades = [
+      {
+        symbol: "AAPL",
+        type: "BUY",
+        quantity: 10,
+        price: 90,
+        fees: null,
+        executedAt: new Date("2026-10-01T15:30:00Z"),
+        source: "ibkr",
+      },
+      {
+        symbol: "MSFT",
+        type: "BUY",
+        quantity: 5,
+        price: 200,
+        fees: null,
+        executedAt: new Date("2026-10-01T15:30:00Z"),
+        source: "manual",
+      },
+    ];
+    const days = buildSourcedDailyHoldings(trades, fx);
+    const { perSource, missingSymbols } = aggregateDailyValueBySource(
+      days,
+      bars,
+      fx,
+    );
+    // MSFT has no bars → reported, never silently zeroed in a way we hide
+    expect(missingSymbols).toEqual(["MSFT"]);
+    const ibkr = perSource.ibkr!.find((p) => p.date === "2026-10-02")!;
+    expect(ibkr.value).toBeCloseTo(10 * 110, 6);
+    expect(ibkr.invested).toBeCloseTo(900, 6);
+    // manual's MSFT prices nothing (no bars) → 0 value, invested intact
+    const manual = perSource.manual!.find((p) => p.date === "2026-10-02")!;
+    expect(manual.value).toBe(0);
+    expect(manual.invested).toBeCloseTo(1000, 6);
+    // series are date-aligned across sources
+    expect(perSource.ibkr!.length).toBe(perSource.manual!.length);
+    expect(perSource.ibkr![0]!.date).toBe(perSource.manual![0]!.date);
+  });
+});
+
+describe("bucketMonthly", () => {
+  it("computes gain and % net of deposits", () => {
+    const days = [
+      { date: "2026-09-01", value: 10000, invested: 10000 },
+      { date: "2026-09-15", value: 12000, invested: 12000 }, // +2k deposit
+      { date: "2026-09-30", value: 13000, invested: 12000 },
+      { date: "2026-10-01", value: 13100, invested: 12000 },
+      { date: "2026-10-31", value: 14000, invested: 12000 },
+    ];
+    const cells = bucketMonthly(days);
+    expect(cells).toHaveLength(2);
+    const sep = cells[0]!;
+    expect(sep.month).toBe("2026-09");
+    // gain = (13000−10000) − (12000−10000) = 1000; pct = 1000/10000 = 10%
+    expect(sep.gain).toBeCloseTo(1000, 6);
+    expect(sep.pct).toBeCloseTo(10, 6);
+    expect(sep.netFlow).toBeCloseTo(2000, 6);
+    const oct = cells[1]!;
+    // gain = 14000−13100 = 900; pct = 900/13100
+    expect(oct.gain).toBeCloseTo(900, 6);
+    expect(oct.pct).toBeCloseTo((900 / 13100) * 100, 6);
+    expect(oct.netFlow).toBe(0);
+  });
+
+  it("falls back to return-on-invested when the month starts at zero", () => {
+    const cells = bucketMonthly([
+      { date: "2026-10-05", value: 0, invested: 0 },
+      { date: "2026-10-31", value: 10500, invested: 10000 },
+    ]);
+    expect(cells).toHaveLength(1);
+    // (10500 − 10000) / 10000 = 5%
+    expect(cells[0]!.pct).toBeCloseTo(5, 6);
+  });
+
+  it("returns null pct when nothing was ever deployed", () => {
+    const cells = bucketMonthly([{ date: "2026-10-31", value: 0, invested: 0 }]);
+    expect(cells[0]!.pct).toBeNull();
+  });
+
+  it("returns [] for no days", () => {
+    expect(bucketMonthly([])).toEqual([]);
   });
 });

@@ -16,10 +16,15 @@ import {
   downsamplePoints,
   buildDailyHoldings,
   aggregateDailyValue,
+  buildSourcedDailyHoldings,
+  aggregateDailyValueBySource,
+  bucketMonthly,
   latestBarOnOrBefore,
   utcDay,
   type CashFlow,
   type CurvePoint,
+  type MonthCell,
+  type PricedDay,
   type PriceBar,
 } from "~/server/performance";
 import { getPriceHistory } from "~/server/price-history";
@@ -292,12 +297,17 @@ async function buildTrueCurve(
     price: number;
     fees: number | null;
     executedAt: Date;
+    source: string;
   }>,
   liveValueUsd: number,
   days: number,
 ): Promise<{
   points: Array<CurvePoint & { invested: number }>;
-  missingSymbols: string[];
+  missingSymbols: Array<{ symbol: string; name: string | null }>;
+  /** source key → downsampled daily {date, value, invested} (trade-log only). */
+  perSource: Record<string, PricedDay[]>;
+  /** Monthly buckets from the full-resolution series (all history). */
+  monthly: MonthCell[];
 } | null> {
   const symbols = [
     ...new Set(txns.map((t) => t.symbol.trim().toUpperCase())),
@@ -345,23 +355,74 @@ async function buildTrueCurve(
 
   const holdings = buildDailyHoldings(txns, fxToUsd);
   if (holdings.length === 0) return null;
-  const { priced, missingSymbols } = aggregateDailyValue(
+  const { priced, missingSymbols: missingTotal } = aggregateDailyValue(
     holdings,
     closesBySymbol,
     fxToUsd,
   );
 
+  // Per-source breakdown for the By Source view: same price data, grouped by
+  // each trade's origin. A separate cheap walk; the tested path above is
+  // untouched.
+  const sourcedDays = buildSourcedDailyHoldings(txns, fxToUsd);
+  const bySource = aggregateDailyValueBySource(
+    sourcedDays,
+    closesBySymbol,
+    fxToUsd,
+  );
+  const missingKeys = [
+    ...new Set([...missingTotal, ...bySource.missingSymbols]),
+  ];
+  // Resolve display names for the "prices missing" modal. Best-effort:
+  // getQuote never throws (unavailable → name null) and rides the 60s quote
+  // cache, so this only costs network on the rare non-empty case.
+  let missingSymbols: Array<{ symbol: string; name: string | null }> =
+    missingKeys.map((symbol) => ({ symbol, name: null }));
+  if (missingKeys.length > 0) {
+    try {
+      const quotes = await getQuotes(missingKeys);
+      const names = new Map(quotes.map((q) => [q.symbol, q.name]));
+      missingSymbols = missingKeys.map((symbol) => ({
+        symbol,
+        name: names.get(symbol) ?? null,
+      }));
+    } catch {
+      /* names stay null — symbols still listed */
+    }
+  }
+
+  // Endpoint: today's live value replaces the last close (labels say so).
+  // Monthly buckets come from the full-resolution series, so the in-progress
+  // month ends at today's live value.
+  priced[priced.length - 1]!.value = liveValueUsd;
+  const monthly = bucketMonthly(priced);
+
   let points = priced;
+  let cutoff: string | null = null;
   if (days > 0) {
-    const cutoff = utcDay(new Date(Date.now() - days * DAY_MS));
-    points = points.filter((p) => p.date >= cutoff);
+    const c = utcDay(new Date(Date.now() - days * DAY_MS));
+    cutoff = c;
+    points = points.filter((p) => p.date >= c);
   }
   // A permanently-zero curve is never useful — let the fallback handle it.
   if (points.length < 2 || points.every((p) => p.value === 0)) return null;
 
-  // Endpoint: today's live value replaces the last close (labels say so).
-  points[points.length - 1]!.value = liveValueUsd;
-  return { points: downsamplePoints(points, 180), missingSymbols };
+  // Per-source series for the By Source view. Deliberately NOT grafted with
+  // the live endpoint — these decompose the trade-log curve itself, and the
+  // chart caption says so.
+  const perSource: Record<string, PricedDay[]> = {};
+  const cut = cutoff;
+  for (const [src, series] of Object.entries(bySource.perSource)) {
+    const inRange = cut ? series.filter((p) => p.date >= cut) : series;
+    if (inRange.length >= 2) perSource[src] = downsamplePoints(inRange, 180);
+  }
+
+  return {
+    points: downsamplePoints(points, 180),
+    missingSymbols,
+    perSource,
+    monthly,
+  };
 }
 
 export const portfolioRouter = createTRPCRouter({
@@ -465,6 +526,8 @@ export const portfolioRouter = createTRPCRouter({
               source: "true" as const,
               points: tru.points,
               missingSymbols: tru.missingSymbols,
+              perSource: tru.perSource,
+              monthly: tru.monthly,
             };
           }
         } catch {

@@ -109,3 +109,132 @@ export function toPercentSeries(points: EquityPoint[]): EquityPoint[] {
     value: ((p.value - base) / base) * 100,
   }));
 }
+
+/* ---------------- By Source view ---------------- */
+
+/** One trade-origin series for the stacked By Source chart. */
+export interface SourceLayer {
+  /** Raw source key, e.g. "ibkr". */
+  key: string;
+  label: string;
+  color: string;
+  points: EquityPoint[];
+}
+
+const SOURCE_META: Record<string, { label: string; color: string }> = {
+  ibkr: { label: "IBKR", color: "#f87171" },
+  manual: { label: "Manual", color: "#60a5fa" },
+  questrade: { label: "Questrade", color: "#34d399" },
+  binance: { label: "Binance", color: "#fbbf24" },
+  coinbase: { label: "Coinbase", color: "#818cf8" },
+};
+const FALLBACK_COLORS = [
+  "#c084fc",
+  "#f472b6",
+  "#2dd4bf",
+  "#facc15",
+  "#a3e635",
+  "#fb923c",
+];
+
+/** Display name + dark-theme color for a trade source key. */
+export function sourceMeta(
+  key: string,
+  index: number,
+): { label: string; color: string } {
+  const k = key.trim().toLowerCase();
+  const known = SOURCE_META[k];
+  if (known) return known;
+  const trimmed = key.trim();
+  const label =
+    trimmed === ""
+      ? "Unknown"
+      : trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  return {
+    label,
+    color: FALLBACK_COLORS[index % FALLBACK_COLORS.length]!,
+  };
+}
+
+/**
+ * Build ordered, labeled layers from a per-source map. Sorted by latest
+ * value descending (largest at the bottom of the stack). Layers with no
+ * usable points are dropped.
+ */
+export function toSourceLayers(
+  perSource: Record<string, EquityPoint[]>,
+): SourceLayer[] {
+  const layers: SourceLayer[] = [];
+  let i = 0;
+  for (const [key, pts] of Object.entries(perSource)) {
+    const clean = (pts ?? []).filter(
+      (p) => p != null && Number.isFinite(p.value) && p.value >= 0,
+    );
+    if (clean.length === 0) continue;
+    const meta = sourceMeta(key, i);
+    layers.push({ key, label: meta.label, color: meta.color, points: clean });
+    i++;
+  }
+  layers.sort((a, b) => {
+    const av = a.points[a.points.length - 1]!.value;
+    const bv = b.points[b.points.length - 1]!.value;
+    return bv - av;
+  });
+  return layers;
+}
+
+export interface StackedLayer {
+  key: string;
+  label: string;
+  color: string;
+  /** Cumulative top-edge values (what the area series renders). */
+  cumulative: AreaDatum[];
+  /** This layer's own values, for the tooltip. */
+  own: AreaDatum[];
+}
+
+/**
+ * Stack layers bottom-to-top for area rendering. Dates are unioned across
+ * layers and each layer forward-fills its latest known value (0 before its
+ * first point). cumulative[i] = Σ own values of layers[0..i].
+ */
+export function stackLayers(layers: SourceLayer[]): StackedLayer[] {
+  if (layers.length === 0) return [];
+  const dates = [
+    ...new Set(layers.flatMap((l) => l.points.map((p) => p.date))),
+  ].sort();
+  const byDate = layers.map((l) => {
+    const m = new Map<string, number>();
+    for (const p of l.points) {
+      const t = isoToChartDay(p.date);
+      if (t !== null) m.set(p.date, p.value);
+    }
+    return m;
+  });
+  // Forward-fill per layer; 0 before the first known point.
+  const filled: number[][] = layers.map(() => []);
+  layers.forEach((_l, li) => {
+    let last = 0;
+    let seen = false;
+    for (const d of dates) {
+      const v = byDate[li]!.get(d);
+      if (v !== undefined) {
+        last = v;
+        seen = true;
+      }
+      filled[li]!.push(seen ? last : 0);
+    }
+  });
+  return layers.map((l, li) => {
+    const cumulative: AreaDatum[] = [];
+    const own: AreaDatum[] = [];
+    dates.forEach((d, di) => {
+      const t = isoToChartDay(d)!;
+      let cum = 0;
+      for (let j = 0; j <= li; j++) cum += filled[j]![di]!;
+      cumulative.push({ time: t, value: cum });
+      own.push({ time: t, value: filled[li]![di]! });
+    });
+    return { key: l.key, label: l.label, color: l.color, cumulative, own };
+  });
+}

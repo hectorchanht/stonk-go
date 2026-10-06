@@ -3,9 +3,12 @@ import {
   chartDayToIso,
   curveColor,
   isoToChartDay,
+  sourceMeta,
+  stackLayers,
   toAreaData,
   toPercentSeries,
   toReturnOnInvested,
+  toSourceLayers,
 } from "./equity-chart-data";
 
 describe("isoToChartDay", () => {
@@ -140,5 +143,79 @@ describe("toReturnOnInvested", () => {
       { date: "2024-01-04", value: 120, invested: 100 },
     ]);
     expect(out).toEqual([{ date: "2024-01-04", value: 20 }]);
+  });
+});
+
+describe("sourceMeta", () => {
+  it("maps known sources to labels and colors", () => {
+    expect(sourceMeta("ibkr", 0)).toEqual({ label: "IBKR", color: "#f87171" });
+    expect(sourceMeta("MANUAL", 1)).toEqual({
+      label: "Manual",
+      color: "#60a5fa",
+    });
+    expect(sourceMeta("binance", 2).label).toBe("Binance");
+  });
+
+  it("falls back gracefully for unknown sources", () => {
+    const a = sourceMeta("freetrade", 0);
+    expect(a.label).toBe("Freetrade");
+    expect(a.color).toMatch(/^#/);
+    expect(sourceMeta("", 0).label).toBe("Unknown");
+  });
+});
+
+describe("toSourceLayers", () => {
+  it("orders layers by latest value and drops empty ones", () => {
+    const layers = toSourceLayers({
+      manual: [
+        { date: "2026-10-01", value: 500 },
+        { date: "2026-10-02", value: 600 },
+      ],
+      ibkr: [
+        { date: "2026-10-01", value: 5000 },
+        { date: "2026-10-02", value: 4000 },
+      ],
+      empty: [],
+    });
+    expect(layers.map((l) => l.key)).toEqual(["ibkr", "manual"]);
+    expect(layers[0]!.label).toBe("IBKR");
+    expect(layers[0]!.color).toBe("#f87171");
+  });
+});
+
+describe("stackLayers", () => {
+  it("stacks cumulative values bottom-to-top", () => {
+    const layers = toSourceLayers({
+      ibkr: [
+        { date: "2026-10-01", value: 1000 },
+        { date: "2026-10-02", value: 2000 },
+      ],
+      manual: [
+        { date: "2026-10-01", value: 100 },
+        { date: "2026-10-02", value: 300 },
+      ],
+    });
+    const stacked = stackLayers(layers);
+    // ibkr (largest) at bottom: cumulative = own
+    expect(stacked[0]!.cumulative.map((d) => d.value)).toEqual([1000, 2000]);
+    // manual on top: cumulative = ibkr + manual
+    expect(stacked[1]!.cumulative.map((d) => d.value)).toEqual([1100, 2300]);
+    expect(stacked[1]!.own.map((d) => d.value)).toEqual([100, 300]);
+  });
+
+  it("forward-fills missing dates and treats pre-first-point as zero", () => {
+    const layers = toSourceLayers({
+      ibkr: [{ date: "2026-10-01", value: 1000 }],
+      manual: [{ date: "2026-10-02", value: 100 }],
+    });
+    const stacked = stackLayers(layers);
+    expect(stacked).toHaveLength(2);
+    // union of dates, sorted
+    expect(stacked[0]!.cumulative.map((d) => d.value)).toEqual([1000, 1000]);
+    expect(stacked[1]!.cumulative.map((d) => d.value)).toEqual([1000, 1100]);
+  });
+
+  it("returns [] for no layers", () => {
+    expect(stackLayers([])).toEqual([]);
   });
 });

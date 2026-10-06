@@ -245,3 +245,218 @@ export function aggregateDailyValue(
   });
   return { priced, missingSymbols: [...missing] };
 }
+
+/* ---------------- Per-source breakdown (By Source view) ---------------- */
+
+/** A trade leg tagged with its origin (Transaction.source). */
+export interface SourcedTradeLeg extends TradeLeg {
+  /** Where the trade came from, e.g. "ibkr" | "manual". */
+  source: string;
+}
+
+export interface SourcedDailyHolding {
+  /** UTC calendar date, YYYY-MM-DD. */
+  date: string;
+  /** source → UPPER symbol → shares held at end of day. */
+  qtyBySource: Record<string, Record<string, number>>;
+  /** source → cumulative net USD invested up to this day. */
+  investedBySource: Record<string, number>;
+}
+
+const normSource = (s: string): string => {
+  const k = s.trim().toLowerCase();
+  return k === "" ? "unknown" : k;
+};
+
+/**
+ * Like buildDailyHoldings, but keeps quantities and the invested baseline
+ * separated by trade source. Every UTC calendar day from the first trade
+ * through today is emitted; sources absent on a day simply have no entry
+ * (callers treat that as zero).
+ */
+export function buildSourcedDailyHoldings(
+  trades: SourcedTradeLeg[],
+  fxToUsd: (date: string, currency: string) => number,
+): SourcedDailyHolding[] {
+  const legs = trades
+    .map((t) => ({
+      ...t,
+      at: new Date(t.executedAt),
+      src: normSource(t.source),
+    }))
+    .filter(
+      (t) =>
+        Number.isFinite(t.at.getTime()) && t.quantity > 0 && t.price > 0,
+    )
+    .sort((a, b) => a.at.getTime() - b.at.getTime());
+  if (legs.length === 0) return [];
+
+  const first = legs[0]!.at;
+  const startMs = Date.UTC(
+    first.getUTCFullYear(),
+    first.getUTCMonth(),
+    first.getUTCDate(),
+  );
+  const now = new Date();
+  const endMs = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+
+  const qty: Record<string, Record<string, number>> = {};
+  const invested: Record<string, number> = {};
+  const touch = (src: string): void => {
+    if (!qty[src]) {
+      qty[src] = {};
+      invested[src] = 0;
+    }
+  };
+  let li = 0;
+  const days: SourcedDailyHolding[] = [];
+  for (let t = startMs; t <= endMs && days.length < 5000; t += DAY_MS) {
+    const iso = new Date(t).toISOString().slice(0, 10);
+    while (li < legs.length && utcDay(legs[li]!.at) <= iso) {
+      const leg = legs[li]!;
+      touch(leg.src);
+      const sym = leg.symbol.trim().toUpperCase();
+      const isSell = leg.type === "SELL";
+      const dir = isSell ? -1 : 1;
+      const q = qty[leg.src]!;
+      q[sym] = (q[sym] ?? 0) + dir * leg.quantity;
+      const gross = leg.quantity * leg.price;
+      // Buys: money in (cost + fees). Sells: money out (proceeds − fees).
+      const signed = isSell
+        ? -(gross - (leg.fees ?? 0))
+        : gross + (leg.fees ?? 0);
+      invested[leg.src]! += signed * fxToUsd(iso, inferCurrency(sym));
+      li++;
+    }
+    // Snapshot copies so later mutation can't alias earlier days.
+    const snap: Record<string, Record<string, number>> = {};
+    for (const [src, q] of Object.entries(qty)) snap[src] = { ...q };
+    days.push({
+      date: iso,
+      qtyBySource: snap,
+      investedBySource: { ...invested },
+    });
+  }
+  return days;
+}
+
+/**
+ * Per-source version of aggregateDailyValue: for each source, Σ qty ×
+ * adjclose → native → USD per day. Every source gets an entry for every
+ * day (aligned series), with 0 before its first trade. Symbols with no
+ * usable bar are skipped and reported in missingSymbols — never silently
+ * zeroed in a way the caller can't label.
+ */
+export function aggregateDailyValueBySource(
+  days: SourcedDailyHolding[],
+  closesBySymbol: Record<string, PriceBar[]>,
+  fxToUsd: (date: string, currency: string) => number,
+): { perSource: Record<string, PricedDay[]>; missingSymbols: string[] } {
+  const missing = new Set<string>();
+  const sources = [
+    ...new Set(days.flatMap((d) => Object.keys(d.qtyBySource))),
+  ];
+  const perSource: Record<string, PricedDay[]> = Object.fromEntries(
+    sources.map((s) => [s, [] as PricedDay[]]),
+  );
+  for (const d of days) {
+    for (const src of sources) {
+      let value = 0;
+      const qmap = d.qtyBySource[src] ?? {};
+      for (const sym of Object.keys(qmap)) {
+        const q = qmap[sym]!;
+        if (q === 0) continue;
+        const bar = latestBarOnOrBefore(closesBySymbol[sym] ?? [], d.date);
+        if (!bar) {
+          missing.add(sym);
+          continue;
+        }
+        const px = bar.adjclose ?? bar.close;
+        value += q * px * fxToUsd(d.date, inferCurrency(sym));
+      }
+      perSource[src]!.push({
+        date: d.date,
+        value,
+        invested: d.investedBySource[src] ?? 0,
+      });
+    }
+  }
+  return { perSource, missingSymbols: [...missing] };
+}
+
+/* ---------------- Monthly heatmap ---------------- */
+
+export interface MonthCell {
+  /** "2026-10" */
+  month: string;
+  year: number;
+  /** 0-11 */
+  monthIndex: number;
+  /** USD value on the month's first day. */
+  startValue: number;
+  /** USD value on the month's last day. */
+  endValue: number;
+  /** Net USD deposited during the month (invested_end − invested_start). */
+  netFlow: number;
+  /** $ gain net of flows: (end − start) − netFlow. */
+  gain: number;
+  /**
+   * % return net of flows. Standard simple monthly return with deposits
+   * removed: gain / startValue. When the month starts at (or below) zero —
+   * e.g. the very first deposit month — falls back to return-on-invested at
+   * month end; null when neither denominator is positive (nothing to
+   * measure against). Simple, NOT time-weighted — the UI labels it as such.
+   */
+  pct: number | null;
+}
+
+/**
+ * Bucket a full-resolution daily value series into calendar months
+ * (UTC). The input should be the true curve's daily series; months are
+ * emitted oldest-first.
+ */
+export function bucketMonthly(days: PricedDay[]): MonthCell[] {
+  if (days.length === 0) return [];
+  const cells: MonthCell[] = [];
+  let cur: string | null = null;
+  let start: PricedDay | null = null;
+  let prev: PricedDay | null = null;
+  const flush = (): void => {
+    if (cur === null || start === null || prev === null) return;
+    const year = Number(cur.slice(0, 4));
+    const monthIndex = Number(cur.slice(5, 7)) - 1;
+    const netFlow = prev.invested - start.invested;
+    const gain = prev.value - start.value - netFlow;
+    const pct =
+      start.value > 0
+        ? (gain / start.value) * 100
+        : prev.invested > 0
+          ? ((prev.value - prev.invested) / prev.invested) * 100
+          : null;
+    cells.push({
+      month: cur,
+      year,
+      monthIndex,
+      startValue: start.value,
+      endValue: prev.value,
+      netFlow,
+      gain,
+      pct,
+    });
+  };
+  for (const d of days) {
+    const m = d.date.slice(0, 7);
+    if (m !== cur) {
+      flush();
+      cur = m;
+      start = d;
+    }
+    prev = d;
+  }
+  flush();
+  return cells;
+}
