@@ -39,6 +39,15 @@ export function isHkCode(symbol: string): boolean {
   return /^\d{1,5}$/.test(symbol.trim());
 }
 
+/**
+ * Native trading currency inferred from the symbol's exchange region.
+ * HKEX codes (pure numeric) trade in HKD; everything else defaults to USD.
+ * Used as a fallback when IBKR didn't report a currency.
+ */
+export function inferCurrency(symbol: string): string {
+  return isHkCode(symbol) ? "HKD" : "USD";
+}
+
 /** Yahoo ticker for a symbol — HK codes need the .HK suffix. */
 function yahooTicker(symbol: string): string {
   return isHkCode(symbol) ? `${symbol.trim()}.HK` : symbol;

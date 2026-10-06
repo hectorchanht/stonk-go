@@ -22,7 +22,27 @@ interface ChatSettings {
   provider: string;
   apiKey: string;
   skills: string[];
+  tone: string;
+  length: string;
+  temperature: number;
+  maxTokens: number;
+  model: string;
+  emojis: boolean;
+  followUps: boolean;
 }
+
+const DEFAULT_SETTINGS: ChatSettings = {
+  provider: "cloudflare",
+  apiKey: "",
+  skills: [],
+  tone: "analyst",
+  length: "medium",
+  temperature: 0.7,
+  maxTokens: 1000,
+  model: "",
+  emojis: true,
+  followUps: true,
+};
 
 function loadSettings(defaultSkills: string[]): ChatSettings {
   try {
@@ -30,15 +50,23 @@ function loadSettings(defaultSkills: string[]): ChatSettings {
     if (raw) {
       const s = JSON.parse(raw) as Partial<ChatSettings>;
       return {
-        provider: typeof s.provider === "string" ? s.provider : "cloudflare",
-        apiKey: typeof s.apiKey === "string" ? s.apiKey : "",
+        ...DEFAULT_SETTINGS,
+        provider: typeof s.provider === "string" ? s.provider : DEFAULT_SETTINGS.provider,
+        apiKey: typeof s.apiKey === "string" ? s.apiKey : DEFAULT_SETTINGS.apiKey,
         skills: Array.isArray(s.skills) ? s.skills : defaultSkills,
+        tone: typeof s.tone === "string" ? s.tone : DEFAULT_SETTINGS.tone,
+        length: typeof s.length === "string" ? s.length : DEFAULT_SETTINGS.length,
+        temperature: typeof s.temperature === "number" ? s.temperature : DEFAULT_SETTINGS.temperature,
+        maxTokens: typeof s.maxTokens === "number" ? s.maxTokens : DEFAULT_SETTINGS.maxTokens,
+        model: typeof s.model === "string" ? s.model : DEFAULT_SETTINGS.model,
+        emojis: typeof s.emojis === "boolean" ? s.emojis : DEFAULT_SETTINGS.emojis,
+        followUps: typeof s.followUps === "boolean" ? s.followUps : DEFAULT_SETTINGS.followUps,
       };
     }
   } catch {
     /* ignore */
   }
-  return { provider: "cloudflare", apiKey: "", skills: defaultSkills };
+  return { ...DEFAULT_SETTINGS, skills: defaultSkills };
 }
 
 function loadHistory(): ChatMsg[] {
@@ -104,24 +132,6 @@ export function AiChat({
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
 
-  // Alerts can hand off a pre-filled question via localStorage + section open.
-  useEffect(() => {
-    const check = () => {
-      try {
-        const q = window.localStorage.getItem("holdr.ai-chat-prefill");
-        if (q) {
-          window.localStorage.removeItem("holdr.ai-chat-prefill");
-          setInput(q);
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-    check();
-    const t = window.setInterval(check, 1000);
-    return () => window.clearInterval(t);
-  }, []);
-
   const snapshot = useMemo(() => {
     const mv = totals.marketValue > 0 ? totals.marketValue : 1;
     const topPositions = rows
@@ -169,8 +179,8 @@ export function AiChat({
     },
   });
 
-  const send = useCallback(() => {
-    const q = input.trim();
+  const send = useCallback((question?: string) => {
+    const q = (question ?? input).trim();
     if (!q || chatMut.isPending) return;
     setError(null);
     setInput("");
@@ -184,6 +194,13 @@ export function AiChat({
       provider: settings.provider,
       apiKey: settings.apiKey || null,
       skills: settings.skills,
+      tone: settings.tone,
+      length: settings.length,
+      temperature: settings.temperature,
+      maxTokens: settings.maxTokens,
+      model: settings.model || null,
+      emojis: settings.emojis,
+      followUps: settings.followUps,
     });
   }, [input, chatMut, messages, snapshot, locale, settings]);
 
@@ -194,6 +211,26 @@ export function AiChat({
         ? s.skills.filter((x) => x !== id)
         : [...s.skills, id],
     }));
+
+  // Alerts can hand off a question via localStorage — auto-send it.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  useEffect(() => {
+    const check = () => {
+      try {
+        const q = window.localStorage.getItem("holdr.ai-chat-prefill");
+        if (q) {
+          window.localStorage.removeItem("holdr.ai-chat-prefill");
+          sendRef.current(q);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    check();
+    const t = window.setInterval(check, 1000);
+    return () => window.clearInterval(t);
+  }, []);
 
   const providerMeta = meta?.providers.find((p) => p.id === settings.provider);
   const needsKey = providerMeta?.needsKey && !settings.apiKey.trim();
@@ -229,29 +266,51 @@ export function AiChat({
       </div>
 
       {settingsOpen && (
-        <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
-          <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            Provider
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {(meta?.providers ?? []).map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => setSettings((s) => ({ ...s, provider: p.id }))}
-                title={p.description}
-                className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
-                  settings.provider === p.id
-                    ? "border-emerald-600 bg-emerald-950/50 text-emerald-300"
-                    : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-600"
-                }`}
-              >
-                {p.name}
-              </button>
-            ))}
+        <div className="mt-3 space-y-4 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Provider
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(meta?.providers ?? []).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() =>
+                    setSettings((s) => ({ ...s, provider: p.id, model: "" }))
+                  }
+                  title={p.description}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                    settings.provider === p.id
+                      ? "border-emerald-600 bg-emerald-950/50 text-emerald-300"
+                      : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-600"
+                  }`}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+            {(providerMeta?.models?.length ?? 0) > 1 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {providerMeta!.models.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setSettings((s) => ({ ...s, model: m.id }))}
+                    className={`rounded-lg border px-2.5 py-1 text-xs transition ${
+                      (settings.model || providerMeta!.models[0]!.id) === m.id
+                        ? "border-emerald-600 bg-emerald-950/50 text-emerald-300"
+                        : "border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-600"
+                    }`}
+                  >
+                    {m.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           {providerMeta?.needsKey && (
-            <div className="mt-3">
+            <div>
               <label className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
                 {providerMeta.name} API key
               </label>
@@ -271,28 +330,135 @@ export function AiChat({
               </p>
             </div>
           )}
-          <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            Skills
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {(meta?.skills ?? []).map((s) => {
-              const on = settings.skills.includes(s.id);
-              return (
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Tone
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(meta?.tones ?? []).map((t) => (
                 <button
-                  key={s.id}
+                  key={t.id}
                   type="button"
-                  onClick={() => toggleSkill(s.id)}
-                  title={s.description}
+                  onClick={() => setSettings((s) => ({ ...s, tone: t.id }))}
+                  title={t.description}
                   className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
-                    on
-                      ? "border-sky-600 bg-sky-950/50 text-sky-300"
+                    settings.tone === t.id
+                      ? "border-violet-600 bg-violet-950/50 text-violet-300"
                       : "border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-600"
                   }`}
                 >
-                  {s.name}
+                  {t.name}
                 </button>
-              );
-            })}
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Length
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(meta?.lengths ?? []).map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() => setSettings((s) => ({ ...s, length: l.id }))}
+                  title={l.description}
+                  className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                    settings.length === l.id
+                      ? "border-violet-600 bg-violet-950/50 text-violet-300"
+                      : "border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-600"
+                  }`}
+                >
+                  {l.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-zinc-400">
+                Creativity: <b className="text-zinc-200">{settings.temperature.toFixed(1)}</b>
+              </label>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.1}
+                value={settings.temperature}
+                onChange={(e) =>
+                  setSettings((s) => ({ ...s, temperature: Number(e.target.value) }))
+                }
+                className="mt-1 w-full accent-violet-500"
+              />
+              <p className="text-[11px] text-zinc-600">0 = precise, 1 = creative</p>
+            </div>
+            <div>
+              <label className="text-xs text-zinc-400">
+                Max length: <b className="text-zinc-200">{settings.maxTokens}</b>
+              </label>
+              <input
+                type="range"
+                min={300}
+                max={2000}
+                step={100}
+                value={settings.maxTokens}
+                onChange={(e) =>
+                  setSettings((s) => ({ ...s, maxTokens: Number(e.target.value) }))
+                }
+                className="mt-1 w-full accent-violet-500"
+              />
+              <p className="text-[11px] text-zinc-600">tokens per reply</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setSettings((s) => ({ ...s, emojis: !s.emojis }))}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                settings.emojis
+                  ? "border-violet-600 bg-violet-950/50 text-violet-300"
+                  : "border-zinc-700 bg-zinc-900 text-zinc-500"
+              }`}
+            >
+              {settings.emojis ? "✓ " : ""}Emojis
+            </button>
+            <button
+              type="button"
+              onClick={() => setSettings((s) => ({ ...s, followUps: !s.followUps }))}
+              title="End replies with suggested follow-up questions"
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                settings.followUps
+                  ? "border-violet-600 bg-violet-950/50 text-violet-300"
+                  : "border-zinc-700 bg-zinc-900 text-zinc-500"
+              }`}
+            >
+              {settings.followUps ? "✓ " : ""}Follow-up suggestions
+            </button>
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Skills
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(meta?.skills ?? []).map((s) => {
+                const on = settings.skills.includes(s.id);
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => toggleSkill(s.id)}
+                    title={s.description}
+                    className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                      on
+                        ? "border-sky-600 bg-sky-950/50 text-sky-300"
+                        : "border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-600"
+                    }`}
+                  >
+                    {s.name}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
@@ -352,7 +518,7 @@ export function AiChat({
         />
         <button
           type="button"
-          onClick={send}
+          onClick={() => send()}
           disabled={chatMut.isPending || !input.trim()}
           aria-label="Send"
           className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-600 text-white transition hover:bg-emerald-500 active:scale-95 disabled:opacity-40"

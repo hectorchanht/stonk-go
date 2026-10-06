@@ -1,4 +1,5 @@
 import type { BrokerCashFlowRow, BrokerTradeRow } from "~/server/d1db";
+import { inferCurrency } from "~/server/market";
 
 export type TradeLike = Pick<
   BrokerTradeRow,
@@ -64,8 +65,9 @@ export function computeAnalytics(
     e.commissions += t.commission ? Math.abs(t.commission) : 0;
     e.qty += t.quantity;
     // Native currency of the trades (e.g. HKD for HKEX stocks). A symbol
-    // should only ever trade in one currency; first one wins.
-    if (e.currency == null && t.currency) e.currency = t.currency;
+    // should only ever trade in one currency; first one wins. Falls back to
+    // the exchange region (numeric = HKEX = HKD) when IBKR didn't report one.
+    if (e.currency == null) e.currency = t.currency ?? inferCurrency(t.symbol);
     bySymbol.set(t.symbol, e);
   }
   const symbols = [...bySymbol.values()].sort(
@@ -90,7 +92,7 @@ export function computeAnalytics(
       commission: t.commission,
       realizedPnl: t.realizedPnl,
       openClose: t.openClose,
-      currency: t.currency,
+      currency: t.currency ?? inferCurrency(t.symbol),
     })),
     recentCashFlows: cashFlows.slice(0, 20).map((c) => ({
       id: c.id,

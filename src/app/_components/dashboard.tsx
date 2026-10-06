@@ -828,7 +828,7 @@ function AuthButtons() {
 }
 
 /** Mobile overflow menu: refresh + sign in/out live here on small screens. */
-function MobileMenu({
+function HeaderMenu({
   onRefresh,
   isFetching,
 }: {
@@ -841,7 +841,7 @@ function MobileMenu({
   const itemCls =
     "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-zinc-200 hover:bg-zinc-700";
   return (
-    <div className="relative sm:hidden">
+    <div className="relative">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -873,28 +873,38 @@ function MobileMenu({
               />
               Refresh prices
             </button>
-            {session ? (
-              <button
-                type="button"
-                onClick={() => signOut({ callbackUrl: "/" })}
-                className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left hover:bg-zinc-700"
-              >
-                <LogOut size={15} className="shrink-0 text-zinc-300" />
-                <span className="min-w-0">
-                  <span className="block text-sm text-zinc-200">Sign out</span>
-                  {session.user?.email && (
-                    <span className="block truncate text-xs text-zinc-500">
-                      {session.user.email}
-                    </span>
-                  )}
-                </span>
-              </button>
-            ) : (
-              <a href="/login" className={itemCls}>
-                <LogIn size={15} />
-                Sign in
-              </a>
-            )}
+            <div className="border-t border-zinc-700/60 px-4 py-2.5">
+              <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Currency</div>
+              <CurrencyPicker />
+            </div>
+            <div className="border-t border-zinc-700/60 px-4 py-2.5">
+              <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Language</div>
+              <LocalePicker />
+            </div>
+            <div className="border-t border-zinc-700/60">
+              {session ? (
+                <button
+                  type="button"
+                  onClick={() => signOut({ callbackUrl: "/" })}
+                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left hover:bg-zinc-700"
+                >
+                  <LogOut size={15} className="shrink-0 text-zinc-300" />
+                  <span className="min-w-0">
+                    <span className="block text-sm text-zinc-200">Sign out</span>
+                    {session.user?.email && (
+                      <span className="block truncate text-xs text-zinc-500">
+                        {session.user.email}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              ) : (
+                <a href="/login" className={itemCls}>
+                  <LogIn size={15} />
+                  Sign in
+                </a>
+              )}
+            </div>
           </div>
         </>
       )}
@@ -988,21 +998,7 @@ function DashboardInner() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <span className="hidden sm:inline-flex">
-            <AuthButtons />
-          </span>
-          <CurrencyPicker />
-          <LocalePicker />
-          <button
-            onClick={() => refetch()}
-            disabled={isFetching}
-            title="Refresh prices"
-            aria-label="Refresh prices"
-            className="hidden rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 sm:inline-flex"
-          >
-            <RefreshCw size={16} className={isFetching ? "animate-spin" : ""} />
-          </button>
-          <MobileMenu onRefresh={() => refetch()} isFetching={isFetching} />
+          <HeaderMenu onRefresh={() => refetch()} isFetching={isFetching} />
         </div>
       </header>
 
