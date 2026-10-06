@@ -637,7 +637,9 @@ const IBKR_STEPS: GuideStep[] = [
         Go to <Code>Performance &amp; Reports</Code> → <Code>Flex Queries</Code>,
         create an <Code>Activity</Code> query with the{" "}
         <Code>Open Positions</Code>, <Code>Trades</Code> and{" "}
-        <Code>Cash Transactions</Code> sections — then note its Query ID.
+        <Code>Cash Transactions</Code> sections, and set{" "}
+        <Code>Period</Code> to <Code>Last N Calendar Days</Code> with a large{" "}
+        <Code>N</Code> (e.g. 3650 ≈ 10 years) — then note its Query ID.
       </>
     ),
   },
@@ -667,7 +669,7 @@ const IBKR_STEPS: GuideStep[] = [
 
 /** Fits IBKR's 200-char "Configure Query with AI" prompt box. */
 const IBKR_AI_PROMPT =
-  "New Activity Flex Query 'holdr': Open Positions (add Cost Basis Price), Trades, Cash Transactions - all columns. Format XML, delivery Flex Web Service, widest date range. Tell me the Query ID.";
+  "Activity Flex Query 'holdr': Open Positions (add Cost Basis Price), Trades, Cash Transactions, all columns. XML, Flex Web Service delivery, period Last N Calendar Days with N=3650. Tell me Query ID.";
 
 function CopyAiPrompt() {
   const [copied, setCopied] = useState(false);
