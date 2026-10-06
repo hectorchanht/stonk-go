@@ -9,7 +9,7 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
  * and the UI degrades gracefully.
  */
 
-const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
+const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
 /**
  * Locales the AI can reply in. The code is client-chosen (see
