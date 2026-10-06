@@ -11,6 +11,12 @@
  *   2. GetStatement?t={token}&q={referenceCode}&v=3 -> the report XML
  *      (the report generates async; error 1019 means "try again shortly")
  *
+ * A query's saved period caps at 365 days in the portal, so SendRequest
+ * carries fd/td (yyyymmdd) overrides to pull the full available history —
+ * positions are period-independent, but trades/cash flows only include rows
+ * inside the window. The trade merge is idempotent, so a wide re-sync is
+ * safe.
+ *
  * Positions are end-of-day (activity data refreshes once daily at close).
  * This is reporting only — it cannot trade.
  */
@@ -223,6 +229,46 @@ async function sendRequest(token: string, queryId: string): Promise<string> {
   throw new FlexError(flexErrorMessage(meta.code ?? "?", meta.message ?? ""), meta.code);
 }
 
+/** yyyymmdd in local time, for the fd/td SendRequest overrides. */
+function yyyymmdd(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+}
+
+/**
+ * SendRequest with an explicit wide date range, so trades/cash flows come
+ * back for the full available history instead of the query's saved period
+ * (capped at 365 days in the portal). Falls back to the plain request if
+ * IBKR rejects the overrides — a 365-day sync beats a failed sync.
+ */
+async function sendRequestWideRange(
+  token: string,
+  queryId: string,
+): Promise<string> {
+  const now = new Date();
+  const fd = "20100101";
+  const td = yyyymmdd(now);
+  const url =
+    `${FLEX_BASE}/SendRequest?t=${encodeURIComponent(token)}` +
+    `&q=${encodeURIComponent(queryId)}&v=3&fd=${fd}&td=${td}`;
+  try {
+    const res = await flexFetch(url);
+    if (!res.ok) throw new FlexError(`IBKR SendRequest HTTP ${res.status}`);
+    const meta = parseResponseMeta(await res.text());
+    if (meta.status === "Success" && meta.referenceCode)
+      return meta.referenceCode;
+    throw new FlexError(
+      flexErrorMessage(meta.code ?? "?", meta.message ?? ""),
+      meta.code,
+    );
+  } catch (e) {
+    // Genuine network/HTTP failures stay fatal; only a Flex-level rejection
+    // of the date overrides falls back to the saved query period.
+    if (!(e instanceof FlexError)) throw e;
+    return sendRequest(token, queryId);
+  }
+}
+
 async function getStatement(token: string, referenceCode: string): Promise<string> {
   const url = `${FLEX_BASE}/GetStatement?t=${encodeURIComponent(token)}&q=${encodeURIComponent(referenceCode)}&v=3`;
   const res = await flexFetch(url);
@@ -244,7 +290,7 @@ export async function fetchFlexPositions(
   const maxAttempts = opts.maxAttempts ?? 10;
   const pollMs = opts.pollMs ?? 5000;
 
-  const referenceCode = await sendRequest(token, queryId);
+  const referenceCode = await sendRequestWideRange(token, queryId);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const body = await getStatement(token, referenceCode);
