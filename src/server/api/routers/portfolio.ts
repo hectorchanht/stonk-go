@@ -11,6 +11,11 @@ import {
 } from "~/server/market";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "~/server/api/trpc";
 import { xirr as computeXirr } from "~/server/xirr";
+import {
+  buildInvestedCurve,
+  downsamplePoints,
+  type CashFlow,
+} from "~/server/performance";
 import { computeFlair } from "~/server/wsb";
 import { generateInsights } from "~/server/ai";
 import {
@@ -54,6 +59,37 @@ const brokerPositionInput = z.object({
 const summaryInput = z.object({
   brokerPositions: z.array(brokerPositionInput).max(500).default([]),
 });
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Trade-log cash flows in a single currency (USD). Trade prices are stored
+ * in native currency (HKD for HKEX), while the terminal market value is
+ * USD — mixing them corrupts any money-weighted math, so every flow is
+ * converted here. Negative = money in (buy), positive = money out.
+ */
+function txnsToUsdFlows(
+  txns: {
+    symbol: string;
+    type: string;
+    quantity: number;
+    price: number;
+    fees: number | null;
+    executedAt: Date | string;
+  }[],
+  fx: Record<string, number>,
+): CashFlow[] {
+  return txns.map((t) => {
+    const native =
+      t.type === "BUY"
+        ? -(t.quantity * t.price + (t.fees ?? 0))
+        : t.quantity * t.price - (t.fees ?? 0);
+    return {
+      date: new Date(t.executedAt),
+      amount: toUsd(native, inferCurrency(t.symbol), fx),
+    };
+  });
+}
 
 export interface HoldingRow {
   id: string;
@@ -294,44 +330,105 @@ export const portfolioRouter = createTRPCRouter({
       return { date };
     }),
 
-  /** Daily portfolio snapshots for the equity curve, oldest first. days=0 → all. */
-  history: publicProcedure
-    .input(z.object({ days: z.number().int().min(0).max(3650).default(90) }))
+  /**
+   * Equity curve for the Performance section — works from day one.
+   * Prefers true daily snapshots when at least 2 exist in range; otherwise
+   * falls back to a curve derived from the trade log (net USD invested per
+   * day, ending at today's live value), so the section never sits empty.
+   * days=0 → all.
+   */
+  equityCurve: publicProcedure
+    .input(
+      z
+        .object({ days: z.number().int().min(0).max(3650).default(90) })
+        .merge(summaryInput),
+    )
     .query(async ({ ctx, input }) => {
-      const rows = await ctx.db.portfolioSnapshot.findMany({
+      const cutoff =
+        input.days > 0
+          ? new Date(Date.now() - input.days * DAY_MS).toLocaleDateString(
+              "en-CA",
+            )
+          : null;
+      const snapshots = await ctx.db.portfolioSnapshot.findMany({
         orderBy: [{ date: "asc" }],
       });
-      return input.days > 0 ? rows.slice(-input.days) : rows;
+      const inRange = cutoff
+        ? snapshots.filter((r) => r.date >= cutoff)
+        : snapshots;
+      if (inRange.length >= 2) {
+        return {
+          source: "snapshots" as const,
+          points: downsamplePoints(
+            inRange.map((r) => ({ date: r.date, value: r.marketValue })),
+          ),
+        };
+      }
+      const txns = await ctx.db.transaction.findMany({
+        orderBy: [{ executedAt: "asc" }],
+      });
+      if (txns.length === 0) return { source: "none" as const, points: [] };
+      const fx = await getFxRates();
+      const flows = txnsToUsdFlows(txns, fx);
+      const s = await buildSummary(ctx, input.brokerPositions);
+      const points = buildInvestedCurve(flows, s.totals.marketValue, {
+        startDaysAgo: input.days > 0 ? input.days : undefined,
+      });
+      const source: "trades" | "none" =
+        points.length >= 2 ? "trades" : "none";
+      return { source, points };
     }),
 
   /**
    * Annualized internal rate of return from the full transaction log.
    * Buys are outflows, sells are inflows, today's market value is the
-   * terminal inflow. Excludes dividends (they aren't in the log).
+   * terminal inflow — all converted to USD. Excludes dividends (they
+   * aren't in the log). XIRR stays null until 30 days of history exist:
+   * annualizing a shorter span explodes into noise (a 1% weekly wobble
+   * reads as ±68% "annualized").
    */
   xirr: publicProcedure.input(summaryInput).query(async ({ ctx, input }) => {
     const txns = await ctx.db.transaction.findMany({
       orderBy: [{ executedAt: "asc" }],
     });
+    const fx = await getFxRates();
+    const flows = txnsToUsdFlows(txns, fx);
     const s = await buildSummary(ctx, input.brokerPositions);
-    const flows = txns.map((t) => ({
-      date: new Date(t.executedAt),
-      amount:
-        t.type === "BUY"
-          ? -(t.quantity * t.price + (t.fees ?? 0))
-          : t.quantity * t.price - (t.fees ?? 0),
-    }));
     if (s.totals.marketValue > 0) {
       flows.push({ date: new Date(), amount: s.totals.marketValue });
     }
+    const times = flows.map((f) => f.date.getTime());
+    const spanDays =
+      times.length >= 2
+        ? (Math.max(...times) - Math.min(...times)) / DAY_MS
+        : 0;
     const contributions = txns
       .filter((t) => t.type === "BUY")
-      .reduce((a, t) => a + t.quantity * t.price + (t.fees ?? 0), 0);
+      .reduce(
+        (a, t) =>
+          a +
+          toUsd(
+            t.quantity * t.price + (t.fees ?? 0),
+            inferCurrency(t.symbol),
+            fx,
+          ),
+        0,
+      );
     const withdrawals = txns
       .filter((t) => t.type === "SELL")
-      .reduce((a, t) => a + t.quantity * t.price - (t.fees ?? 0), 0);
+      .reduce(
+        (a, t) =>
+          a +
+          toUsd(
+            t.quantity * t.price - (t.fees ?? 0),
+            inferCurrency(t.symbol),
+            fx,
+          ),
+        0,
+      );
     return {
-      xirr: computeXirr(flows),
+      xirr: spanDays >= 30 ? computeXirr(flows) : null,
+      spanDays,
       contributions,
       withdrawals,
       currentValue: s.totals.marketValue,

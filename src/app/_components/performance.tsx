@@ -36,8 +36,10 @@ const pct = (v: number | null, opts?: { sign?: boolean }) => {
 
 function EquityChart({
   points,
+  source,
 }: {
-  points: { date: string; marketValue: number }[];
+  points: { date: string; value: number }[];
+  source: "snapshots" | "trades" | "none";
 }) {
   const money = useMoney();
   const W = 640;
@@ -47,13 +49,13 @@ function EquityChart({
   if (points.length < 2) {
     return (
       <p className="py-8 text-center text-sm text-zinc-500">
-        Not enough history yet — a snapshot is recorded each day you open the
-        app.
+        Log your first trade and your performance curve starts here — daily
+        snapshots refine it each time you open the app.
       </p>
     );
   }
 
-  const vals = points.map((p) => p.marketValue);
+  const vals = points.map((p) => p.value);
   const min = Math.min(...vals);
   const max = Math.max(...vals);
   const span = max - min || 1;
@@ -62,12 +64,11 @@ function EquityChart({
   const line = points
     .map(
       (p, i) =>
-        `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.marketValue).toFixed(1)}`,
+        `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`,
     )
     .join(" ");
   const area = `${line} L${x(points.length - 1).toFixed(1)},${H} L${x(0).toFixed(1)},${H} Z`;
-  const up =
-    points[points.length - 1]!.marketValue >= points[0]!.marketValue;
+  const up = points[points.length - 1]!.value >= points[0]!.value;
   const stroke = up ? "#34d399" : "#fb7185";
   const last = points[points.length - 1]!;
 
@@ -77,7 +78,11 @@ function EquityChart({
         viewBox={`0 0 ${W} ${H}`}
         className="w-full"
         role="img"
-        aria-label="Portfolio value over time"
+        aria-label={
+          source === "trades"
+            ? "Net invested over time, ending at today's live value"
+            : "Portfolio value over time"
+        }
       >
         <path
           d={area}
@@ -93,7 +98,7 @@ function EquityChart({
         />
         <circle
           cx={x(points.length - 1)}
-          cy={y(last.marketValue)}
+          cy={y(last.value)}
           r="4"
           fill={stroke}
         />
@@ -122,20 +127,19 @@ export function PerformanceSection({
   brokerPositions: BrokerPositionInput[];
 }) {
   const [range, setRange] = useState<number>(90);
-  const { data: history, isLoading } = api.portfolio.history.useQuery({
+  const { data: curve, isLoading } = api.portfolio.equityCurve.useQuery({
     days: range,
+    brokerPositions,
   });
   const { data: perf } = api.portfolio.xirr.useQuery({ brokerPositions });
 
-  const pts = (history ?? []).map((h) => ({
-    date: h.date,
-    marketValue: h.marketValue,
-  }));
+  const pts = curve?.points ?? [];
+  const source = curve?.source ?? "none";
   const first = pts[0];
   const last = pts[pts.length - 1];
   const periodReturn =
-    first && last && first.marketValue > 0
-      ? ((last.marketValue - first.marketValue) / first.marketValue) * 100
+    first && last && first.value > 0
+      ? ((last.value - first.value) / first.value) * 100
       : null;
   const x = perf?.xirr;
   const xirrTone: "pos" | "neg" | "neutral" =
@@ -164,14 +168,26 @@ export function PerformanceSection({
       {isLoading ? (
         <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
       ) : (
-        <EquityChart points={pts} />
+        <EquityChart points={pts} source={source} />
+      )}
+      {!isLoading && pts.length >= 2 && (
+        <p className="mt-1 text-right text-[11px] text-zinc-500">
+          {source === "trades"
+            ? "From your trade log · last point is today's live value"
+            : "Daily snapshots"}
+        </p>
       )}
       <div className="mt-3 grid grid-cols-2 gap-3">
         <StatCard
           label="Annualized return (XIRR)"
           value={x == null ? "—" : `${(x * 100).toFixed(2)}%`}
           tone={xirrTone}
-          info="True annualized return from your full trade log: buys count as cash out, sells as cash in, today's value closes it out. Excludes dividends."
+          info="True annualized return from your full trade log — every flow converted to USD. Appears once you have 30+ days of history; annualizing a shorter span would be noise. Excludes dividends."
+          sub={
+            x == null && (perf?.spanDays ?? 0) > 0
+              ? `${Math.floor(perf!.spanDays)} of 30 days — XIRR unlocks then`
+              : undefined
+          }
         />
         <StatCard
           label="Return this period"
