@@ -2,7 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { z } from "zod";
 
-import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
+import { createTRPCRouter, protectedProcedure, publicProcedure } from "~/server/api/trpc";
 import {
   fetchFlexPositions,
   FlexError,
@@ -13,6 +13,7 @@ import {
   type CashFlowLike,
   type TradeLike,
 } from "~/server/ibkr-analytics";
+import { decryptCredentials, encryptCredentials } from "~/server/crypto";
 
 const SETUP_HINT =
   "IBKR is not connected. In Client Portal: Reports > Flex Queries (create an Activity query with the Open Positions, Trades and Cash Transactions sections, note its ID), then Settings > Reporting > Flex Web Service (generate a token). Set IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID as environment variables/secrets — or paste your token + query ID below; it stays in your browser and is only sent to IBKR when you sync.";
@@ -75,13 +76,51 @@ export const ibkrRouter = createTRPCRouter({
   }),
 
   sync: publicProcedure.input(syncInput).mutation(async ({ ctx, input }) => {
-    // Transient per-user mode: credentials travel with the request and are
-    // never persisted. Server mode: the env-configured account, snapshotted
-    // to D1 so the dashboard (and a future cron) can read it without creds.
-    const transient = input != null;
-    const cfg = transient
-      ? { token: input.token, queryId: input.queryId }
-      : getFlexConfig();
+    // Credential resolution order:
+    // 1. Transient per-user mode: credentials travel with the request and
+    //    are never persisted.
+    // 2. Saved credentials: a logged-in user with stored (encrypted) creds
+    //    can sync without re-pasting — still transient (persisted:false).
+    // 3. Server mode: the env-configured account, snapshotted to D1
+    //    (being phased out; dashboard no longer exposes it).
+    let token: string | undefined;
+    let queryId: string | undefined;
+    let transient = false;
+
+    if (input?.token && input?.queryId) {
+      token = input.token;
+      queryId = input.queryId;
+      transient = true;
+    } else {
+      const userId = ctx.session?.user?.id;
+      if (userId) {
+        const row = await ctx.db.brokerCredential.findUnique({
+          where: { userId },
+        });
+        if (row) {
+          try {
+            const dec = await decryptCredentials(
+              row.iv,
+              row.encToken,
+              row.encQueryId,
+            );
+            token = dec.token;
+            queryId = dec.queryId;
+            transient = true;
+          } catch {
+            // Never leak credential material into the error message.
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "Saved IBKR credentials could not be decrypted (the server key may have changed). Please save them again.",
+            });
+          }
+        }
+      }
+    }
+
+    const cfg =
+      token && queryId ? { token, queryId } : getFlexConfig();
     if (!cfg) {
       throw new TRPCError({ code: "PRECONDITION_FAILED", message: SETUP_HINT });
     }
@@ -175,6 +214,60 @@ export const ibkrRouter = createTRPCRouter({
       analytics: computeAnalytics(tradeLikes, cashLikes),
       syncedAt: now,
     };
+  }),
+
+  /**
+   * Save the caller's IBKR Flex credentials, AES-GCM encrypted, keyed by
+   * user id. Replaces any previously saved row. Secrets are never returned
+   * by any endpoint.
+   */
+  saveCredentials: protectedProcedure
+    .input(
+      z.object({
+        token: z.string().min(1).max(500),
+        queryId: z.string().min(1).max(100),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      // Throws a clear error when CREDENTIALS_KEY is not configured.
+      const enc = await encryptCredentials(input.token, input.queryId);
+      await ctx.db.brokerCredential.upsert({
+        where: { userId },
+        update: {
+          encToken: enc.encToken,
+          encQueryId: enc.encQueryId,
+          iv: enc.iv,
+        },
+        create: {
+          userId,
+          encToken: enc.encToken,
+          encQueryId: enc.encQueryId,
+          iv: enc.iv,
+        },
+      });
+      return { saved: true };
+    }),
+
+  /** Whether the caller has saved IBKR credentials (never returns them). */
+  savedCredentials: protectedProcedure.query(async ({ ctx }) => {
+    const row = await ctx.db.brokerCredential.findUnique({
+      where: { userId: ctx.session.user.id },
+    });
+    return { saved: row != null };
+  }),
+
+  /** Delete the caller's saved IBKR credentials. */
+  clearCredentials: protectedProcedure.mutation(async ({ ctx }) => {
+    const row = await ctx.db.brokerCredential.findUnique({
+      where: { userId: ctx.session.user.id },
+    });
+    if (row) {
+      await ctx.db.brokerCredential.delete({
+        where: { userId: ctx.session.user.id },
+      });
+    }
+    return { cleared: true };
   }),
 
   /**

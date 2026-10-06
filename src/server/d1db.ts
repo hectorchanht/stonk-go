@@ -79,6 +79,16 @@ export interface BrokerCashFlowRow {
   syncedAt: Date;
 }
 
+export interface BrokerCredentialRow {
+  id: string;
+  userId: string;
+  encToken: string;
+  encQueryId: string;
+  iv: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 type SortDir = "asc" | "desc";
 
 interface BulkInsertable<TData> {
@@ -141,6 +151,22 @@ export interface AppDb {
         markPrice?: number | null;
       }>;
     }): Promise<{ count: number }>;
+  };
+  brokerCredential: {
+    findUnique(args: {
+      where: { userId: string };
+    }): Promise<BrokerCredentialRow | null>;
+    upsert(args: {
+      where: { userId: string };
+      update: { encToken: string; encQueryId: string; iv: string };
+      create: {
+        userId: string;
+        encToken: string;
+        encQueryId: string;
+        iv: string;
+      };
+    }): Promise<BrokerCredentialRow>;
+    delete(args: { where: { userId: string } }): Promise<BrokerCredentialRow>;
   };
   holding: {
     findMany(args: { orderBy: { symbol: SortDir } }): Promise<HoldingRow[]>;
@@ -233,6 +259,18 @@ function mapBrokerCashFlow(r: RawRow): BrokerCashFlowRow {
     amount: r.amount as number,
     type: r.type as string,
     syncedAt: toDate(r.syncedAt),
+  };
+}
+
+function mapBrokerCredential(r: RawRow): BrokerCredentialRow {
+  return {
+    id: r.id as string,
+    userId: r.userId as string,
+    encToken: r.encToken as string,
+    encQueryId: r.encQueryId as string,
+    iv: r.iv as string,
+    createdAt: toDate(r.createdAt),
+    updatedAt: toDate(r.updatedAt),
   };
 }
 
@@ -422,6 +460,60 @@ export function createD1Db(d1: D1Database): AppDb {
     },
   };
 
+  const brokerCredential: AppDb["brokerCredential"] = {
+    findUnique: async (args) => {
+      const row = await d1
+        .prepare(`SELECT * FROM "BrokerCredential" WHERE "userId" = ?`)
+        .bind(args.where.userId)
+        .first();
+      return row ? mapBrokerCredential(row as unknown as RawRow) : null;
+    },
+
+    upsert: async (args) => {
+      const now = new Date().toISOString();
+      await d1
+        .prepare(
+          `INSERT INTO "BrokerCredential"
+             ("id", "userId", "encToken", "encQueryId", "iv", "createdAt", "updatedAt")
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT("userId") DO UPDATE SET
+             "encToken" = excluded."encToken",
+             "encQueryId" = excluded."encQueryId",
+             "iv" = excluded."iv",
+             "updatedAt" = excluded."updatedAt"`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          args.create.userId,
+          args.create.encToken,
+          args.create.encQueryId,
+          args.create.iv,
+          now,
+          now,
+        )
+        .run();
+      const row = await d1
+        .prepare(`SELECT * FROM "BrokerCredential" WHERE "userId" = ?`)
+        .bind(args.where.userId)
+        .first();
+      if (!row) throw new Error(`upsert failed for broker credential`);
+      return mapBrokerCredential(row as unknown as RawRow);
+    },
+
+    delete: async (args) => {
+      const row = await d1
+        .prepare(`SELECT * FROM "BrokerCredential" WHERE "userId" = ?`)
+        .bind(args.where.userId)
+        .first();
+      if (!row) throw new Error(`Broker credential not found`);
+      await d1
+        .prepare(`DELETE FROM "BrokerCredential" WHERE "userId" = ?`)
+        .bind(args.where.userId)
+        .run();
+      return mapBrokerCredential(row as unknown as RawRow);
+    },
+  };
+
   const holding: AppDb["holding"] = {
     findMany: async (args) => {
       const dir = args.orderBy.symbol === "desc" ? "DESC" : "ASC";
@@ -567,5 +659,5 @@ export function createD1Db(d1: D1Database): AppDb {
     },
   };
 
-  return { brokerTrade, brokerCashFlow, brokerPosition, holding, transaction };
+  return { brokerTrade, brokerCashFlow, brokerPosition, brokerCredential, holding, transaction };
 }

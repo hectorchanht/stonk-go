@@ -1,3 +1,4 @@
+import { authRouter } from "~/server/api/routers/auth";
 import { ibkrRouter } from "~/server/api/routers/ibkr";
 import { portfolioRouter } from "~/server/api/routers/portfolio";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
@@ -8,6 +9,7 @@ import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
  * All routers added in /api/routers should be manually added here.
  */
 export const appRouter = createTRPCRouter({
+  auth: authRouter,
   ibkr: ibkrRouter,
   portfolio: portfolioRouter,
 });

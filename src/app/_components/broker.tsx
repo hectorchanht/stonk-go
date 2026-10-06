@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 
@@ -53,6 +54,32 @@ const fmtYmd = (ymd: string) =>
 
 function valueOf(p: PositionLike): number | null {
   return p.markPrice == null ? null : p.quantity * p.markPrice;
+}
+
+/**
+ * The broker positions are already merged into the dashboard's Holdings
+ * table above (via onPositions), so the full table here is collapsed by
+ * default — trade analysis stays visible below it.
+ */
+function CollapsiblePositions({ positions }: { positions: PositionLike[] }) {
+  const [open, setOpen] = useState(false);
+  const n = positions.length;
+  return (
+    <div className="mt-3">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200"
+      >
+        <span className="inline-block w-4 text-xs">{open ? "▾" : "▸"}</span>
+        <span>
+          {n} position{n === 1 ? "" : "s"} — also listed in Holdings above
+        </span>
+        <span className="text-xs text-zinc-600">{open ? "hide" : "show"}</span>
+      </button>
+      {open && <PositionsTable positions={positions} />}
+    </div>
+  );
 }
 
 /* ---------------- shared presentational pieces ---------------- */
@@ -321,7 +348,14 @@ function BrowserBrokerCard({
   const [creds, setCreds] = useState<Creds | null | undefined>(undefined);
   const [snapshot, setSnapshot] = useState<{ at: string; data: SyncResult } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
   const autoStarted = useRef(false);
+
+  const { data: session } = useSession();
+  const savedQ = api.ibkr.savedCredentials.useQuery(undefined, {
+    enabled: !!session?.user,
+    retry: false,
+  });
 
   const sync = api.ibkr.sync.useMutation({
     onSuccess: (data) => {
@@ -333,6 +367,22 @@ function BrowserBrokerCard({
       } catch {
         /* storage full or unavailable — in-memory still works */
       }
+    },
+    onError: (e) => setError(e.message),
+  });
+
+  const saveCreds = api.ibkr.saveCredentials.useMutation({
+    onSuccess: () => {
+      setError(null);
+      void savedQ.refetch();
+    },
+    onError: (e) => setError(e.message),
+  });
+
+  const clearCreds = api.ibkr.clearCredentials.useMutation({
+    onSuccess: () => {
+      setError(null);
+      void savedQ.refetch();
     },
     onError: (e) => setError(e.message),
   });
@@ -370,6 +420,53 @@ function BrowserBrokerCard({
   }
 
   if (!creds) {
+    // Logged in with credentials saved to the account (and not choosing to
+    // enter different ones): sync via the server-side saved credentials.
+    if (session?.user && savedQ.data?.saved && !showForm) {
+      return (
+        <div className={card}>
+          <h2 className="text-lg font-bold">🏦 Interactive Brokers</h2>
+          <p className="mt-1 text-sm text-zinc-400">
+            You have IBKR credentials saved to your account
+            {session.user.email ? ` (${session.user.email})` : ""}. Sync
+            without re-pasting them.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              onClick={() => sync.mutate(undefined)}
+              disabled={sync.isPending}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
+            >
+              {sync.isPending ? "Syncing…" : "↻ Sync with saved credentials"}
+            </button>
+            <button
+              onClick={() => setShowForm(true)}
+              className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
+            >
+              Use different credentials
+            </button>
+          </div>
+          {error && (
+            <p className="mt-3 rounded-lg border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-300">
+              {error}
+            </p>
+          )}
+          {sync.isPending && !data && (
+            <p className="mt-3 text-sm text-zinc-500">
+              Pulling your IBKR records… (IBKR generates the report, takes ~10–30s)
+            </p>
+          )}
+          {data && (
+            <>
+              {data.positions.length > 0 && (
+                <CollapsiblePositions positions={data.positions} />
+              )}
+              <AnalyticsView data={data.analytics} />
+            </>
+          )}
+        </div>
+      );
+    }
     return (
       <ConnectForm
         onConnect={(c) => {
@@ -437,6 +534,34 @@ function BrowserBrokerCard({
         </div>
       </div>
 
+      {session?.user && (
+        <div className="mt-3 flex items-center gap-2">
+          {savedQ.data?.saved ? (
+            <>
+              <span className="text-xs text-emerald-400">
+                ✓ Credentials saved to your account
+              </span>
+              <button
+                onClick={() => clearCreds.mutate()}
+                disabled={clearCreds.isPending}
+                className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:text-rose-400 disabled:opacity-50"
+              >
+                {clearCreds.isPending ? "Removing…" : "Remove saved"}
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => saveCreds.mutate(creds)}
+              disabled={saveCreds.isPending}
+              className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
+              title="Encrypt and store these credentials on your account so you can sync from any browser"
+            >
+              {saveCreds.isPending ? "Saving…" : "💾 Save to my account"}
+            </button>
+          )}
+        </div>
+      )}
+
       {error && (
         <p className="mt-3 rounded-lg border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-300">
           {error}
@@ -451,7 +576,9 @@ function BrowserBrokerCard({
 
       {data && (
         <>
-          <PositionsTable positions={data.positions} />
+          {data.positions.length > 0 && (
+            <CollapsiblePositions positions={data.positions} />
+          )}
           <AnalyticsView data={data.analytics} />
         </>
       )}

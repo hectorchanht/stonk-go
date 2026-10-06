@@ -38,6 +38,15 @@ export const env = createEnv({
     // Optional: Finnhub real-time quotes (free tier, 60 calls/min).
     // Without it, quotes come from Yahoo Finance (~15min delayed).
     FINNHUB_API_KEY: z.string().optional(),
+    // Optional: magic-link sign-in emails via Resend (HTTP API; Workers have
+    // no SMTP). Without it, /login explains that email sign-in isn't set up.
+    RESEND_API_KEY: z.string().optional(),
+    // Optional: default From: for magic-link emails.
+    EMAIL_FROM: z.string().optional(),
+    // Optional: base64 of 32 random bytes (`openssl rand -base64 32`).
+    // Encrypts per-user IBKR credentials at rest (AES-GCM-256).
+    // Required only when logged-in users save IBKR credentials.
+    CREDENTIALS_KEY: z.string().optional(),
   },
 
   /**
@@ -63,6 +72,9 @@ export const env = createEnv({
     IBKR_FLEX_TOKEN: process.env.IBKR_FLEX_TOKEN,
     IBKR_FLEX_QUERY_ID: process.env.IBKR_FLEX_QUERY_ID,
     FINNHUB_API_KEY: process.env.FINNHUB_API_KEY,
+    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    EMAIL_FROM: process.env.EMAIL_FROM,
+    CREDENTIALS_KEY: process.env.CREDENTIALS_KEY,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially
