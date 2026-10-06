@@ -6,7 +6,9 @@ import { api, HydrateClient } from "~/trpc/server";
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  void api.portfolio.summary.prefetch();
+  // Prefetch without broker positions (the client's IBKR snapshot merges in
+  // after hydration via the summary query's brokerPositions input).
+  void api.portfolio.summary.prefetch({ brokerPositions: [] });
 
   return (
     <HydrateClient>

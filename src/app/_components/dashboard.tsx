@@ -1,12 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { BrokerCard } from "~/app/_components/broker";
 
 type Summary = RouterOutputs["portfolio"]["summary"];
 type HoldingRow = Summary["rows"][number];
+
+/** Broker snapshot positions as the summary API expects them. */
+interface BrokerPositionInput {
+  symbol: string;
+  quantity: number;
+  markPrice: number | null;
+  costBasisPrice?: number | null;
+}
 
 const money = (v: number | null, opts?: { sign?: boolean }) => {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -155,6 +163,11 @@ function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
             <tr key={r.symbol} className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-800/30">
               <td className="px-4 py-3 sm:px-5">
                 <div className="font-semibold text-zinc-100">{r.symbol}</div>
+                {r.source === "broker" && (
+                  <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-400">
+                    IBKR
+                  </div>
+                )}
                 {r.name && (
                   <div className="max-w-[180px] truncate text-xs text-zinc-500">
                     {r.name}
@@ -185,21 +198,30 @@ function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
                 {pct(r.weightPct)}
               </td>
               <td className="px-4 py-3 text-right sm:px-5">
-                <button
-                  onClick={() => {
-                    if (
-                      confirm(
-                        `Delete ${r.symbol} and ALL of its transactions? This cannot be undone.`
-                      )
-                    ) {
-                      del.mutate({ symbol: r.symbol });
-                    }
-                  }}
-                  className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
-                  title={`Delete ${r.symbol}`}
-                >
-                  ✕
-                </button>
+                {r.source === "manual" ? (
+                  <button
+                    onClick={() => {
+                      if (
+                        confirm(
+                          `Delete ${r.symbol} and ALL of its transactions? This cannot be undone.`
+                        )
+                      ) {
+                        del.mutate({ symbol: r.symbol });
+                      }
+                    }}
+                    className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
+                    title={`Delete ${r.symbol}`}
+                  >
+                    ✕
+                  </button>
+                ) : (
+                  <span
+                    className="text-xs text-zinc-600"
+                    title="Synced from IBKR — read-only"
+                  >
+                    synced
+                  </span>
+                )}
               </td>
             </tr>
           ))}
@@ -464,17 +486,43 @@ function TransactionList() {
 }
 
 export function Dashboard() {
+  // IBKR snapshot reported up by the BrokerCard (lives in this browser only).
+  const [brokerPositions, setBrokerPositions] = useState<BrokerPositionInput[]>([]);
+  const brokerInput = useMemo(
+    () =>
+      brokerPositions.map((p) => ({
+        symbol: p.symbol,
+        quantity: p.quantity,
+        markPrice: p.markPrice,
+        costBasisPrice: p.costBasisPrice ?? null,
+      })),
+    [brokerPositions],
+  );
+
   const { data, isLoading, isError, refetch, isFetching } =
-    api.portfolio.summary.useQuery(undefined, {
-      refetchInterval: 120_000, // refresh quotes every 2 minutes
-      staleTime: 60_000,
-    });
+    api.portfolio.summary.useQuery(
+      { brokerPositions: brokerInput },
+      {
+        refetchInterval: 120_000, // refresh quotes every 2 minutes
+        staleTime: 60_000,
+      },
+    );
 
   const t = data?.totals;
+  const missingBasisNote =
+    t && t.brokerMissingBasis > 0
+      ? ` · excl. ${t.brokerMissingBasis} IBKR w/o cost basis`
+      : "";
   const dayTone: "pos" | "neg" | "neutral" =
     t?.dayPL == null ? "neutral" : t.dayPL > 0 ? "pos" : t.dayPL < 0 ? "neg" : "neutral";
   const totalTone: "pos" | "neg" | "neutral" =
-    t == null ? "neutral" : t.totalPL > 0 ? "pos" : t.totalPL < 0 ? "neg" : "neutral";
+    t?.totalPL == null
+      ? "neutral"
+      : t.totalPL > 0
+        ? "pos"
+        : t.totalPL < 0
+          ? "neg"
+          : "neutral";
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 px-4 py-6 sm:px-6">
@@ -534,19 +582,19 @@ export function Dashboard() {
             <StatCard
               label="Total P/L"
               value={money(t!.totalPL, { sign: true })}
-              sub={pct(t!.totalPLPct, { sign: true })}
+              sub={`${pct(t!.totalPLPct, { sign: true })}${missingBasisNote}`}
               tone={totalTone}
             />
             <StatCard
               label="Cost basis"
               value={money(t!.costBasis)}
-              sub="capital invested"
+              sub={`capital invested${missingBasisNote}`}
             />
           </div>
 
           <Allocation rows={data.rows} />
           <HoldingsTable rows={data.rows} />
-          <BrokerCard />
+          <BrokerCard onPositions={setBrokerPositions} />
           <TransactionForm />
           <TransactionList />
 

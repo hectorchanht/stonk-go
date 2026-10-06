@@ -15,6 +15,7 @@ interface PositionLike {
   currency: string;
   quantity: number;
   markPrice: number | null;
+  costBasisPrice?: number | null;
 }
 
 const card = "rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5";
@@ -311,7 +312,11 @@ function ConnectForm({ onConnect }: { onConnect: (c: Creds) => void }) {
   );
 }
 
-function BrowserBrokerCard() {
+function BrowserBrokerCard({
+  onPositions,
+}: {
+  onPositions?: (positions: PositionLike[]) => void;
+}) {
   // undefined = still loading from localStorage (avoids SSR mismatch)
   const [creds, setCreds] = useState<Creds | null | undefined>(undefined);
   const [snapshot, setSnapshot] = useState<{ at: string; data: SyncResult } | null>(null);
@@ -348,6 +353,14 @@ function BrowserBrokerCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [creds]);
 
+  const data = sync.data ?? snapshot?.data ?? null;
+
+  // Report the snapshot upward so the dashboard totals can include it.
+  // (Above the early returns — hooks must run unconditionally.)
+  useEffect(() => {
+    onPositions?.(data?.positions ?? []);
+  }, [data, onPositions]);
+
   if (creds === undefined) {
     return (
       <div className={card}>
@@ -371,7 +384,6 @@ function BrowserBrokerCard() {
     );
   }
 
-  const data = sync.data ?? snapshot?.data ?? null;
   const lastSync = sync.data
     ? new Date()
     : snapshot
@@ -449,8 +461,12 @@ function BrowserBrokerCard() {
 
 /* ---------------- entry ---------------- */
 
-export function BrokerCard() {
+export function BrokerCard({
+  onPositions,
+}: {
+  onPositions?: (positions: PositionLike[]) => void;
+}) {
   // Every visitor connects with their own IBKR credentials (kept in their
   // browser only). Server-side env secrets are never exposed to the public UI.
-  return <BrowserBrokerCard />;
+  return <BrowserBrokerCard onPositions={onPositions} />;
 }

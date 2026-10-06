@@ -25,6 +25,9 @@ export interface FlexPosition {
   currency: string;
   quantity: number;
   markPrice: number | null;
+  /** Per-share cost basis — only present when the Flex Query includes the
+   *  "Cost Basis Price" column in the Open Positions section. */
+  costBasisPrice: number | null;
 }
 
 export interface FlexTrade {
@@ -123,6 +126,7 @@ export function parseFlexPositions(xml: string): FlexResult {
         currency: a.currency ?? "",
         quantity,
         markPrice: num(a.markPrice),
+        costBasisPrice: num(a.costBasisPrice),
       });
     }
   }

@@ -23,6 +23,19 @@ const symbolSchema = z
   .max(16)
   .transform((s) => s.toUpperCase().replace(/\s+/g, ""));
 
+/** Broker positions pushed from the client's IBKR snapshot (never stored). */
+const brokerPositionInput = z.object({
+  symbol: symbolSchema,
+  quantity: z.number(),
+  markPrice: z.number().nullable(),
+  costBasisPrice: z.number().nullable().optional(),
+  currency: z.string().max(8).optional(),
+});
+
+const summaryInput = z.object({
+  brokerPositions: z.array(brokerPositionInput).max(500).default([]),
+});
+
 /** Recompute a holding from its full transaction history. */
 async function recomputeHolding(tx: AppDb, symbol: string) {
   const txns = await tx.transaction.findMany({
@@ -65,8 +78,10 @@ export interface HoldingRow {
   symbol: string;
   name: string | null;
   quantity: number;
-  avgCost: number;
-  costBasis: number;
+  /** Null for broker rows when the Flex query lacks the Cost Basis column. */
+  avgCost: number | null;
+  /** Null for broker rows when the Flex query lacks the Cost Basis column. */
+  costBasis: number | null;
   price: number | null;
   marketValue: number | null;
   dayPL: number | null;
@@ -74,6 +89,7 @@ export interface HoldingRow {
   totalPL: number | null;
   totalPLPct: number | null;
   weightPct: number | null;
+  source: "manual" | "broker";
 }
 
 export interface Summary {
@@ -82,16 +98,31 @@ export interface Summary {
     costBasis: number;
     marketValue: number;
     dayPL: number | null;
-    totalPL: number;
+    /** Null when broker positions lack cost basis — can't be computed honestly. */
+    totalPL: number | null;
     totalPLPct: number | null;
     holdingsCount: number;
     pricedCount: number;
+    brokerCount: number;
+    /** Broker rows with a market value but no cost basis. */
+    brokerMissingBasis: number;
   };
 }
 
-async function buildSummary(ctx: { db: AppDb }): Promise<Summary> {
+async function buildSummary(
+  ctx: { db: AppDb },
+  brokerPositions: z.infer<typeof brokerPositionInput>[],
+): Promise<Summary> {
   const holdings = await ctx.db.holding.findMany({ orderBy: { symbol: "asc" } });
-  const quotes = await getQuotes(holdings.map((h) => h.symbol));
+  const manualSymbols = new Set(holdings.map((h) => h.symbol));
+  // The manual log wins on overlap — the same symbol must never be
+  // double-counted in both the manual portfolio and the broker snapshot.
+  const broker = brokerPositions.filter((b) => !manualSymbols.has(b.symbol));
+
+  const quotes = await getQuotes([
+    ...holdings.map((h) => h.symbol),
+    ...broker.map((b) => b.symbol),
+  ]);
   const bySymbol = new Map<string, Quote>(quotes.map((q) => [q.symbol, q]));
 
   const rows: HoldingRow[] = holdings.map((h) => {
@@ -121,15 +152,56 @@ async function buildSummary(ctx: { db: AppDb }): Promise<Summary> {
           ? (totalPL / costBasis) * 100
           : null,
       weightPct: null, // filled below once portfolio value is known
+      source: "manual" as const,
     };
   });
 
+  for (const b of broker) {
+    const q = bySymbol.get(b.symbol);
+    // Live quote when available, otherwise IBKR's end-of-day mark price.
+    const price = q?.price ?? b.markPrice;
+    const marketValue = price != null ? b.quantity * price : null;
+    const dayPL =
+      q?.price != null && q?.prevClose != null
+        ? b.quantity * (q.price - q.prevClose)
+        : null;
+    const costBasis =
+      b.costBasisPrice != null ? b.quantity * b.costBasisPrice : null;
+    const totalPL =
+      marketValue != null && costBasis != null ? marketValue - costBasis : null;
+    rows.push({
+      id: `broker:${b.symbol}`,
+      symbol: b.symbol,
+      name: q?.name ?? null,
+      quantity: b.quantity,
+      avgCost: b.costBasisPrice ?? null,
+      costBasis,
+      price,
+      marketValue,
+      dayPL,
+      dayChangePct: q?.dayChangePct ?? null,
+      totalPL,
+      totalPLPct:
+        totalPL != null && costBasis ? (totalPL / costBasis) * 100 : null,
+      weightPct: null,
+      source: "broker" as const,
+    });
+  }
+
   const marketValue = rows.reduce((s, r) => s + (r.marketValue ?? 0), 0);
-  const costBasis = rows.reduce((s, r) => s + r.costBasis, 0);
+  const costBasis = rows.reduce((s, r) => s + (r.costBasis ?? 0), 0);
   const dayPLValues = rows
     .map((r) => r.dayPL)
     .filter((v): v is number => v != null);
-  const totalPL = marketValue - costBasis;
+  const brokerMissingBasis = rows.filter(
+    (r) => r.source === "broker" && r.marketValue != null && r.costBasis == null,
+  ).length;
+  // Without every position's cost basis, a total P/L number would be a lie —
+  // show it only when it's complete (manual-only portfolios are unaffected).
+  const totalPL =
+    brokerMissingBasis > 0
+      ? null
+      : rows.reduce((s, r) => s + (r.marketValue ?? 0), 0) - costBasis;
 
   for (const r of rows) {
     r.weightPct =
@@ -145,16 +217,21 @@ async function buildSummary(ctx: { db: AppDb }): Promise<Summary> {
       marketValue,
       dayPL: dayPLValues.length > 0 ? dayPLValues.reduce((a, b) => a + b, 0) : null,
       totalPL,
-      totalPLPct: costBasis > 0 ? (totalPL / costBasis) * 100 : null,
+      totalPLPct:
+        totalPL != null && costBasis > 0 ? (totalPL / costBasis) * 100 : null,
       holdingsCount: rows.length,
       pricedCount: rows.filter((r) => r.marketValue != null).length,
+      brokerCount: broker.length,
+      brokerMissingBasis,
     },
   };
 }
 
 export const portfolioRouter = createTRPCRouter({
-  /** Full dashboard data: holdings with live prices + portfolio totals. */
-  summary: publicProcedure.query(async ({ ctx }) => buildSummary(ctx)),
+  /** Full dashboard data: manual holdings + broker snapshot, live prices, totals. */
+  summary: publicProcedure
+    .input(summaryInput)
+    .query(async ({ ctx, input }) => buildSummary(ctx, input.brokerPositions)),
 
   /** Live quote for one symbol (used by the add-transaction form). */
   quote: publicProcedure
