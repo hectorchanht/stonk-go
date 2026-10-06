@@ -1,50 +1,33 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, type ReactNode } from "react";
 
 export type Theme = "dark" | "light";
-
-const THEME_KEY = "holdr.theme";
 
 const Ctx = createContext<{
   theme: Theme;
   setTheme: (t: Theme) => void;
 }>({ theme: "dark", setTheme: () => undefined });
 
-function loadTheme(): Theme {
-  try {
-    const v = window.localStorage.getItem(THEME_KEY);
-    if (v === "light" || v === "dark") return v;
-  } catch {
-    /* ignore */
-  }
-  return "dark";
-}
-
+/**
+ * Holdr is dark-only: broker.tsx / questrade.tsx / exchanges.tsx were built
+ * with dark-only classes (light mode renders dark slabs on a white page),
+ * and dark is the de-facto design target. The provider pins the `dark`
+ * class and `setTheme` is a no-op kept for API compatibility.
+ */
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("dark");
-
   useEffect(() => {
-    setThemeState(loadTheme());
-  }, []);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (theme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
+    document.documentElement.classList.add("dark");
     try {
-      window.localStorage.setItem(THEME_KEY, theme);
+      window.localStorage.removeItem("holdr.theme");
     } catch {
       /* ignore */
     }
-  }, [theme]);
+  }, []);
 
-  const setTheme = useCallback((t: Theme) => setThemeState(t), []);
+  const setTheme = useCallback((_t: Theme) => undefined, []);
 
-  return <Ctx.Provider value={{ theme, setTheme }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ theme: "dark", setTheme }}>{children}</Ctx.Provider>;
 }
 
 export function useTheme() {

@@ -310,6 +310,10 @@ function BalancesTable({ data }: { data: SyncResult }) {
   const rows = [...data.items].sort(
     (a, b) => (b.valueCents ?? -1) - (a.valueCents ?? -1),
   );
+  // Long asset lists collapse: show the top 8, expand for the rest.
+  const [showAll, setShowAll] = useState(false);
+  const MAX_VISIBLE = 8;
+  const visible = showAll ? rows : rows.slice(0, MAX_VISIBLE);
   return (
     <div className="mt-3">
       <div className="flex items-baseline justify-between">
@@ -338,7 +342,7 @@ function BalancesTable({ data }: { data: SyncResult }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {visible.map((r) => (
               <tr key={r.asset} className="border-t border-zinc-800/60 text-zinc-200">
                 <td className="py-2 pr-3 font-semibold">{r.asset}</td>
                 <td className="py-2 pr-3 text-right tabular-nums text-zinc-300" title="Native quantity (exact)">
@@ -353,6 +357,19 @@ function BalancesTable({ data }: { data: SyncResult }) {
           </tbody>
         </table>
       </div>
+      {rows.length > MAX_VISIBLE && (
+        <button
+          type="button"
+          onClick={() => setShowAll((s) => !s)}
+          className="mt-2 flex w-full items-center justify-center gap-1 rounded-lg border border-zinc-800/60 px-3 py-1.5 text-xs font-medium text-zinc-500 hover:text-zinc-200"
+        >
+          {showAll ? "Show fewer" : `Show all ${rows.length} assets`}
+          <ChevronDown
+            size={13}
+            className={`transition-transform ${showAll ? "rotate-180" : ""}`}
+          />
+        </button>
+      )}
       <p className="mt-2 text-[11px] text-zinc-600">
         Quantities are native (e.g. BTC), values in USD at each asset&apos;s spot
         price at sync time.

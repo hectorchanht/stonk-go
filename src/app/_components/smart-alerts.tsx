@@ -151,6 +151,9 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
   const [dismissed, setDismissed] = useState<Record<string, number>>(loadDismissed);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  // Long volatile days can produce many alerts — collapse the tail.
+  const [showAll, setShowAll] = useState(false);
+  const MAX_VISIBLE = 4;
 
   useEffect(() => {
     try {
@@ -196,7 +199,7 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
     }
     window.dispatchEvent(new CustomEvent("holdr:open-section", { detail: "ai-chat" }));
     window.setTimeout(() => {
-      document.getElementById("ai-chat")?.scrollIntoView({ behavior: "smooth" });
+      document.getElementById("section-ai-chat")?.scrollIntoView({ behavior: "smooth" });
     }, 100);
   };
 
@@ -256,7 +259,7 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
         </div>
       ) : (
         <div className="space-y-2">
-          {alerts.map((a) => {
+          {alerts.slice(0, showAll ? alerts.length : MAX_VISIBLE).map((a) => {
             const Icon = KIND_ICON[a.kind];
             const isOpen = expanded === a.id;
             return (
@@ -323,6 +326,21 @@ export function SmartAlerts({ rows }: { rows: Row[] }) {
               </div>
             );
           })}
+          {alerts.length > MAX_VISIBLE && (
+            <button
+              type="button"
+              onClick={() => setShowAll((s) => !s)}
+              className="flex w-full items-center justify-center gap-1 rounded-xl border border-zinc-300 dark:border-zinc-700/60 px-3 py-2 text-xs font-medium text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+            >
+              {showAll
+                ? "Show fewer"
+                : `Show all ${alerts.length} alerts`}
+              <ChevronDown
+                size={13}
+                className={`transition-transform ${showAll ? "rotate-180" : ""}`}
+              />
+            </button>
+          )}
         </div>
       )}
     </div>

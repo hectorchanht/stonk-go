@@ -89,9 +89,12 @@ function loadHistory(): ChatMsg[] {
 export function AiChat({
   rows,
   totals,
+  hideTitle = false,
 }: {
   rows: Summary["rows"];
   totals: Summary["totals"];
+  /** When embedded in a Widget (which renders the title), skip the inner h2. */
+  hideTitle?: boolean;
 }) {
   const { aiLocale: globalAiLocale } = useLocale();
   const { data: txns } = api.portfolio.transactions.useQuery({ limit: 10 });
@@ -342,12 +345,14 @@ export function AiChat({
   return (
     <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 p-4 sm:p-5">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
-          <MessageCircle size={14} className="mr-1.5 inline text-zinc-600 dark:text-zinc-400" />
-          AI Chat
-          <InfoTip text="Ask anything about your portfolio — the AI sees your holdings, P/L and recent trades. Your API keys stay in this browser and are sent only with your chat requests." />
-        </h2>
-        <div className="flex items-center gap-2">
+        {!hideTitle && (
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
+            <MessageCircle size={14} className="mr-1.5 inline text-zinc-600 dark:text-zinc-400" />
+            AI Chat
+            <InfoTip text="Ask anything about your portfolio — the AI sees your holdings, P/L and recent trades. Your API keys stay in this browser and are sent only with your chat requests." />
+          </h2>
+        )}
+        <div className={`flex items-center gap-2 ${hideTitle ? "ml-auto" : ""}`}>
           {messages.length > 0 && (
             <button
               type="button"

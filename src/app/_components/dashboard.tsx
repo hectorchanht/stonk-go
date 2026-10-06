@@ -1,23 +1,35 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { signOut, useSession } from "next-auth/react";
 import {
   ArrowDown,
   ArrowUp,
+  ArrowLeftRight,
   Bell,
+  BellRing,
+  Briefcase,
+  Building2,
   Download,
+  GripVertical,
+  Landmark,
+  LayoutDashboard,
   LogIn,
   LogOut,
+  Maximize2,
   MessageCircle,
-  Moon,
   MoreHorizontal,
+  PieChart,
   Plus,
+  Receipt,
   RefreshCw,
-  Sun,
+  Rocket,
   Search,
+  SlidersHorizontal,
   Sparkles,
+  TrendingUp,
   X,
+  Zap,
 } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
@@ -30,9 +42,7 @@ import {
 } from "~/app/_components/performance";
 import { PriceAlerts } from "~/app/_components/price-alerts";
 import {
-  CollapsibleSection,
   DataTable,
-  InfoTip,
   Pagination,
   RowSkeleton,
   Spinner,
@@ -42,6 +52,14 @@ import {
   usePager,
   type DataColumn,
 } from "~/app/_components/ui";
+import {
+  ResetLayoutButton,
+  WidgetGrid,
+  WidgetSection,
+  useDashboardLayout,
+  type WidgetDef,
+} from "~/app/_components/widgets";
+import { AllocationDonut } from "~/app/_components/allocation";
 import { AiInsights } from "~/app/_components/insights";
 import { AiChat } from "~/app/_components/ai-chat";
 import { SmartAlerts } from "~/app/_components/smart-alerts";
@@ -55,7 +73,6 @@ import {
   LocalePicker,
   LocaleProvider,
 } from "~/app/_components/locale";
-import { useTheme } from "~/app/_components/theme";
 import { BackupButtons } from "~/app/_components/backup";
 import { PushToggle } from "~/app/_components/push-toggle";
 import {
@@ -99,53 +116,6 @@ const plClass = (v: number | null) =>
 
 const card =
   "rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 p-4 sm:p-5";
-
-const ALLOC_COLORS = [
-  "#4ade80",
-  "#60a5fa",
-  "#f472b6",
-  "#fbbf24",
-  "#a78bfa",
-  "#2dd4bf",
-  "#fb7185",
-  "#f97316",
-  "#94a3b8",
-  "#e879f9",
-];
-
-function Allocation({ rows }: { rows: HoldingRow[] }) {
-  const priced = rows.filter((r) => r.marketValue != null && r.marketValue > 0);
-  if (priced.length === 0) return null;
-  return (
-    <div className={card}>
-      <div className="flex h-3 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-        {priced.map((r, i) => (
-          <div
-            key={r.symbol}
-            className="h-full"
-            style={{
-              width: `${r.weightPct ?? 0}%`,
-              backgroundColor: ALLOC_COLORS[i % ALLOC_COLORS.length],
-            }}
-            title={`${r.symbol} ${pct(r.weightPct)}`}
-          />
-        ))}
-      </div>
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
-        {priced.map((r, i) => (
-          <span key={r.symbol} className="flex items-center gap-1.5 text-sm text-zinc-600 dark:text-zinc-400">
-            <span
-              className="inline-block h-2.5 w-2.5 rounded-sm"
-              style={{ backgroundColor: ALLOC_COLORS[i % ALLOC_COLORS.length] }}
-            />
-            {r.symbol}
-            <span className="text-zinc-500">{pct(r.weightPct)}</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 type HoldingSortKey = "symbol" | "marketValue" | "dayPL" | "totalPL" | "weightPct";
 
@@ -254,6 +224,21 @@ function HoldingsTable({
       ]),
     );
 
+  const deleteHolding = (r: HoldingRow) => {
+    if (
+      confirm(`Delete ${r.symbol} and ALL of its transactions? This cannot be undone.`)
+    ) {
+      del.mutate({ symbol: r.symbol });
+    }
+  };
+
+  const sourceBadge = (r: HoldingRow) =>
+    r.source === "broker" ? (
+      <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-400">
+        {r.brokerLabel ?? "IBKR"}
+      </div>
+    ) : null;
+
   if (rows.length === 0) {
     return (
       <div className={card}>
@@ -271,11 +256,7 @@ function HoldingsTable({
       render: (r) => (
         <>
           <div className="font-semibold text-zinc-900 dark:text-zinc-100">{r.symbol}</div>
-          {r.source === "broker" && (
-            <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-400">
-              {r.brokerLabel ?? "IBKR"}
-            </div>
-          )}
+          {sourceBadge(r)}
           {r.name && (
             <div className="max-w-[180px] truncate text-xs text-zinc-500">
               {r.name}
@@ -350,15 +331,7 @@ function HoldingsTable({
       render: (r) =>
         r.source === "manual" ? (
           <button
-            onClick={() => {
-              if (
-                confirm(
-                  `Delete ${r.symbol} and ALL of its transactions? This cannot be undone.`,
-                )
-              ) {
-                del.mutate({ symbol: r.symbol });
-              }
-            }}
+            onClick={() => deleteHolding(r)}
             className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 hover:text-rose-400"
             title={`Delete ${r.symbol}`}
           >
@@ -403,20 +376,96 @@ function HoldingsTable({
           <Download size={15} />
         </button>
       </div>
-      <DataTable
-        columns={columns}
-        rows={pager.rows}
-        keyOf={(r) => r.symbol}
-        minWidth="760px"
-        emptyText={query ? "No holdings match that filter." : "No positions yet."}
-        footer={
-          <Pagination
-            page={pager.page}
-            pageCount={pager.pageCount}
-            onPage={pager.setPage}
-          />
-        }
-      />
+
+      {/* Mobile: position cards instead of a wide swipe table */}
+      <div className="sm:hidden">
+        {pager.rows.map((r) => (
+          <div
+            key={r.symbol}
+            className="border-b border-zinc-200 dark:border-zinc-800/60 px-3 py-3 last:border-0"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-semibold text-zinc-900 dark:text-zinc-100">
+                  {r.symbol}
+                </div>
+                {sourceBadge(r)}
+                {r.name && (
+                  <div className="truncate text-xs text-zinc-500">{r.name}</div>
+                )}
+                <FlairBadge flair={flair?.[r.symbol]} />
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {money(r.marketValue)}
+                </div>
+                <div className="text-xs tabular-nums text-zinc-500">
+                  {pct(r.weightPct)} of portfolio
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-sm">
+              <span className="text-zinc-500">
+                Day{" "}
+                <span className={`font-medium tabular-nums ${plClass(r.dayPL)}`}>
+                  {money(r.dayPL, { sign: true })} ({pct(r.dayChangePct, { sign: true })})
+                </span>
+              </span>
+              <span className="text-zinc-500">
+                Total{" "}
+                <span className={`font-medium tabular-nums ${plClass(r.totalPL)}`}>
+                  {money(r.totalPL, { sign: true })} ({pct(r.totalPLPct, { sign: true })})
+                </span>
+              </span>
+            </div>
+            <div className="mt-1.5 flex items-center justify-between text-xs text-zinc-500">
+              <span className="tabular-nums">
+                {r.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })} @ {money(r.avgCost)}
+              </span>
+              <span className="tabular-nums">now {money(r.price)}</span>
+              {r.source === "manual" ? (
+                <button
+                  onClick={() => deleteHolding(r)}
+                  aria-label={`Delete ${r.symbol}`}
+                  className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800 hover:text-rose-400"
+                >
+                  <X size={15} />
+                </button>
+              ) : (
+                <span title="Synced from IBKR — read-only">synced</span>
+              )}
+            </div>
+          </div>
+        ))}
+        {pager.rows.length === 0 && (
+          <p className="px-3 py-4 text-sm text-zinc-500">
+            {query ? "No holdings match that filter." : "No positions yet."}
+          </p>
+        )}
+        <Pagination
+          page={pager.page}
+          pageCount={pager.pageCount}
+          onPage={pager.setPage}
+        />
+      </div>
+
+      {/* Desktop: full sortable table */}
+      <div className="hidden sm:block">
+        <DataTable
+          columns={columns}
+          rows={pager.rows}
+          keyOf={(r) => r.symbol}
+          minWidth="760px"
+          emptyText={query ? "No holdings match that filter." : "No positions yet."}
+          footer={
+            <Pagination
+              page={pager.page}
+              pageCount={pager.pageCount}
+              onPage={pager.setPage}
+            />
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -537,11 +586,12 @@ function TransactionForm() {
             <button
               type="button"
               title={quoteQuery.data?.price != null ? `Live: $${quoteQuery.data.price.toFixed(2)}` : "Fetch live price"}
+              aria-label="Fetch live price"
               onClick={() => quoteQuery.refetch()}
               disabled={!symbol.trim() || quoteQuery.isFetching}
-              className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-2.5 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700 disabled:opacity-40"
+              className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-2.5 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700 disabled:opacity-40"
             >
-              {quoteQuery.isFetching ? "…" : "⚡"}
+              {quoteQuery.isFetching ? <Spinner size={14} /> : <Zap size={15} />}
             </button>
           </div>
           {quoteQuery.data?.price != null && (
@@ -811,47 +861,9 @@ function TransactionList() {
   );
 }
 
-function AuthButtons() {
+/** Mobile overflow menu: global settings live here on all screens. */
+function HeaderMenu() {
   const { data: session, status } = useSession();
-  if (status === "loading") return null;
-  if (status === "authenticated") {
-    return (
-      <div className="flex items-center gap-2">
-        <span
-          className="hidden max-w-[160px] truncate text-sm text-zinc-600 dark:text-zinc-400 sm:inline"
-          title={session.user?.email ?? ""}
-        >
-          {session.user?.email}
-        </span>
-        <button
-          onClick={() => signOut({ callbackUrl: "/" })}
-          className="whitespace-nowrap rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
-        >
-          Sign out
-        </button>
-      </div>
-    );
-  }
-  return (
-    <a
-      href="/login"
-      className="whitespace-nowrap rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
-    >
-      Sign in
-    </a>
-  );
-}
-
-/** Mobile overflow menu: refresh + sign in/out live here on small screens. */
-function HeaderMenu({
-  onRefresh,
-  isFetching,
-}: {
-  onRefresh: () => void;
-  isFetching: boolean;
-}) {
-  const { data: session, status } = useSession();
-  const { theme, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
   if (status === "loading") return null;
   const itemCls =
@@ -861,8 +873,8 @@ function HeaderMenu({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        aria-label="Menu"
-        title="Menu"
+        aria-label="Settings menu"
+        title="Settings"
         className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 px-2.5 py-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
       >
         <MoreHorizontal size={18} />
@@ -874,26 +886,11 @@ function HeaderMenu({
             onClick={() => setOpen(false)}
           />
           <div className="absolute right-0 z-50 mt-1 w-60 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 py-1 shadow-xl">
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onRefresh();
-              }}
-              disabled={isFetching}
-              className={`${itemCls} disabled:opacity-40`}
-            >
-              <RefreshCw
-                size={15}
-                className={isFetching ? "animate-spin" : ""}
-              />
-              Refresh prices
-            </button>
-            <div className="border-t border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
+            <div className="border-b border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
               <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Currency</div>
               <CurrencyPicker />
             </div>
-            <div className="border-t border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
+            <div className="border-b border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
               <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Language</div>
               <div className="flex items-center gap-2">
                 <LocalePicker />
@@ -904,26 +901,15 @@ function HeaderMenu({
                 <span className="text-xs text-zinc-600">AI</span>
               </div>
             </div>
-            <div className="border-t border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
-              <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Theme</div>
-              <button
-                type="button"
-                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-zinc-800 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-              >
-                {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-                {theme === "dark" ? "Light mode" : "Dark mode"}
-              </button>
-            </div>
-            <div className="border-t border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
+            <div className="border-b border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
               <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Notifications</div>
               <PushToggle />
             </div>
-            <div className="border-t border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
+            <div className="border-b border-zinc-300 dark:border-zinc-700/60 px-4 py-2.5">
               <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Backup</div>
               <BackupButtons />
             </div>
-            <div className="border-t border-zinc-300 dark:border-zinc-700/60">
+            <div>
               {session ? (
                 <button
                   type="button"
@@ -954,6 +940,111 @@ function HeaderMenu({
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Widget registry: every dashboard section is a placeable widget.     */
+/* ------------------------------------------------------------------ */
+
+const WIDGET_DEFS: WidgetDef[] = [
+  { id: "overview", title: "Portfolio overview", icon: LayoutDashboard, defaultSpan: "full" },
+  {
+    id: "performance",
+    title: "Performance",
+    icon: TrendingUp,
+    defaultSpan: "full",
+    info: "Your portfolio's equity curve, built from a snapshot recorded each day you open the app, plus the true annualized return (XIRR) from your full trade log.",
+  },
+  {
+    id: "allocation",
+    title: "Allocation",
+    icon: PieChart,
+    defaultSpan: "half",
+    info: "How your money is split across positions, by market value.",
+  },
+  {
+    id: "alerts",
+    title: "Smart Alerts",
+    icon: Bell,
+    defaultSpan: "half",
+    info: "Auto-scans your portfolio on every price refresh: big daily movers, concentration risk, deep losers, missing prices or cost basis. Dismissed alerts resurface after 24h.",
+  },
+  {
+    id: "holdings",
+    title: "Holdings",
+    icon: Briefcase,
+    defaultSpan: "full",
+    info: "Every position at live prices. 💎🙌 / 🧻 badges are judged from your trade history — hover a badge for the verdict.",
+  },
+  {
+    id: "insights",
+    title: "AI Insights",
+    icon: Sparkles,
+    defaultSpan: "half",
+    defaultOpen: false,
+    info: "Cloudflare Workers AI reads your portfolio and writes a plain-English brief: concentration, winners, losers, and one suggestion. Cached for 24h per snapshot.",
+  },
+  {
+    id: "ai-chat",
+    title: "AI Chat",
+    icon: MessageCircle,
+    defaultSpan: "half",
+    defaultOpen: false,
+    info: "Ask anything about your portfolio in plain language. Pick a provider (Cloudflare is free, or bring your own OpenAI/Anthropic key) and toggle skills to shape the AI's personality.",
+  },
+  {
+    id: "wsb",
+    title: "WSB mode",
+    icon: Rocket,
+    defaultSpan: "half",
+    info: "Degenerate analytics. Hover each ⓘ for the lore.",
+  },
+  {
+    id: "price-alerts",
+    title: "Price alerts",
+    icon: BellRing,
+    defaultSpan: "half",
+    info: "Set a target price per symbol — a scheduled check emails you when it hits. One-shot: a triggered alert deactivates itself. Requires sign-in.",
+  },
+  {
+    id: "ibkr",
+    title: "Interactive Brokers",
+    icon: Landmark,
+    defaultSpan: "half",
+    info: "Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour.",
+  },
+  {
+    id: "questrade",
+    title: "Questrade",
+    icon: Building2,
+    defaultSpan: "half",
+    info: "Read-only sync from Questrade via their official API. Positions stay grouped by currency and are never summed across currencies.",
+  },
+  {
+    id: "exchanges",
+    title: "Crypto exchanges",
+    icon: ArrowLeftRight,
+    defaultSpan: "half",
+    info: "Read-only balances from Coinbase and Binance. Keys are encrypted on the server and only ever used to read balances — use read-only API keys.",
+  },
+  {
+    id: "log-txn",
+    title: "Log transaction",
+    icon: Plus,
+    defaultSpan: "full",
+    defaultOpen: false,
+    info: "Record a buy or sell. Holdings, cost basis and flair are all recomputed from this log.",
+  },
+  {
+    id: "txns",
+    title: "Transactions",
+    icon: Receipt,
+    defaultSpan: "full",
+    defaultOpen: false,
+    info: "Your full trade history, newest first. Deleting one recomputes the holding.",
+  },
+];
+
+const DEFS_BY_ID = new Map(WIDGET_DEFS.map((d) => [d.id, d]));
+
 export function Dashboard() {
   return (
     <CurrencyProvider>
@@ -966,8 +1057,6 @@ export function Dashboard() {
 
 function DashboardInner() {
   const money = useMoney();
-  // Log-transaction form stays hidden until the floating + button is tapped.
-  const [txnOpen, setTxnOpen] = useState(false);
   // IBKR snapshot reported up by the BrokerCard (lives in this browser only).
   const [brokerPositions, setBrokerPositions] = useState<BrokerPositionInput[]>([]);
   // Exchange balances reported up by the ExchangeCards.
@@ -1010,6 +1099,31 @@ function DashboardInner() {
     { enabled: manualSymbols.length > 0 },
   );
 
+  const layout = useDashboardLayout(WIDGET_DEFS);
+
+  // Deep-link support: `holdr:open-section` (e.g. SmartAlerts "Ask AI")
+  // opens the widget and scrolls it into view.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (typeof id !== "string" || !DEFS_BY_ID.has(id)) return;
+      layout.openSection(id);
+      const t0 = Date.now();
+      const tryScroll = () => {
+        const el = document.getElementById(`section-${id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        } else if (Date.now() - t0 < 2000) {
+          requestAnimationFrame(tryScroll);
+        }
+      };
+      requestAnimationFrame(tryScroll);
+    };
+    window.addEventListener("holdr:open-section", handler);
+    return () => window.removeEventListener("holdr:open-section", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const t = data?.totals;
   const missingBasisNote =
     t && t.brokerMissingBasis > 0
@@ -1026,48 +1140,35 @@ function DashboardInner() {
           ? "neg"
           : "neutral";
 
-  return (
-    <div className="mx-auto w-full max-w-5xl space-y-4 px-4 py-6 sm:px-6">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2.5">
-          <img
-            src="/logo.webp"
-            alt="Holdr logo"
-            width={36}
-            height={36}
-            className="h-9 w-9 shrink-0 rounded-xl sm:h-10 sm:w-10"
-          />
-          <div className="min-w-0">
-            <h1 className="truncate text-xl font-extrabold tracking-tight sm:text-3xl">
-              Holdr
-            </h1>
-            <p className="hidden whitespace-nowrap text-sm text-zinc-500 min-[380px]:block">
-              we are diamond holdrs 💎🙌
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <HeaderMenu onRefresh={() => refetch()} isFetching={isFetching} />
-        </div>
-      </header>
+  const openLogTxn = useCallback(() => {
+    layout.openSection("log-txn");
+    const t0 = Date.now();
+    const tryScroll = () => {
+      const el = document.getElementById("section-log-txn");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        window.setTimeout(() => {
+          document.getElementById("txn-symbol")?.focus({ preventScroll: true });
+        }, 450);
+      } else if (Date.now() - t0 < 2000) {
+        requestAnimationFrame(tryScroll);
+      }
+    };
+    requestAnimationFrame(tryScroll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-      {isLoading ? (
-        <div className="space-y-4">
-          <StatCardSkeleton />
-          <div className={card}>
-            <RowSkeleton rows={5} />
-          </div>
-        </div>
-      ) : isError || !data ? (
-        <div className={card}>
-          <p className="text-rose-400">
-            Couldn&apos;t load the portfolio. Is the database set up? (see README)
-          </p>
-        </div>
-      ) : (
-        <>
-          <CollapsibleSection id="overview" title="Portfolio overview">
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+  const renderItem = useCallback(
+    (id: string): ReactNode => {
+      const def = DEFS_BY_ID.get(id);
+      if (!def || !data) return null;
+      const collapsed = layout.collapsed[id] ?? def.defaultOpen === false;
+      const span = layout.spans[id] ?? def.defaultSpan ?? "full";
+      let body: ReactNode = null;
+      switch (id) {
+        case "overview":
+          body = (
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
               <StatCard
                 label="Portfolio value"
                 value={money(t!.marketValue)}
@@ -1099,165 +1200,181 @@ function DashboardInner() {
                 sub={`capital invested${missingBasisNote}`}
               />
             </div>
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="performance"
-            title="Performance"
-            info="Your portfolio's equity curve, built from a snapshot recorded each day you open the app, plus the true annualized return (XIRR) from your full trade log."
-          >
-            <PerformanceSection brokerPositions={brokerInput} />
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="alerts"
-            title={<span className="inline-flex items-center gap-1.5"><Bell size={14} className="text-amber-400" /> Smart Alerts</span>}
-            info="Auto-scans your portfolio on every price refresh: big daily movers, concentration risk, deep losers, missing prices or cost basis. Dismissed alerts resurface after 24h."
-          >
-            <SmartAlerts rows={data.rows} />
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="insights"
-            title={<span className="inline-flex items-center gap-1.5"><Sparkles size={14} className="text-violet-400" /> AI Insights</span>}
-            info="Cloudflare Workers AI reads your portfolio and writes a plain-English brief: concentration, winners, losers, and one suggestion. Cached for 24h per snapshot."
-          >
-            <AiInsights rows={data.rows} totals={t!} />
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="ai-chat"
-            title={<span className="inline-flex items-center gap-1.5"><MessageCircle size={14} className="text-sky-400" /> AI Chat</span>}
-            info="Ask anything about your portfolio in plain language. Pick a provider (Cloudflare is free, or bring your own OpenAI/Anthropic key) and toggle skills to shape the AI's personality."
-            defaultOpen={false}
-          >
-            <AiChat rows={data.rows} totals={t!} />
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="allocation"
-            title="Allocation"
-            info="How your money is split across positions, by market value."
-          >
-            <Allocation rows={data.rows} />
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="wsb"
-            title="🚀 WSB mode"
-            info="Degenerate analytics. Hover each ⓘ for the lore."
-          >
+          );
+          break;
+        case "performance":
+          body = <PerformanceSection brokerPositions={brokerInput} />;
+          break;
+        case "allocation":
+          body = <AllocationDonut rows={data.rows} />;
+          break;
+        case "alerts":
+          body = <SmartAlerts rows={data.rows} />;
+          break;
+        case "holdings":
+          body = <HoldingsTable rows={data.rows} flair={flair} />;
+          break;
+        case "insights":
+          body = <AiInsights rows={data.rows} totals={t!} />;
+          break;
+        case "ai-chat":
+          body = <AiChat rows={data.rows} totals={t!} hideTitle />;
+          break;
+        case "wsb":
+          body = (
             <div className="space-y-4">
               <YoloMeter rows={data.rows} />
               <GainLossPorn rows={data.rows} />
             </div>
-          </CollapsibleSection>
+          );
+          break;
+        case "price-alerts":
+          body = <PriceAlerts />;
+          break;
+        case "ibkr":
+          body = <BrokerCard onPositions={setBrokerPositions} />;
+          break;
+        case "questrade":
+          body = <QuestradeCard />;
+          break;
+        case "exchanges":
+          body = <ExchangeCards onPositions={setExchangePositions} />;
+          break;
+        case "log-txn":
+          body = <TransactionForm />;
+          break;
+        case "txns":
+          body = <TransactionList />;
+          break;
+      }
+      return (
+        <WidgetSection
+          id={id}
+          def={def}
+          span={span}
+          collapsed={collapsed}
+          layout={layout}
+        >
+          {body}
+        </WidgetSection>
+      );
+    },
+    [data, t, flair, brokerInput, layout, money, dayTone, totalTone, missingBasisNote],
+  );
 
-          <CollapsibleSection
-            id="holdings"
-            title="Holdings"
-            info="Every position at live prices. 💎🙌 / 🧻 badges are judged from your trade history — hover a badge for the verdict."
+  const headerBtn =
+    "rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700";
+
+  return (
+    <div className="mx-auto w-full max-w-5xl space-y-4 px-4 py-6 sm:px-6">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <img
+            src="/logo.webp"
+            alt="Holdr logo"
+            width={36}
+            height={36}
+            className="h-9 w-9 shrink-0 rounded-xl sm:h-10 sm:w-10"
+          />
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-extrabold tracking-tight sm:text-3xl">
+              Holdr
+            </h1>
+            <p className="hidden whitespace-nowrap text-sm text-zinc-500 min-[380px]:block">
+              we are diamond holdrs 💎🙌
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            aria-label="Refresh prices"
+            title="Refresh prices"
+            className={`${headerBtn} disabled:opacity-40`}
           >
-            <HoldingsTable rows={data.rows} flair={flair} />
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="ibkr"
-            title="Interactive Brokers"
-            info="Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour. Synced trades merge into your transaction log (marked IBKR) so holdings and cost basis stay in one place — your manual entries are never touched. Stock splits are auto-adjusted against IBKR's positions. IBKR publishes end-of-day reports, so today's trades appear after the next report; there is no live push."
+            <RefreshCw size={18} className={isFetching ? "animate-spin" : ""} />
+          </button>
+          <button
+            type="button"
+            onClick={() => layout.setEditMode((m) => !m)}
+            aria-label={layout.editMode ? "Done customizing" : "Customize layout"}
+            title={layout.editMode ? "Done customizing" : "Customize layout"}
+            className={`${headerBtn} ${
+              layout.editMode
+                ? "border-emerald-600 text-emerald-400"
+                : ""
+            }`}
           >
-            <BrokerCard onPositions={setBrokerPositions} />
-          </CollapsibleSection>
+            <SlidersHorizontal size={18} />
+          </button>
+          <HeaderMenu />
+        </div>
+      </header>
 
-          <CollapsibleSection
-            id="questrade"
-            title="Questrade"
-            info="Read-only sync from Questrade via their official API. Paste a manual authorization token once — it rotates automatically on every sync. Positions stay grouped by currency and are never summed across currencies; trade analysis converts to USD with public FX rates. Questrade positions are shown here only (not merged into Holdings) until the portfolio summary converts currencies explicitly."
+      {layout.editMode && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 px-3 py-2">
+          <span className="flex items-center gap-1.5 text-sm text-zinc-500">
+            <GripVertical size={15} />
+            Drag to rearrange
+          </span>
+          <span className="flex items-center gap-1.5 text-sm text-zinc-500">
+            <Maximize2 size={15} />
+            Toggle full / half width
+          </span>
+          <div className="flex-1" />
+          <ResetLayoutButton layout={layout} />
+          <button
+            type="button"
+            onClick={() => layout.setEditMode(false)}
+            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500"
           >
-            <QuestradeCard />
-          </CollapsibleSection>
+            Done
+          </button>
+        </div>
+      )}
 
-          <CollapsibleSection
-            id="exchanges"
-            title="Crypto exchanges"
-            info="Read-only balances from Coinbase and Binance. Keys are encrypted on the server and only ever used to read balances — use read-only API keys. Values are in USD at each asset's spot price at sync time."
-          >
-            <div className="space-y-4">
-              <ExchangeCards onPositions={setExchangePositions} />
-            </div>
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            id="price-alerts"
-            title="Price alerts"
-            info="Set a target price per symbol — a scheduled check emails you when it hits. One-shot: a triggered alert deactivates itself. Requires sign-in."
-          >
-            <PriceAlerts />
-          </CollapsibleSection>
-
-          {txnOpen && (
-            <section id="section-log-txn" className="scroll-mt-4">
-              <div className="flex items-center justify-between py-1">
-                <span className="text-sm font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-                  Log transaction
-                  <InfoTip text="Record a buy or sell. Holdings, cost basis and flair are all recomputed from this log." />
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setTxnOpen(false)}
-                  aria-label="Close log transaction"
-                  className="rounded-lg px-2 py-1 text-zinc-500 hover:text-zinc-800 dark:text-zinc-200"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="mt-2">
-                <TransactionForm />
-              </div>
-            </section>
-          )}
-
-          <CollapsibleSection
-            id="txns"
-            title="Transactions"
-            info="Your full trade history, newest first. Deleting one recomputes the holding."
-            defaultOpen={false}
-          >
-            <div className="mb-3 flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setTxnOpen(true);
-                  const t0 = Date.now();
-                  const tryScroll = () => {
-                    const el = document.getElementById("section-log-txn");
-                    if (el) {
-                      el.scrollIntoView({ behavior: "smooth", block: "start" });
-                      window.setTimeout(() => {
-                        document
-                          .getElementById("txn-symbol")
-                          ?.focus({ preventScroll: true });
-                      }, 450);
-                    } else if (Date.now() - t0 < 2000) {
-                      requestAnimationFrame(tryScroll);
-                    }
-                  };
-                  requestAnimationFrame(tryScroll);
-                }}
-                className="flex items-center gap-1.5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200/60 dark:bg-zinc-800/60 px-3 py-1.5 text-sm font-medium text-zinc-800 dark:text-zinc-200 transition hover:bg-zinc-700 active:scale-95"
-              >
-                <Plus size={16} />
-                Log transaction
-              </button>
-            </div>
-            <TransactionList />
-          </CollapsibleSection>
-
+      {isLoading ? (
+        <div className="space-y-4">
+          <StatCardSkeleton />
+          <div className={card}>
+            <RowSkeleton rows={5} />
+          </div>
+        </div>
+      ) : isError || !data ? (
+        <div className={card}>
+          <p className="text-rose-400">
+            Couldn&apos;t load the portfolio. Is the database set up? (see README)
+          </p>
+        </div>
+      ) : (
+        <>
+          <WidgetGrid
+            order={layout.order}
+            spans={layout.spans}
+            layout={layout}
+            renderItem={renderItem}
+            labelOf={(id) => DEFS_BY_ID.get(id)?.title ?? id}
+          />
           <footer className="pt-2 text-center text-xs text-zinc-600">
             Prices: Finnhub realtime when configured, else Yahoo (~15min
             delayed, Stooq fallback) · cached 60s · not financial advice
           </footer>
         </>
+      )}
+
+      {/* Floating action: log a transaction */}
+      {!isLoading && !isError && data && (
+        <button
+          type="button"
+          onClick={openLogTxn}
+          aria-label="Log transaction"
+          title="Log transaction"
+          className="fixed bottom-5 right-5 z-40 rounded-full bg-emerald-600 p-4 text-white shadow-2xl transition hover:bg-emerald-500 active:scale-95"
+        >
+          <Plus size={22} />
+        </button>
       )}
     </div>
   );
