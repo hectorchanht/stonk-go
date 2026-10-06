@@ -20,10 +20,7 @@ import {
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { useCurrency } from "~/app/_components/currency";
-import {
-  signedRequestPayload,
-  syncBinanceViaWs,
-} from "~/app/_components/binance-ws";
+import { syncBinanceViaWs } from "~/app/_components/binance-ws";
 import {
   Code,
   SetupGuide,
@@ -482,18 +479,13 @@ function ExchangeCard({
     };
     setBrowserBusy(true);
     try {
-      const timestamp = Date.now();
-      let signature: string;
-      try {
-        signature = await binanceBrowserSignature(
-          secret,
-          signedRequestPayload({ apiKey: key, timestamp }),
-        );
-      } catch {
-        fail("Couldn't sign the request in this browser (WebCrypto unavailable).");
-        return;
-      }
-      const result = await syncBinanceViaWs({ apiKey: key, signature, timestamp });
+      // Signing happens inside syncBinanceViaWs AFTER it fetches Binance's
+      // server time over the socket — signing with the server timestamp
+      // kills -1021 "outside of recvWindow" errors from phone clock skew.
+      const result = await syncBinanceViaWs({
+        apiKey: key,
+        sign: (payload) => binanceBrowserSignature(secret, payload),
+      });
       if (!result.ok) {
         fail(result.error);
         return;
