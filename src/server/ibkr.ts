@@ -195,9 +195,21 @@ function parseResponseMeta(xml: string): FlexResponseMeta {
   };
 }
 
+const FLEX_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+
+async function flexFetch(url: string): Promise<Response> {
+  return fetch(url, {
+    headers: {
+      "User-Agent": FLEX_UA,
+      Accept: "text/xml,application/xml,*/*",
+    },
+  });
+}
+
 async function sendRequest(token: string, queryId: string): Promise<string> {
   const url = `${FLEX_BASE}/SendRequest?t=${encodeURIComponent(token)}&q=${encodeURIComponent(queryId)}&v=3`;
-  const res = await fetch(url);
+  const res = await flexFetch(url);
   if (!res.ok) throw new FlexError(`IBKR SendRequest HTTP ${res.status}`);
   const meta = parseResponseMeta(await res.text());
   if (meta.status === "Success" && meta.referenceCode) return meta.referenceCode;
@@ -206,7 +218,7 @@ async function sendRequest(token: string, queryId: string): Promise<string> {
 
 async function getStatement(token: string, referenceCode: string): Promise<string> {
   const url = `${FLEX_BASE}/GetStatement?t=${encodeURIComponent(token)}&q=${encodeURIComponent(referenceCode)}&v=3`;
-  const res = await fetch(url);
+  const res = await flexFetch(url);
   if (!res.ok) throw new FlexError(`IBKR GetStatement HTTP ${res.status}`);
   return await res.text();
 }
