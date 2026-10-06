@@ -87,6 +87,8 @@ const ERROR_HINTS: Record<string, string> = {
   "1015": "Token expired — generate a new one in Client Portal (Settings > Reporting > Flex Web Service).",
   "1018": "Rate limited by IBKR — wait a minute and retry.",
   "1020": "Malformed request — report this as a bug.",
+  "1025":
+    "Too many failed attempts — IBKR temporarily blocked this token. Check the token (Client Portal > Settings > Reporting > Flex Web Service) and Query ID (Reports > Flex Queries), save fresh credentials, then wait ~1h before re-syncing.",
 };
 
 function flexErrorMessage(code: string, detail: string): string {
