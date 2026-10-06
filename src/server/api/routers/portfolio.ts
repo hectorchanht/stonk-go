@@ -381,11 +381,11 @@ export const portfolioRouter = createTRPCRouter({
       }),
     )
     .query(async ({ input }) => {
-      // Defense in depth: the client sends the top 30, but never let a
-      // huge position list blow up the prompt — keep the top 30 by value.
+      // Defense in depth: cap the prompt at the top 200 positions by
+      // value (zod already enforces .max(200) on the input).
       const positions = [...input.positions]
         .sort((a, b) => b.marketValue - a.marketValue)
-        .slice(0, 30);
+        .slice(0, 200);
       const result = await generateInsights({ ...input, positions });
       return { ...result, generatedAt: new Date().toISOString() };
     }),
