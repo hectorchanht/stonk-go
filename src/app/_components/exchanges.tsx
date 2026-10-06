@@ -21,6 +21,10 @@ import {
 import { api, type RouterOutputs } from "~/trpc/react";
 import { useCurrency } from "~/app/_components/currency";
 import {
+  signedRequestPayload,
+  syncBinanceViaWs,
+} from "~/app/_components/binance-ws";
+import {
   Code,
   SetupGuide,
   type GuideStep,
@@ -458,6 +462,11 @@ function ExchangeCard({
    * Binance connects from the USER'S BROWSER, not our server: Binance's CDN
    * geo-blocks / WAF-blocks api.binance.com from Cloudflare Workers egress
    * IPs (HTTP 403 before the key is checked), while a residential IP works.
+   * Signed REST is also dead from browsers: the custom X-MBX-APIKEY header
+   * needs a CORS preflight that Binance doesn't answer. So we use the
+   * Binance WebSocket API instead (no preflight; auth travels in JSON
+   * params). session.logon is Ed25519-only, so the user's HMAC key uses
+   * per-request signing on account.status — same HMAC-SHA256 as REST.
    * The secret is used here for HMAC signing and never leaves this device —
    * only the fetched balances + public tickers are posted to the server for
    * valuation and storage.
@@ -473,59 +482,23 @@ function ExchangeCard({
     };
     setBrowserBusy(true);
     try {
-      const timestamp = Date.now().toString();
-      const qs = `timestamp=${timestamp}&recvWindow=5000`;
+      const timestamp = Date.now();
       let signature: string;
       try {
-        signature = await binanceBrowserSignature(secret, qs);
+        signature = await binanceBrowserSignature(
+          secret,
+          signedRequestPayload({ apiKey: key, timestamp }),
+        );
       } catch {
         fail("Couldn't sign the request in this browser (WebCrypto unavailable).");
         return;
       }
-      let accountRes: Response;
-      let tickersRes: Response;
-      try {
-        [accountRes, tickersRes] = await Promise.all([
-          fetch(
-            `https://api.binance.com/api/v3/account?${qs}&signature=${signature}`,
-            { headers: { "X-MBX-APIKEY": key } },
-          ),
-          fetch("https://api.binance.com/api/v3/ticker/price"),
-        ]);
-      } catch (e) {
-        fail(
-          e instanceof TypeError
-            ? "Couldn't reach Binance directly from this browser. Check your connection — some networks block api.binance.com."
-            : "Couldn't reach Binance directly from this browser.",
-        );
+      const result = await syncBinanceViaWs({ apiKey: key, signature, timestamp });
+      if (!result.ok) {
+        fail(result.error);
         return;
       }
-      if (!accountRes.ok) {
-        let msg = `Binance request failed (HTTP ${accountRes.status}).`;
-        try {
-          const body = (await accountRes.json()) as {
-            msg?: unknown;
-            code?: unknown;
-          };
-          if (typeof body?.msg === "string" && body.msg) {
-            msg = `Binance: ${body.msg.slice(0, 200)}`;
-          }
-        } catch {
-          /* ignore parse errors */
-        }
-        fail(msg);
-        return;
-      }
-      let accountJson: unknown;
-      let tickersJson: unknown;
-      try {
-        accountJson = await accountRes.json();
-        tickersJson = tickersRes.ok ? await tickersRes.json() : [];
-      } catch {
-        fail("Couldn't parse Binance's response.");
-        return;
-      }
-      submitBinanceDirect(accountJson, tickersJson, key, secret);
+      submitBinanceDirect(result.accountJson, result.tickersJson, key, secret);
     } finally {
       setBrowserBusy(false);
     }
