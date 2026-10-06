@@ -38,6 +38,8 @@ import { api, type RouterOutputs } from "~/trpc/react";
 import { BrokerCard } from "~/app/_components/broker";
 import { QuestradeCard } from "~/app/_components/questrade";
 import { FutuCard } from "~/app/_components/futu";
+import { LongbridgeCard } from "~/app/_components/longbridge";
+import { WebullCard } from "~/app/_components/webull";
 import { ExchangeCards, type ExchangePositionLike } from "~/app/_components/exchanges";
 import {
   PerformanceSection,
@@ -1663,13 +1665,13 @@ function HeaderMenu() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Stock brokers: IBKR + Questrade + Futu grouped in one widget with tabs.     */
-/* Both cards stay mounted (inactive one hidden) so IBKR's auto-sync   */
+/* Stock brokers: IBKR + Questrade + Futu + Longbridge + Webull in one   */
+/* widget with tabs. Cards stay mounted (inactive hidden) so auto-sync  */
 /* and position reporting keep working whichever tab is showing.       */
 /* ------------------------------------------------------------------ */
 
 const BROKER_TAB_KEY = "holdr.brokers.selected";
-type BrokerTab = "ibkr" | "questrade" | "futu";
+type BrokerTab = "ibkr" | "questrade" | "futu" | "longbridge" | "webull";
 
 function StockBrokers({
   onPositions,
@@ -1683,7 +1685,12 @@ function StockBrokers({
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(BROKER_TAB_KEY);
-      if (saved === "questrade" || saved === "futu") {
+      if (
+        saved === "questrade" ||
+        saved === "futu" ||
+        saved === "longbridge" ||
+        saved === "webull"
+      ) {
         setTab(saved as BrokerTab);
       }
     } catch {
@@ -1705,6 +1712,8 @@ function StockBrokers({
     { id: "ibkr", label: "Interactive Brokers" },
     { id: "questrade", label: "Questrade" },
     { id: "futu", label: "Futu 富途" },
+    { id: "longbridge", label: "Longbridge 長橋" },
+    { id: "webull", label: "Webull" },
   ];
 
   return (
@@ -1739,6 +1748,12 @@ function StockBrokers({
       </div>
       <div className={tab === "futu" ? "" : "hidden"}>
         <FutuCard />
+      </div>
+      <div className={tab === "longbridge" ? "" : "hidden"}>
+        <LongbridgeCard />
+      </div>
+      <div className={tab === "webull" ? "" : "hidden"}>
+        <WebullCard />
       </div>
     </div>
   );

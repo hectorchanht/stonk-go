@@ -12,7 +12,7 @@
  * Run: npx vitest run src/server/exchanges.test.ts
  * (requires vitest as a devDependency: npm i -D vitest)
  */
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -23,12 +23,16 @@ import {
   decimalToString,
   fetchBinancePrice,
   fetchCoinbasePrice,
+  fetchKrakenPrice,
   formatCents,
   isUsdPegged,
+  krakenSignature,
+  mapKrakenAsset,
   mulDecimal,
   parseBinanceAccount,
   parseCoinbaseAccounts,
   parseDecimal,
+  parseKrakenBalance,
   roundToCents,
   validateBinanceDirectPayload,
   valuate,
@@ -468,5 +472,113 @@ describe("validateBinanceDirectPayload (untrusted browser input)", () => {
     );
     expect(out.balances).toHaveLength(1);
     expect(out.balances[0]?.quantity).toBe("0.3");
+  });
+});
+
+/* ---------------- Kraken ---------------- */
+
+describe("mapKrakenAsset", () => {
+  it("strips X/Z prefixes and canonicalizes XBT to BTC", () => {
+    expect(mapKrakenAsset("XXBT")).toBe("BTC");
+    expect(mapKrakenAsset("XETH")).toBe("ETH");
+    expect(mapKrakenAsset("ZUSD")).toBe("USD");
+    expect(mapKrakenAsset("ZEUR")).toBe("EUR");
+  });
+  it("leaves unprefixed assets alone and strips staking suffixes", () => {
+    expect(mapKrakenAsset("SOL")).toBe("SOL");
+    expect(mapKrakenAsset("DOT")).toBe("DOT");
+    expect(mapKrakenAsset("XTZ.S")).toBe("XTZ");
+    expect(mapKrakenAsset("ETH2.S")).toBe("ETH2");
+  });
+});
+
+describe("parseKrakenBalance", () => {
+  it("maps codes, drops zeros, throws on API errors", () => {
+    const out = parseKrakenBalance({
+      error: [],
+      result: {
+        XXBT: "0.0500000000",
+        XETH: "2.5",
+        ZUSD: "1000.00",
+        "XTZ.S": "10",
+        XXRP: "0.00000000",
+      },
+    });
+    expect(out).toEqual([
+      { asset: "BTC", quantity: "0.0500000000" },
+      { asset: "ETH", quantity: "2.5" },
+      { asset: "USD", quantity: "1000.00" },
+      { asset: "XTZ", quantity: "10" },
+    ]);
+  });
+
+  it("throws ExchangeError when Kraken reports an error", () => {
+    expect(() => parseKrakenBalance({ error: ["EAPI:Invalid key"], result: {} })).toThrow(
+      /Kraken error: EAPI:Invalid key/,
+    );
+  });
+});
+
+describe("krakenSignature", () => {
+  it("matches Node's crypto (independent implementation)", async () => {
+    const secretB64 = Buffer.from("kraken-test-secret-1234567890ab").toString("base64");
+    const urlPath = "/0/private/Balance";
+    const nonce = "1720000000000";
+    const postData = `nonce=${nonce}`;
+    const got = await krakenSignature(secretB64, urlPath, nonce, postData);
+    // Independent implementation via Node's crypto: SHA256(nonce+postData),
+    // prepended with the URL path, HMAC-SHA512 with the decoded secret.
+    const sha256 = createHash("sha256").update(nonce + postData).digest();
+    const expected = createHmac("sha512", Buffer.from(secretB64, "base64"))
+      .update(Buffer.concat([Buffer.from(urlPath), sha256]))
+      .digest("base64");
+    expect(got).toBe(expected);
+  });
+
+  it("rejects non-base64 secrets", async () => {
+    await expect(
+      krakenSignature("!!!not-base64!!!", "/0/private/Balance", "1", "nonce=1"),
+    ).rejects.toThrow(/not valid base64/);
+  });
+});
+
+describe("fetchKrakenPrice", () => {
+  const okJson = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+
+  it("prices BTC via the XBTUSD ticker (Kraken's alt name)", async () => {
+    const fetcher = (async (url: string | URL | Request) => {
+      expect(String(url)).toBe("https://api.kraken.com/0/public/Ticker?pair=XBTUSD");
+      return okJson({ error: [], result: { XXBTZUSD: { c: ["67000.12", "0.01"] } } });
+    }) as typeof fetch;
+    const p = await fetchKrakenPrice("BTC", fetcher);
+    expect(p).toEqual({ price: "67000.12", source: "kraken:ticker:XBTUSD" });
+  });
+
+  it("falls back to the USDT pair when USD is missing", async () => {
+    const fetcher = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("pair=SOLUSD")) return okJson({ error: ["EQuery:Unknown asset pair"], result: {} });
+      expect(u).toBe("https://api.kraken.com/0/public/Ticker?pair=SOLUSDT");
+      return okJson({ error: [], result: { SOLUSDT: { c: ["150.5", "2"] } } });
+    }) as typeof fetch;
+    const p = await fetchKrakenPrice("SOL", fetcher);
+    expect(p).toEqual({ price: "150.5", source: "kraken:ticker:SOLUSDT" });
+  });
+
+  it("returns null when no pair exists", async () => {
+    const fetcher = (async () =>
+      okJson({ error: ["EQuery:Unknown asset pair"], result: {} })) as typeof fetch;
+    expect(await fetchKrakenPrice("NOPE", fetcher)).toBeNull();
+  });
+
+  it("pegs USD and stablecoins at 1 without a lookup", async () => {
+    let called = 0;
+    const fetcher = (async () => {
+      called++;
+      return okJson({});
+    }) as typeof fetch;
+    expect(await fetchKrakenPrice("USD", fetcher)).toEqual({ price: "1", source: "peg:1" });
+    expect(await fetchKrakenPrice("USDT", fetcher)).toEqual({ price: "1", source: "peg:1" });
+    expect(called).toBe(0);
   });
 });

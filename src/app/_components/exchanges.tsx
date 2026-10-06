@@ -31,7 +31,7 @@ import {
   type GuideStep,
 } from "~/app/_components/setup-guide";
 
-type ExchangeName = "coinbase" | "binance";
+type ExchangeName = "coinbase" | "binance" | "kraken";
 type SyncResult = RouterOutputs["exchanges"]["sync"];
 type Status = RouterOutputs["exchanges"]["status"]["exchanges"][ExchangeName];
 
@@ -62,6 +62,11 @@ const EXCHANGE_META: Record<
     accent: "text-amber-400",
     snapshotKey: "holdr.exchange.binance.snapshot",
   },
+  kraken: {
+    title: "Kraken",
+    accent: "text-purple-400",
+    snapshotKey: "holdr.exchange.kraken.snapshot",
+  },
 };
 
 const AUTO_SYNC_AFTER_MS = 1 * 3600 * 1000;
@@ -77,7 +82,7 @@ const EXCHANGE_IDS = Object.keys(EXCHANGE_META) as ExchangeName[];
 function loadSelected(): ExchangeName | null {
   try {
     const raw = localStorage.getItem(SELECTED_KEY);
-    return raw === "coinbase" || raw === "binance" ? raw : null;
+    return raw === "coinbase" || raw === "binance" || raw === "kraken" ? raw : null;
   } catch {
     return null;
   }
@@ -261,6 +266,56 @@ const BINANCE_STEPS: GuideStep[] = [
       </>
     ),
     warn: "They're never shown in full again — copy now or you'll need a new key.",
+  },
+];
+
+const KRAKEN_STEPS: GuideStep[] = [
+  {
+    icon: LogIn,
+    title: "Log in to Kraken",
+    body: (
+      <>
+        Log in at <Code>kraken.com</Code>.
+      </>
+    ),
+  },
+  {
+    icon: Settings,
+    title: "Open API settings",
+    body: (
+      <>
+        Click your profile icon → <Code>Settings</Code> → the <Code>API</Code>{" "}
+        tab.
+      </>
+    ),
+  },
+  {
+    icon: Plus,
+    title: "Generate a new API key",
+    body: (
+      <>
+        Click <Code>Generate New Key</Code> and complete 2-step verification.
+      </>
+    ),
+  },
+  {
+    icon: ShieldCheck,
+    title: "Query Funds only",
+    body: (
+      <>
+        Check only <Code>Query Funds</Code>. Leave everything else OFF:{" "}
+        <Code>Query open orders &amp; trades</Code>,{" "}
+        <Code>Create &amp; modify orders</Code>, <Code>Cancel &amp; close orders</Code>,{" "}
+        <Code>Deposit</Code>, <Code>Withdraw</Code>.
+      </>
+    ),
+    warn: "Never enable trading, deposit or withdrawal permissions — Holdr only reads balances.",
+  },
+  {
+    icon: Copy,
+    title: "Copy key + secret",
+    body: <>Copy the API key and private key (secret) into the fields below.</>,
+    warn: "The private key is shown only once — copy it now or you'll need a new key.",
   },
 ];
 
@@ -884,16 +939,26 @@ function ExchangeCard({
           </p>
           <SetupGuide
             id={exchange}
-            steps={exchange === "coinbase" ? COINBASE_STEPS : BINANCE_STEPS}
+            steps={
+              exchange === "coinbase"
+                ? COINBASE_STEPS
+                : exchange === "binance"
+                  ? BINANCE_STEPS
+                  : KRAKEN_STEPS
+            }
             guideUrl={
               exchange === "coinbase"
                 ? "https://help.coinbase.com/en/exchange/managing-my-account/how-to-create-an-api-key"
-                : "https://www.binance.com/en-AU/support/faq/detail/360002502072"
+                : exchange === "binance"
+                  ? "https://www.binance.com/en-AU/support/faq/detail/360002502072"
+                  : "https://support.kraken.com/articles/generating-an-api-key"
             }
             guideLabel={
               exchange === "coinbase"
                 ? "Coinbase help: creating an API key"
-                : "Binance FAQ: creating API keys"
+                : exchange === "binance"
+                  ? "Binance FAQ: creating API keys"
+                  : "Kraken support: generating an API key"
             }
           />
           <div className="mt-4 space-y-3">
@@ -1020,7 +1085,7 @@ export function ExchangeCards({
   // Positions are kept per exchange so switching platforms never loses data.
   const [positionsByExchange, setPositionsByExchange] = useState<
     Record<ExchangeName, ExchangePositionLike[]>
-  >({ coinbase: [], binance: [] });
+  >({ coinbase: [], binance: [], kraken: [] });
   // Always start on the first option (avoids SSR hydration mismatch); the
   // persisted / first-connected default is applied in the effect below.
   const [selected, setSelected] = useState<ExchangeName>("coinbase");
@@ -1082,6 +1147,7 @@ export function ExchangeCards({
   const connected: Record<ExchangeName, boolean> = {
     coinbase: !!statusQ.data?.exchanges.coinbase?.configured,
     binance: !!statusQ.data?.exchanges.binance?.configured || binanceBrowser,
+    kraken: !!statusQ.data?.exchanges.kraken?.configured,
   };
 
   const setPositionsFor =
@@ -1094,6 +1160,7 @@ export function ExchangeCards({
     onPositions?.([
       ...positionsByExchange.coinbase,
       ...positionsByExchange.binance,
+      ...positionsByExchange.kraken,
     ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positionsByExchange]);

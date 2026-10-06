@@ -1,5 +1,5 @@
 /**
- * Read-only clients for Coinbase (Advanced Trade) and Binance (Spot).
+ * Read-only clients for Coinbase (Advanced Trade), Binance (Spot) and Kraken.
  *
  * Runs on Cloudflare Workers and Node with zero dependencies (WebCrypto +
  * global fetch only). NEVER calls trading/order endpoints — balances and
@@ -108,7 +108,7 @@ export function formatCents(cents: bigint): string {
 /* Errors                                                              */
 /* ------------------------------------------------------------------ */
 
-export type ExchangeName = "coinbase" | "binance";
+export type ExchangeName = "coinbase" | "binance" | "kraken";
 
 export class ExchangeError extends Error {
   exchange: ExchangeName;
@@ -125,13 +125,13 @@ export class ExchangeError extends Error {
 /* HMAC helpers (WebCrypto — works on Workers and Node 18+)            */
 /* ------------------------------------------------------------------ */
 
-function b64ToBytes(b64: string): Uint8Array {
+function b64ToBytes(b64: string, exchange: ExchangeName = "coinbase"): Uint8Array {
   const clean = b64.trim();
   let bin: string;
   try {
     bin = atob(clean);
   } catch {
-    throw new ExchangeError("coinbase", "API secret is not valid base64.");
+    throw new ExchangeError(exchange, "API secret is not valid base64.");
   }
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -160,6 +160,23 @@ async function hmacSha256(keyBytes: Uint8Array, message: string): Promise<Uint8A
   );
   const sig = await crypto.subtle.sign("HMAC", key, te.encode(message));
   return new Uint8Array(sig);
+}
+
+async function hmacSha512(keyBytes: Uint8Array, messageBytes: Uint8Array): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    keyBytes.buffer as ArrayBuffer,
+    { name: "HMAC", hash: "SHA-512" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, messageBytes.buffer as ArrayBuffer);
+  return new Uint8Array(sig);
+}
+
+async function sha256Bytes(data: Uint8Array): Promise<Uint8Array> {
+  const digest = await crypto.subtle.digest("SHA-256", data.buffer as ArrayBuffer);
+  return new Uint8Array(digest);
 }
 
 /* ------------------------------------------------------------------ */
@@ -202,9 +219,11 @@ async function readJson(res: Response, exchange: ExchangeName, what: string): Pr
 
 function hintForStatus(exchange: ExchangeName, status: number): string {
   if (status === 401 || status === 403) {
-    return exchange === "coinbase"
-      ? " Check that the API key is correct and has not been deleted."
-      : " Check the API key/secret and that the key has 'Enable Reading' permission (no trading permission needed). If the error mentions a restricted location, Binance is geo-blocking this server's region.";
+    if (exchange === "coinbase")
+      return " Check that the API key is correct and has not been deleted.";
+    if (exchange === "binance")
+      return " Check the API key/secret and that the key has 'Enable Reading' permission (no trading permission needed). If the error mentions a restricted location, Binance is geo-blocking this server's region.";
+    return " Check the API key/secret and that the key has query-funds permission (no trading permission needed).";
   }
   if (status === 429) return " Rate limited — wait a minute and sync again.";
   if (status === 451)
@@ -515,6 +534,171 @@ export function validateBinanceDirectPayload(
     balances: parseBinanceAccount(accountParsed.data),
     tickers: tickersParsed.data.map((t) => ({ symbol: t.symbol, price: t.price })),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Kraken                                                              */
+/*                                                                     */
+/* Auth: API-Key header + API-Sign = base64(HMAC-SHA512(               */
+/*       urlPath + SHA256(nonce + postData), base64decode(secret))).    */
+/* Balances + public ticker only — no order endpoints are ever called. */
+/* ------------------------------------------------------------------ */
+
+const KRAKEN_API = "https://api.kraken.com";
+const KRAKEN_BALANCE_PATH = "/0/private/Balance";
+
+/**
+ * Sign a Kraken private request. `postData` is the urlencoded body
+ * (e.g. "nonce=1234567890000"), `urlPath` the request path.
+ */
+export async function krakenSignature(
+  apiSecretB64: string,
+  urlPath: string,
+  nonce: string,
+  postData: string,
+): Promise<string> {
+  const keyBytes = b64ToBytes(apiSecretB64, "kraken");
+  const sha = await sha256Bytes(te.encode(nonce + postData));
+  const pathBytes = te.encode(urlPath);
+  const message = new Uint8Array(pathBytes.length + sha.length);
+  message.set(pathBytes, 0);
+  message.set(sha, pathBytes.length);
+  const sig = await hmacSha512(keyBytes, message);
+  return bytesToB64(sig);
+}
+
+/**
+ * Map a Kraken asset code to our canonical symbol.
+ * Kraken prefixes classic assets: X for crypto (XXBT, XETH), Z for fiat
+ * (ZUSD, ZEUR). Newer assets have no prefix (SOL, DOT). Staked balances
+ * carry a ".S" suffix (XTZ.S). XBT is Bitcoin — we canonicalize to BTC.
+ */
+export function mapKrakenAsset(code: string): string {
+  let c = code.toUpperCase().trim();
+  // Staked / margin-suffixed balances collapse onto the base asset.
+  c = c.replace(/\.(S|M)$/, "");
+  if (c.length > 3 && (c.startsWith("X") || c.startsWith("Z"))) {
+    c = c.slice(1);
+  }
+  if (c === "XBT") return "BTC";
+  return c;
+}
+
+/** Kraken alt-name for the public ticker (BTC trades as XBT on Kraken). */
+function krakenTickerAlt(asset: string): string {
+  const u = asset.toUpperCase();
+  if (u === "BTC") return "XBT";
+  return u;
+}
+
+interface KrakenBalanceResponse {
+  error?: string[];
+  result?: Record<string, string>;
+}
+
+/** Parse a POST /0/private/Balance body into native balances (pure, testable). */
+export function parseKrakenBalance(body: unknown): NativeBalance[] {
+  const root = body as KrakenBalanceResponse | null;
+  if (root?.error && root.error.length > 0) {
+    throw new ExchangeError("kraken", `Kraken error: ${root.error.join("; ").slice(0, 200)}`);
+  }
+  const result = root?.result ?? {};
+  const out: NativeBalance[] = [];
+  for (const [code, value] of Object.entries(result)) {
+    const asset = mapKrakenAsset(code);
+    if (!asset) continue;
+    let qty: Decimal;
+    try {
+      qty = parseDecimal(value ?? "0");
+    } catch {
+      continue;
+    }
+    if (isZeroDecimal(qty)) continue;
+    out.push({ asset, quantity: decimalToString(qty) });
+  }
+  return out;
+}
+
+export async function fetchKrakenBalances(
+  apiKey: string,
+  apiSecret: string,
+  fetcher: FetchFn = fetch,
+): Promise<NativeBalance[]> {
+  const nonce = Date.now().toString();
+  const postData = `nonce=${encodeURIComponent(nonce)}`;
+  let signature: string;
+  try {
+    signature = await krakenSignature(apiSecret, KRAKEN_BALANCE_PATH, nonce, postData);
+  } catch (e) {
+    if (e instanceof ExchangeError) throw e;
+    throw new ExchangeError("kraken", "Failed to sign request.");
+  }
+  let res: Response;
+  try {
+    res = await fetcher(KRAKEN_API + KRAKEN_BALANCE_PATH, {
+      method: "POST",
+      headers: {
+        "API-Key": apiKey,
+        "API-Sign": signature,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: postData,
+    });
+  } catch {
+    throw new ExchangeError("kraken", "Could not reach Kraken. Check your connection.");
+  }
+  let body: unknown;
+  try {
+    body = await readJson(res, "kraken", "Kraken balance request");
+  } catch (e) {
+    if (e instanceof ExchangeError && e.status != null) {
+      throw new ExchangeError("kraken", e.message + hintForStatus("kraken", e.status), e.status);
+    }
+    throw e;
+  }
+  return parseKrakenBalance(body);
+}
+
+/** Kraken's own spot price for ASSET (public, no auth). Returns exact decimal string. */
+export async function fetchKrakenPrice(
+  asset: string,
+  fetcher: FetchFn = fetch,
+): Promise<{ price: string; source: string } | null> {
+  const upper = asset.toUpperCase();
+  if (isUsdPegged(upper)) {
+    return { price: "1", source: "peg:1" };
+  }
+  const alt = krakenTickerAlt(upper);
+  // Try USD pair first, then USDT (Kraken lists most assets against both).
+  for (const quote of ["USD", "USDT"]) {
+    const pair = `${alt}${quote}`;
+    let res: Response;
+    try {
+      res = await fetcher(
+        `${KRAKEN_API}/0/public/Ticker?pair=${encodeURIComponent(pair)}`,
+      );
+    } catch {
+      return null;
+    }
+    if (!res.ok) continue;
+    try {
+      const body = (await res.json()) as {
+        error?: string[];
+        result?: Record<string, { c?: [string, string] }>;
+      };
+      if (body?.error && body.error.length > 0) continue;
+      const keys = Object.keys(body?.result ?? {});
+      if (keys.length === 0) continue;
+      const last = body.result![keys[0]!]!.c?.[0];
+      if (!last) continue;
+      const price = parseDecimal(last);
+      if (isZeroDecimal(price) || isNegativeDecimal(price)) continue;
+      return { price: decimalToString(price), source: `kraken:ticker:${pair}` };
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ */

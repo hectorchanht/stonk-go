@@ -9,6 +9,8 @@ import {
   fetchBinancePrice,
   fetchCoinbaseBalances,
   fetchCoinbasePrice,
+  fetchKrakenBalances,
+  fetchKrakenPrice,
   validateBinanceDirectPayload,
   valuate,
   type ExchangeName,
@@ -19,22 +21,24 @@ import {
 import { decryptCredentials, encryptCredentials } from "~/server/crypto";
 import type { AppDb } from "~/server/db";
 
-const exchangeEnum = z.enum(["coinbase", "binance"]);
+const exchangeEnum = z.enum(["coinbase", "binance", "kraken"]);
 
 const SETUP_HINTS: Record<ExchangeName, string> = {
   coinbase:
     "Coinbase is not connected. On coinbase.com go to your profile → API (or Settings → API), create an API key with only portfolio/read permissions — never enable trading or transfers. Paste the API key + secret below.",
   binance:
     "Binance is not connected. On binance.com go to Profile → API Management, create an API key with ONLY 'Enable Reading' checked (leave trading and withdrawals OFF; an IP whitelist is recommended). Paste the API key + secret below.",
+  kraken:
+    "Kraken is not connected. On kraken.com go to Settings → API, create an API key with ONLY 'Query Funds' permission (leave all trading, deposit and withdrawal permissions OFF). Paste the API key + secret below.",
 };
 
 const keySchema = z.string().min(1).max(500);
 const secretSchema = z.string().min(1).max(2000);
 
 function priceFetcherFor(exchange: ExchangeName): PriceFetcher {
-  return exchange === "coinbase"
-    ? (asset) => fetchCoinbasePrice(asset)
-    : (asset) => fetchBinancePrice(asset);
+  if (exchange === "coinbase") return (asset) => fetchCoinbasePrice(asset);
+  if (exchange === "kraken") return (asset) => fetchKrakenPrice(asset);
+  return (asset) => fetchBinancePrice(asset);
 }
 
 async function fetchBalances(
@@ -43,9 +47,9 @@ async function fetchBalances(
   apiSecret: string,
 ): Promise<NativeBalance[]> {
   try {
-    return exchange === "coinbase"
-      ? await fetchCoinbaseBalances(apiKey, apiSecret)
-      : await fetchBinanceBalances(apiKey, apiSecret);
+    if (exchange === "coinbase") return await fetchCoinbaseBalances(apiKey, apiSecret);
+    if (exchange === "kraken") return await fetchKrakenBalances(apiKey, apiSecret);
+    return await fetchBinanceBalances(apiKey, apiSecret);
   } catch (e) {
     // ExchangeError messages never contain key material (only status codes
     // and the exchange's own error text).
@@ -138,11 +142,12 @@ export const exchangesRouter = createTRPCRouter({
     > = {
       coinbase: emptyStatus(),
       binance: emptyStatus(),
+      kraken: emptyStatus(),
     };
     if (!userId) return { exchanges: out };
 
     const creds = await ctx.db.exchangeCredential.findMany({ where: { userId } });
-    for (const exchange of ["coinbase", "binance"] as const) {
+    for (const exchange of ["coinbase", "binance", "kraken"] as const) {
       const cred = creds.find((c) => c.exchange === exchange);
       if (!cred) continue;
       let keyLast4: string | null = null;
