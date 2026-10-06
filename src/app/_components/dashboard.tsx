@@ -573,7 +573,7 @@ function MobileMenu({
             className="fixed inset-0 z-40 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute right-0 z-50 mt-1 w-52 rounded-xl border border-zinc-700 bg-zinc-800 py-1 shadow-xl">
+          <div className="absolute right-0 z-50 mt-1 w-60 rounded-xl border border-zinc-700 bg-zinc-800 py-1 shadow-xl">
             <button
               type="button"
               onClick={() => {
@@ -593,15 +593,17 @@ function MobileMenu({
               <button
                 type="button"
                 onClick={() => signOut({ callbackUrl: "/" })}
-                className={itemCls}
+                className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left hover:bg-zinc-700"
               >
-                <LogOut size={15} />
-                Sign out
-                {session.user?.email && (
-                  <span className="ml-auto max-w-[100px] truncate text-xs text-zinc-500">
-                    {session.user.email}
-                  </span>
-                )}
+                <LogOut size={15} className="shrink-0 text-zinc-300" />
+                <span className="min-w-0">
+                  <span className="block text-sm text-zinc-200">Sign out</span>
+                  {session.user?.email && (
+                    <span className="block truncate text-xs text-zinc-500">
+                      {session.user.email}
+                    </span>
+                  )}
+                </span>
               </button>
             ) : (
               <a href="/login" className={itemCls}>
