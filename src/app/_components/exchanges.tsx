@@ -62,6 +62,20 @@ const AUTO_SYNC_AFTER_MS = 1 * 3600 * 1000;
 /** Browser-side Binance credentials (the secret never leaves this device). */
 const BINANCE_CREDS_KEY = "holdr.binance.creds";
 
+/** Persisted platform selection for the crypto-exchanges section. */
+const SELECTED_KEY = "holdr.crypto.selected";
+
+const EXCHANGE_IDS = Object.keys(EXCHANGE_META) as ExchangeName[];
+
+function loadSelected(): ExchangeName | null {
+  try {
+    const raw = localStorage.getItem(SELECTED_KEY);
+    return raw === "coinbase" || raw === "binance" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
 interface BrowserCreds {
   k: string;
   s: string;
@@ -358,9 +372,12 @@ function loadSnapshot(key: string): { at: string; data: SyncResult } | null {
 function ExchangeCard({
   exchange,
   onPositions,
+  onConnectionChange,
 }: {
   exchange: ExchangeName;
   onPositions?: (positions: ExchangePositionLike[]) => void;
+  /** Fired when this card's connected state changes (so the section selector's indicators stay fresh). */
+  onConnectionChange?: () => void;
 }) {
   const meta = EXCHANGE_META[exchange];
   const { data: session } = useSession();
@@ -568,6 +585,13 @@ function ExchangeCard({
   }, [exchange]);
 
   const configured = !!st?.configured;
+  const connectedNow = configured || (isBinance && !!browserCreds);
+  const onConnRef = useRef(onConnectionChange);
+  onConnRef.current = onConnectionChange;
+  useEffect(() => {
+    onConnRef.current?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectedNow]);
   // Binance syncs from this browser (see connectBinanceBrowser); Coinbase
   // still syncs server-side.
   const syncData: SyncResult | null = isBinance ? directSync.data ?? null : sync.data ?? null;
@@ -827,16 +851,124 @@ export function ExchangeCards({
 }: {
   onPositions?: (positions: ExchangePositionLike[]) => void;
 }) {
-  const [coinbase, setCoinbase] = useState<ExchangePositionLike[]>([]);
-  const [binance, setBinance] = useState<ExchangePositionLike[]>([]);
+  // Positions are kept per exchange so switching platforms never loses data.
+  const [positionsByExchange, setPositionsByExchange] = useState<
+    Record<ExchangeName, ExchangePositionLike[]>
+  >({ coinbase: [], binance: [] });
+  // Always start on the first option (avoids SSR hydration mismatch); the
+  // persisted / first-connected default is applied in the effect below.
+  const [selected, setSelected] = useState<ExchangeName>("coinbase");
+  const [initialized, setInitialized] = useState(false);
+  const [binanceBrowser, setBinanceBrowser] = useState(false);
+  const statusQ = api.exchanges.status.useQuery(undefined, { retry: false });
+
+  const refreshSectionState = () => {
+    try {
+      setBinanceBrowser(!!localStorage.getItem(BINANCE_CREDS_KEY));
+    } catch {
+      /* ignore */
+    }
+    void statusQ.refetch();
+  };
+
   useEffect(() => {
-    onPositions?.([...coinbase, ...binance]);
-  }, [coinbase, binance, onPositions]);
+    refreshSectionState();
+    window.addEventListener("focus", refreshSectionState);
+    window.addEventListener("storage", refreshSectionState);
+    return () => {
+      window.removeEventListener("focus", refreshSectionState);
+      window.removeEventListener("storage", refreshSectionState);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Default selection: persisted choice wins; otherwise the first connected
+  // exchange; otherwise the first option.
+  useEffect(() => {
+    if (initialized || !statusQ.data) return;
+    const persisted = loadSelected();
+    let initial: ExchangeName = persisted ?? "coinbase";
+    if (!persisted) {
+      const ex = statusQ.data.exchanges;
+      const firstConnected = EXCHANGE_IDS.find((e) => ex[e]?.configured);
+      initial = firstConnected ?? "coinbase";
+      if (!firstConnected) {
+        try {
+          if (localStorage.getItem(BINANCE_CREDS_KEY)) initial = "binance";
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    setSelected(initial);
+    setInitialized(true);
+  }, [statusQ.data, initialized]);
+
+  const choose = (e: ExchangeName) => {
+    setSelected(e);
+    try {
+      localStorage.setItem(SELECTED_KEY, e);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const connected: Record<ExchangeName, boolean> = {
+    coinbase: !!statusQ.data?.exchanges.coinbase?.configured,
+    binance: !!statusQ.data?.exchanges.binance?.configured || binanceBrowser,
+  };
+
+  const setPositionsFor =
+    (exchange: ExchangeName) => (p: ExchangePositionLike[]) =>
+      setPositionsByExchange((prev) =>
+        prev[exchange] === p ? prev : { ...prev, [exchange]: p },
+      );
+
+  useEffect(() => {
+    onPositions?.([
+      ...positionsByExchange.coinbase,
+      ...positionsByExchange.binance,
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positionsByExchange]);
+
   return (
-    <>
-      <ExchangeCard exchange="coinbase" onPositions={setCoinbase} />
-      <ExchangeCard exchange="binance" onPositions={setBinance} />
-    </>
+    <div>
+      <label
+        htmlFor="crypto-platform-select"
+        className="mb-1 block text-xs font-semibold uppercase tracking-wide text-zinc-500"
+      >
+        Platform
+      </label>
+      <div className="relative">
+        <select
+          id="crypto-platform-select"
+          value={selected}
+          onChange={(e) => choose(e.target.value as ExchangeName)}
+          aria-label="Select crypto platform"
+          className="w-full appearance-none rounded-lg border border-zinc-700 bg-zinc-800 py-3 pl-3 pr-10 text-sm font-semibold text-zinc-100 focus:border-zinc-500 focus:outline-none"
+          style={{ minHeight: 44 }}
+        >
+          {EXCHANGE_IDS.map((e) => (
+            <option key={e} value={e}>
+              {EXCHANGE_META[e].title}
+              {connected[e] ? " \u25cf" : ""}
+            </option>
+          ))}
+        </select>
+        <ChevronDown
+          size={16}
+          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400"
+        />
+      </div>
+      <div className="mt-3" key={selected}>
+        <ExchangeCard
+          exchange={selected}
+          onPositions={setPositionsFor(selected)}
+          onConnectionChange={refreshSectionState}
+        />
+      </div>
+    </div>
   );
 }
 
