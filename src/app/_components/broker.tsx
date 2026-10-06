@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 
-type Status = RouterOutputs["ibkr"]["status"];
 type SyncResult = RouterOutputs["ibkr"]["sync"];
 type Analytics = RouterOutputs["ibkr"]["analytics"];
 
@@ -209,67 +208,6 @@ function AnalyticsView({ data }: { data: Analytics }) {
         From your IBKR Flex records (end-of-day). Realized P/L uses IBKR&apos;s
         FIFO numbers when the query includes them.
       </p>
-    </div>
-  );
-}
-
-/* ---------------- server mode (env-configured account) ---------------- */
-
-function ServerBrokerCard({ status }: { status: Status }) {
-  const utils = api.useUtils();
-  const [error, setError] = useState<string | null>(null);
-  const analytics = api.ibkr.analytics.useQuery();
-  const sync = api.ibkr.sync.useMutation({
-    onSuccess: () => {
-      setError(null);
-      void utils.ibkr.status.invalidate();
-      void utils.ibkr.analytics.invalidate();
-    },
-    onError: (e) => setError(e.message),
-  });
-
-  return (
-    <div className={card}>
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-bold">🏦 Interactive Brokers</h2>
-          <p className="text-xs text-zinc-500">
-            {status.lastSyncedAt
-              ? `Synced ${new Date(status.lastSyncedAt).toLocaleString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                })} · `
-              : "Never synced · "}
-            {status.positionCount} position{status.positionCount === 1 ? "" : "s"} ·
-            end-of-day data
-          </p>
-        </div>
-        <button
-          onClick={() => sync.mutate(undefined)}
-          disabled={sync.isPending}
-          className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
-        >
-          {sync.isPending ? "Syncing…" : "↻ Sync from IBKR"}
-        </button>
-      </div>
-
-      {error && (
-        <p className="mt-3 rounded-lg border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-300">
-          {error}
-        </p>
-      )}
-
-      {status.positions.length === 0 ? (
-        <p className="mt-3 text-sm text-zinc-500">
-          No positions yet — hit Sync to pull them from IBKR.
-        </p>
-      ) : (
-        <PositionsTable positions={status.positions} />
-      )}
-
-      {analytics.data && <AnalyticsView data={analytics.data} />}
     </div>
   );
 }
@@ -512,28 +450,7 @@ function BrowserBrokerCard() {
 /* ---------------- entry ---------------- */
 
 export function BrokerCard() {
-  const status = api.ibkr.status.useQuery();
-
-  if (status.isLoading) {
-    return (
-      <div className={card}>
-        <p className="text-sm text-zinc-500">Checking IBKR connection…</p>
-      </div>
-    );
-  }
-  if (status.isError || !status.data) {
-    return (
-      <div className={card}>
-        <p className="text-sm text-rose-400">Couldn&apos;t check the IBKR connection.</p>
-      </div>
-    );
-  }
-
-  // Server-wide account configured (env vars) → shared snapshot mode.
-  // Otherwise any IB user can connect with their own token (browser mode).
-  return status.data.configured ? (
-    <ServerBrokerCard status={status.data} />
-  ) : (
-    <BrowserBrokerCard />
-  );
+  // Every visitor connects with their own IBKR credentials (kept in their
+  // browser only). Server-side env secrets are never exposed to the public UI.
+  return <BrowserBrokerCard />;
 }
