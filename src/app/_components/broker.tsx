@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Save,
   Settings,
+  Upload,
 } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
@@ -396,6 +397,31 @@ function loadSnapshot(): { at: string; data: SyncResult } | null {
   }
 }
 
+/**
+ * Read a holdr-ibkr-credentials.json export (the file "Export saved
+ * credentials" downloads) back into a Creds pair. Accepts any JSON object
+ * with a non-empty `token` and `queryId` (queryId may be a number).
+ */
+async function parseExportedCreds(file: File): Promise<Creds> {
+  const text = await file.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("That file isn't valid JSON.");
+  }
+  const o = (parsed ?? {}) as Record<string, unknown>;
+  const token = typeof o.token === "string" ? o.token.trim() : "";
+  const q = o.queryId;
+  const queryId =
+    typeof q === "string" ? q.trim() : typeof q === "number" ? String(q) : "";
+  if (!token || !queryId)
+    throw new Error(
+      "That file doesn't look like a Holdr IBKR export — it needs a token and a query ID.",
+    );
+  return { token, queryId };
+}
+
 function SetupSteps() {
   return (
     <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-zinc-300">
@@ -462,7 +488,22 @@ function CopyAiPrompt() {
 function ConnectForm({ onConnect }: { onConnect: (c: Creds) => void }) {
   const [token, setToken] = useState("");
   const [queryId, setQueryId] = useState("");
+  const [fileError, setFileError] = useState<string | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
   const valid = token.trim().length > 0 && queryId.trim().length > 0;
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    // Reset so picking the same file twice still fires onChange.
+    e.target.value = "";
+    if (!f) return;
+    setFileError(null);
+    try {
+      onConnect(await parseExportedCreds(f));
+    } catch (err) {
+      setFileError(err instanceof Error ? err.message : "Couldn't read that file.");
+    }
+  };
   return (
     <div className={card}>
       <h2 className="flex items-center gap-2 text-lg font-bold">
@@ -505,6 +546,26 @@ function ConnectForm({ onConnect }: { onConnect: (c: Creds) => void }) {
         >
           Connect &amp; sync
         </button>
+        <div>
+          <button
+            type="button"
+            onClick={() => importRef.current?.click()}
+            className="inline-flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200"
+          >
+            <Upload size={14} />
+            Import from exported file
+          </button>
+          <input
+            ref={importRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={onFile}
+          />
+          {fileError && <p className="mt-1.5 text-xs text-rose-400">{fileError}</p>}
+        </div>
       </div>
       <p className="mt-3 text-xs text-zinc-500">
         Your token is stored only in this browser (localStorage) and sent to
@@ -639,6 +700,59 @@ function BrowserBrokerCard({
     }
   }, [exportQ]);
 
+  /** Restore credentials from an exported holdr-ibkr-credentials.json file. */
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const handleImportedFile = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const f = e.target.files?.[0];
+    // Reset so picking the same file twice still fires onChange.
+    e.target.value = "";
+    if (!f) return;
+    let c: Creds;
+    try {
+      c = await parseExportedCreds(f);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't read that file.");
+      return;
+    }
+    setError(null);
+    if (session?.user && !creds) {
+      // Logged-in, server-saved path: restore the import to the account, then sync with it.
+      try {
+        await saveCreds.mutateAsync(c);
+        setError(null);
+        void savedQ.refetch();
+        sync.mutate(undefined);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Couldn't save the imported credentials.",
+        );
+      }
+    } else {
+      // Browser-only path: replace the local credentials and re-sync.
+      try {
+        localStorage.setItem(CREDS_KEY, JSON.stringify(c));
+      } catch {
+        /* ignore */
+      }
+      setCreds(c);
+      setShowForm(false);
+      sync.mutate(c);
+    }
+  };
+  const importFileInput = (
+    <input
+      ref={importInputRef}
+      type="file"
+      accept=".json,application/json"
+      className="hidden"
+      tabIndex={-1}
+      aria-hidden="true"
+      onChange={handleImportedFile}
+    />
+  );
+
   useEffect(() => {
     setCreds(loadCreds());
     setSnapshot(loadSnapshot());
@@ -763,6 +877,15 @@ function BrowserBrokerCard({
                   onClick: () => void downloadCreds(),
                 },
                 {
+                  label: (
+                    <>
+                      <Upload size={15} />
+                      Import from file
+                    </>
+                  ),
+                  onClick: () => importInputRef.current?.click(),
+                },
+                {
                   label: clearCreds.isPending ? "Removing…" : "Remove saved credentials",
                   onClick: () => clearCreds.mutate(),
                   danger: true,
@@ -770,6 +893,7 @@ function BrowserBrokerCard({
                 },
               ]}
             />
+            {importFileInput}
           </div>
           {error && (
             <p className="mt-3 rounded-lg border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-300">
@@ -878,6 +1002,15 @@ function BrowserBrokerCard({
       });
     }
   }
+  gearItems.push({
+    label: (
+      <>
+        <Upload size={15} />
+        Import from file
+      </>
+    ),
+    onClick: () => importInputRef.current?.click(),
+  });
   gearItems.push({ label: "Disconnect", onClick: disconnect, danger: true });
 
   return (
@@ -905,6 +1038,7 @@ function BrowserBrokerCard({
           )}
         </div>
         <GearMenu items={gearItems} />
+        {importFileInput}
       </div>
 
       {error && (
