@@ -29,6 +29,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   TrendingUp,
+  Trash2,
   X,
   Zap,
 } from "lucide-react";
@@ -178,6 +179,24 @@ function HoldingsTable({
   );
   const [inspectSymbol, setInspectSymbol] = useState<string | null>(null);
   const [editingTxn, setEditingTxn] = useState<TxnRow | null>(null);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearScope, setClearScope] = useState<"manual" | "all">("manual");
+  const [clearAck, setClearAck] = useState(false);
+  const clearManual = api.portfolio.clearManualData.useMutation({
+    onSuccess: () => {
+      setClearOpen(false);
+      setClearAck(false);
+      setClearScope("manual");
+      setSourceFilter("all");
+      setInspectSymbol(null);
+      void utils.portfolio.summary.invalidate();
+      void utils.portfolio.transactions.invalidate();
+      void utils.portfolio.flair.invalidate();
+      void utils.portfolio.equityCurve.invalidate();
+      void utils.portfolio.xirr.invalidate();
+      void utils.portfolio.insights.invalidate();
+    },
+  });
   const txnsQuery = api.portfolio.transactions.useQuery(
     { limit: 200 },
     { staleTime: 60_000 },
@@ -518,24 +537,45 @@ function HoldingsTable({
 
   return (
     <div className={`${card} overflow-hidden p-0`}>
-      <div className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-3 py-2">
-        <div className="relative min-w-0 flex-1">
-          <Search
-            size={14}
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500"
-          />
-          <input
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              pager.reset();
-            }}
-            placeholder="Filter by symbol or name…"
-            className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 py-1.5 pl-8 pr-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-500"
-          />
+      <div className="flex flex-col gap-2 border-b border-zinc-200 dark:border-zinc-800 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Search
+              size={14}
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500"
+            />
+            <input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                pager.reset();
+              }}
+              placeholder="Filter by symbol or name\u2026"
+              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 py-1.5 pl-8 pr-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-500"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setColsOpen((o) => !o)}
+            title="Choose columns"
+            aria-label="Choose columns"
+            aria-expanded={colsOpen}
+            className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
+          >
+            <SlidersHorizontal size={15} />
+          </button>
+          <button
+            type="button"
+            onClick={exportCsv}
+            title="Export holdings as CSV"
+            aria-label="Export holdings as CSV"
+            className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
+          >
+            <Download size={15} />
+          </button>
         </div>
         <div
-          className="flex shrink-0 overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700"
+          className="grid grid-cols-3 overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700"
           role="group"
           aria-label="Filter by source"
         >
@@ -548,7 +588,7 @@ function HoldingsTable({
                 pager.reset();
               }}
               aria-pressed={sourceFilter === sf}
-              className={"px-2.5 py-2 text-xs font-semibold uppercase " + (sourceFilter === sf
+              className={"px-2.5 py-2 text-center text-xs font-semibold uppercase " + (sourceFilter === sf
                   ? "bg-zinc-600 text-white"
                   : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800")}
             >
@@ -556,30 +596,12 @@ function HoldingsTable({
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={() => setColsOpen((o) => !o)}
-          title="Choose columns"
-          aria-label="Choose columns"
-          aria-expanded={colsOpen}
-          className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
-        >
-          <SlidersHorizontal size={15} />
-        </button>
-        <button
-          type="button"
-          onClick={exportCsv}
-          title="Export holdings as CSV"
-          aria-label="Export holdings as CSV"
-          className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
-        >
-          <Download size={15} />
-        </button>
       </div>
 
             {/* Manual-holdings review summary */}
       {sourceFilter === "manual" && (
-        <div className="border-b border-zinc-200 dark:border-zinc-800 px-3 py-2 text-xs text-zinc-500">
+        <div className="flex items-center justify-between gap-2 border-b border-zinc-200 dark:border-zinc-800 px-3 py-2 text-xs text-zinc-500">
+          <div>
           <span className="font-semibold text-zinc-700 dark:text-zinc-300">
             {manualStats.n} manual {manualStats.n === 1 ? "holding" : "holdings"}
           </span>
@@ -596,6 +618,21 @@ function HoldingsTable({
               {" · "}
               {manualStats.noPrice} without price
             </span>
+          )}
+          </div>
+          {manualStats.n > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setClearScope("manual");
+                setClearAck(false);
+                setClearOpen(true);
+              }}
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-500/40 px-2 py-1.5 font-semibold text-red-400 hover:bg-red-500/10"
+            >
+              <Trash2 size={13} />
+              Clear
+            </button>
           )}
         </div>
       )}
@@ -867,6 +904,95 @@ function HoldingsTable({
         txn={editingTxn}
         onClose={() => setEditingTxn(null)}
       />
+    )}
+    {clearOpen && (
+      <div
+        className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center sm:p-4"
+        onClick={() => setClearOpen(false)}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Clear manual data"
+      >
+        <div
+          className="w-full max-w-md rounded-t-2xl sm:rounded-2xl border border-zinc-700 bg-zinc-900 p-4"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <div className="text-sm font-semibold text-zinc-100">
+              Clear manual data
+            </div>
+            <button
+              type="button"
+              onClick={() => setClearOpen(false)}
+              aria-label="Close"
+              className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <p className="mb-3 text-xs leading-relaxed text-zinc-400">
+            Delete all {manualStats.n} manual holdings and their trades from the
+            transaction log. Broker snapshots are untouched &mdash; re-sync IBKR
+            afterwards to rebuild from full history.
+          </p>
+          <div className="mb-3 grid gap-2">
+            {(["manual", "all"] as const).map((sc) => (
+              <button
+                key={sc}
+                type="button"
+                onClick={() => setClearScope(sc)}
+                aria-pressed={clearScope === sc}
+                className={"rounded-lg border p-2.5 text-left text-xs " + (clearScope === sc
+                  ? "border-red-500/60 bg-red-500/10 text-zinc-100"
+                  : "border-zinc-700 text-zinc-400 hover:border-zinc-500")}
+              >
+                <div className="font-semibold">
+                  {sc === "manual" ? "Hand-entered trades only" : "Full reset"}
+                </div>
+                <div className="mt-0.5 text-zinc-500">
+                  {sc === "manual"
+                    ? "Removes trades you entered by hand. Holdings derived from IBKR syncs stay and are recomputed."
+                    : "Also removes IBKR-imported trades. Everything in the log goes."}
+                </div>
+              </button>
+            ))}
+          </div>
+          <label className="mb-3 flex cursor-pointer items-start gap-2 text-xs text-zinc-400">
+            <input
+              type="checkbox"
+              checked={clearAck}
+              onChange={(e) => setClearAck(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-red-500"
+            />
+            I understand this cannot be undone. Export a backup first if unsure.
+          </label>
+          {clearManual.error && (
+            <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-300">
+              {clearManual.error.message}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setClearOpen(false)}
+              className="flex-1 rounded-lg border border-zinc-700 py-2 text-sm font-semibold text-zinc-300 hover:bg-zinc-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!clearAck || clearManual.isPending}
+              onClick={() =>
+                clearManual.mutate({ includeIbkr: clearScope === "all" })
+              }
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-40"
+            >
+              <Trash2 size={14} />
+              {clearManual.isPending ? "Clearing…" : "Delete"}
+            </button>
+          </div>
+        </div>
+      </div>
     )}
     </div>
   );

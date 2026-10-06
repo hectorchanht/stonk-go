@@ -904,4 +904,45 @@ export const portfolioRouter = createTRPCRouter({
       }
       return { ok: true, restored: input.transactions.length };
     }),
+
+  clearManualData: publicProcedure
+    .input(z.object({ includeIbkr: z.boolean().default(false) }))
+    .mutation(async ({ ctx, input }) => {
+      // One-click cleanup of the manual section: delete hand-entered trades
+      // (or the whole log on a full reset, including IBKR-imported rows) and
+      // rebuild whatever holdings survive. Broker snapshots are untouched.
+      const all = await ctx.db.transaction.findMany({
+        orderBy: [{ executedAt: "desc" }],
+        take: 100000,
+      });
+      const doomed = input.includeIbkr
+        ? all
+        : all.filter((t) => t.source === "manual");
+      for (const t of doomed) {
+        await ctx.db.transaction.delete({ where: { id: t.id } });
+      }
+      const failed: string[] = [];
+      if (input.includeIbkr) {
+        const holdings = await ctx.db.holding.findMany({
+          orderBy: { symbol: "asc" },
+        });
+        for (const h of holdings) {
+          await ctx.db.holding.deleteMany({ where: { symbol: h.symbol } });
+        }
+      } else {
+        for (const s of [...new Set(doomed.map((t) => t.symbol))]) {
+          try {
+            await recomputeHolding(ctx.db, s);
+          } catch {
+            // Remaining trades can't form a valid position; drop the stale
+            // row instead of showing a number we know is wrong.
+            await ctx.db.holding
+              .deleteMany({ where: { symbol: s } })
+              .catch(() => undefined);
+            failed.push(s);
+          }
+        }
+      }
+      return { deletedTrades: doomed.length, failed };
+    }),
 });
