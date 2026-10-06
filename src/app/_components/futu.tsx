@@ -25,7 +25,10 @@ import {
   DataTable,
   Pagination,
   StatCard,
+  TableToolbar,
   usePager,
+  useTableSort,
+  useTableTools,
   type DataColumn,
 } from "~/app/_components/ui";
 
@@ -286,22 +289,35 @@ function TokenRow({
 /* ---------------- positions & trades ---------------- */
 
 const positionColumns: DataColumn<FutuPosition>[] = [
-  { key: "symbol", header: "Symbol", render: (r) => <span className="font-mono font-semibold">{r.symbol}</span> },
+  {
+    key: "symbol",
+    header: "Symbol",
+    sortValue: (r) => r.symbol,
+    sortDescFirst: false,
+    searchValue: (r) => `${r.symbol} ${r.description ?? ""}`,
+    render: (r) => <span className="font-mono font-semibold">{r.symbol}</span>,
+  },
   {
     key: "name",
     header: "Name",
+    sortValue: (r) => r.description ?? "",
+    sortDescFirst: false,
     render: (r) => <span className="text-zinc-400">{r.description ?? "—"}</span>,
   },
   {
     key: "qty",
     header: "Qty",
     align: "right",
+    sortValue: (r) => r.quantity,
     render: (r) => <span className="tabular-nums">{fmtQty(r.quantity)}</span>,
   },
   {
     key: "price",
     header: "Price",
     align: "right",
+    sortValue: (r) => r.markPrice,
+    filterValue: (r) => r.currency.toUpperCase(),
+    filterLabel: "Currency",
     render: (r) => (
       <span className="tabular-nums">
         {fmtMoney(r.markPrice)} <span className="text-zinc-500">{r.currency}</span>
@@ -311,11 +327,27 @@ const positionColumns: DataColumn<FutuPosition>[] = [
 ];
 
 const tradeColumns: DataColumn<FutuTrade>[] = [
-  { key: "date", header: "Date", render: (r) => <span className="tabular-nums">{fmtDate(r.tradeDate)}</span> },
-  { key: "symbol", header: "Symbol", render: (r) => <span className="font-mono font-semibold">{r.symbol}</span> },
+  {
+    key: "date",
+    header: "Date",
+    sortValue: (r) => r.tradeDate.replace(/\D/g, ""),
+    render: (r) => <span className="tabular-nums">{fmtDate(r.tradeDate)}</span>,
+  },
+  {
+    key: "symbol",
+    header: "Symbol",
+    sortValue: (r) => r.symbol,
+    sortDescFirst: false,
+    searchValue: (r) => r.symbol,
+    render: (r) => <span className="font-mono font-semibold">{r.symbol}</span>,
+  },
   {
     key: "side",
     header: "Side",
+    sortValue: (r) => (r.quantity >= 0 ? "BUY" : "SELL"),
+    sortDescFirst: false,
+    filterValue: (r) => (r.quantity >= 0 ? "BUY" : "SELL"),
+    filterLabel: "Side",
     render: (r) => (
       <span
         className={`font-semibold ${r.quantity >= 0 ? "text-emerald-400" : "text-rose-400"}`}
@@ -328,12 +360,16 @@ const tradeColumns: DataColumn<FutuTrade>[] = [
     key: "qty",
     header: "Qty",
     align: "right",
+    sortValue: (r) => Math.abs(r.quantity),
     render: (r) => <span className="tabular-nums">{fmtQty(Math.abs(r.quantity))}</span>,
   },
   {
     key: "price",
     header: "Price",
     align: "right",
+    sortValue: (r) => r.tradePrice,
+    filterValue: (r) => r.currency.toUpperCase(),
+    filterLabel: "Currency",
     render: (r) => (
       <span className="tabular-nums">
         {fmtMoney(r.tradePrice)} <span className="text-zinc-500">{r.currency}</span>
@@ -343,8 +379,32 @@ const tradeColumns: DataColumn<FutuTrade>[] = [
 ];
 
 function AccountSection({ account }: { account: FutuAccount }) {
-  const posPager = usePager(account.positions, 10);
-  const tradePager = usePager(account.trades, 10);
+  const posTools = useTableTools<FutuPosition>({ storageKey: "futu-pos-tools" });
+  const posSort = useTableSort(positionColumns, {
+    defaultKey: "symbol",
+    storageKey: "futu-positions",
+  });
+  const posPager = usePager(
+    posSort.applySort(posTools.apply(account.positions, positionColumns)),
+    10,
+  );
+  const tradeTools = useTableTools<FutuTrade>({ storageKey: "futu-trades-tools" });
+  const tradeSort = useTableSort(tradeColumns, {
+    defaultKey: "date",
+    storageKey: "futu-trades",
+  });
+  const tradePager = usePager(
+    tradeSort.applySort(tradeTools.apply(account.trades, tradeColumns)),
+    10,
+  );
+  const handlePosSortChange = (key: string) => {
+    posSort.toggleSort(key);
+    posPager.reset();
+  };
+  const handleTradeSortChange = (key: string) => {
+    tradeSort.toggleSort(key);
+    tradePager.reset();
+  };
   return (
     <div className="mt-4 rounded-lg border border-zinc-800 p-3">
       <p className="font-mono text-sm font-semibold text-zinc-300">
@@ -355,10 +415,26 @@ function AccountSection({ account }: { account: FutuAccount }) {
           <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-zinc-500">
             Positions ({account.positions.length})
           </p>
+          <div className="mb-2">
+            <TableToolbar
+              tools={posTools}
+              columns={positionColumns}
+              rows={account.positions}
+              searchPlaceholder="Search symbol or name…"
+              onChange={() => posPager.reset()}
+            />
+          </div>
           <DataTable
             columns={positionColumns}
             rows={posPager.rows}
             keyOf={(r) => r.id}
+            sort={posSort.sort}
+            onSortChange={handlePosSortChange}
+            emptyText={
+              posTools.hasActive
+                ? "No positions match the current filters."
+                : undefined
+            }
             footer={
               <Pagination
                 page={posPager.page}
@@ -374,10 +450,26 @@ function AccountSection({ account }: { account: FutuAccount }) {
           <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-zinc-500">
             Recent trades ({account.trades.length})
           </p>
+          <div className="mb-2">
+            <TableToolbar
+              tools={tradeTools}
+              columns={tradeColumns}
+              rows={account.trades}
+              searchPlaceholder="Search symbol…"
+              onChange={() => tradePager.reset()}
+            />
+          </div>
           <DataTable
             columns={tradeColumns}
             rows={tradePager.rows}
             keyOf={(r) => r.id}
+            sort={tradeSort.sort}
+            onSortChange={handleTradeSortChange}
+            emptyText={
+              tradeTools.hasActive
+                ? "No trades match the current filters."
+                : undefined
+            }
             footer={
               <Pagination
                 page={tradePager.page}

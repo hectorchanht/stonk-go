@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applyTableFilters,
   compareSortValues,
+  deriveFilterOptions,
+  matchesFilters,
+  matchesSearch,
   resolveSortToggle,
   sortRows,
+  type FilterableColumn,
   type SortableColumn,
 } from "./table-sort";
 
@@ -123,5 +128,90 @@ describe("resolveSortToggle", () => {
     expect(resolveSortToggle(prev, "c", cols)).toBe(prev);
     expect(resolveSortToggle(null, "c", cols)).toBeNull();
     expect(resolveSortToggle(null, "nope", cols)).toBeNull();
+  });
+});
+
+describe("table search + filters", () => {
+  interface Row {
+    symbol: string;
+    name: string;
+    currency: string | null;
+    qty: number;
+  }
+  const rows: Row[] = [
+    { symbol: "AAPL", name: "Apple Inc", currency: "USD", qty: 10 },
+    { symbol: "0700.HK", name: "Tencent", currency: "HKD", qty: -5 },
+    { symbol: "MSFT", name: "Microsoft", currency: "USD", qty: 3 },
+    { symbol: "0005.HK", name: "HSBC", currency: null, qty: 100 },
+  ];
+  const cols: FilterableColumn<Row>[] = [
+    {
+      key: "symbol",
+      searchValue: (r) => `${r.symbol} ${r.name}`,
+      filterValue: (r) => (r.symbol.endsWith(".HK") ? "HK" : "US"),
+    },
+    { key: "qty", filterValue: (r) => (r.qty >= 0 ? "BUY" : "SELL") },
+    { key: "currency", filterValue: (r) => r.currency },
+  ];
+
+  it("matchesSearch is case-insensitive across searchValue columns", () => {
+    expect(matchesSearch(rows[0]!, cols, "aapl")).toBe(true);
+    expect(matchesSearch(rows[0]!, cols, "APPLE")).toBe(true);
+    expect(matchesSearch(rows[1]!, cols, "tencent")).toBe(true);
+    expect(matchesSearch(rows[1]!, cols, "0700")).toBe(true);
+    expect(matchesSearch(rows[2]!, cols, "zzz")).toBe(false);
+    expect(matchesSearch(rows[0]!, cols, "  ")).toBe(true);
+  });
+
+  it("matchesFilters ANDs active filters and ignores unknown keys", () => {
+    expect(matchesFilters(rows[0]!, cols, {})).toBe(true);
+    expect(matchesFilters(rows[0]!, cols, { symbol: "" })).toBe(true);
+    expect(matchesFilters(rows[0]!, cols, { symbol: "US" })).toBe(true);
+    expect(matchesFilters(rows[1]!, cols, { symbol: "US" })).toBe(false);
+    expect(matchesFilters(rows[0]!, cols, { symbol: "US", qty: "BUY" })).toBe(true);
+    expect(matchesFilters(rows[0]!, cols, { symbol: "US", qty: "SELL" })).toBe(false);
+    expect(matchesFilters(rows[1]!, cols, { nope: "x" })).toBe(true);
+  });
+
+  it("applyTableFilters combines search and filters without mutating", () => {
+    const before = [...rows];
+    const out = applyTableFilters(rows, cols, "hk", { qty: "BUY" });
+    expect(out.map((r) => r.symbol)).toEqual(["0005.HK"]);
+    expect(rows).toEqual(before);
+    expect(applyTableFilters(rows, cols, "", {})).toBe(rows);
+  });
+
+  it("deriveFilterOptions counts values and sorts by count desc", () => {
+    const opts = deriveFilterOptions(rows, cols);
+    expect(opts.symbol).toEqual([
+      { value: "HK", label: "HK", count: 2 },
+      { value: "US", label: "US", count: 2 },
+    ]);
+    expect(opts.qty).toEqual([
+      { value: "BUY", label: "BUY", count: 3 },
+      { value: "SELL", label: "SELL", count: 1 },
+    ]);
+    expect(opts.currency).toEqual([
+      { value: "USD", label: "USD", count: 2 },
+      { value: "", label: "—", count: 1 },
+      { value: "HKD", label: "HKD", count: 1 },
+    ]);
+  });
+
+  it("deriveFilterOptions respects explicit filterOptions", () => {
+    const explicit: FilterableColumn<Row>[] = [
+      {
+        key: "qty",
+        filterValue: (r) => (r.qty >= 0 ? "BUY" : "SELL"),
+        filterOptions: [
+          { value: "BUY", label: "Long" },
+          { value: "SELL", label: "Short" },
+        ],
+      },
+    ];
+    expect(deriveFilterOptions(rows, explicit).qty).toEqual([
+      { value: "BUY", label: "Long", count: 3 },
+      { value: "SELL", label: "Short", count: 1 },
+    ]);
   });
 });

@@ -1360,6 +1360,7 @@ function TransactionForm() {
 }
 
 type TxnFilter = "ALL" | "BUY" | "SELL";
+type TxnSourceFilter = "all" | "manual" | "ibkr";
 
 function TransactionList() {
   const money = useMoney();
@@ -1376,6 +1377,7 @@ function TransactionList() {
   });
 
   const [typeFilter, setTypeFilter] = useState<TxnFilter>("ALL");
+  const [sourceFilter, setSourceFilter] = useState<TxnSourceFilter>("all");
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
@@ -1383,11 +1385,12 @@ function TransactionList() {
     return (data ?? []).filter(
       (t) =>
         (typeFilter === "ALL" || t.type === typeFilter) &&
+        (sourceFilter === "all" || t.source === sourceFilter) &&
         (!q ||
           t.symbol.toLowerCase().includes(q) ||
           (t.note ?? "").toLowerCase().includes(q)),
     );
-  }, [data, typeFilter, query]);
+  }, [data, typeFilter, sourceFilter, query]);
 
   const exportCsv = () =>
     downloadCsv(
@@ -1547,6 +1550,30 @@ function TransactionList() {
             </button>
           ))}
         </div>
+        <div
+          className="flex shrink-0 overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700"
+          role="group"
+          aria-label="Filter by source"
+        >
+          {(["all", "manual", "ibkr"] as const).map((sf) => (
+            <button
+              key={sf}
+              type="button"
+              onClick={() => {
+                setSourceFilter(sf);
+                pager.reset();
+              }}
+              aria-pressed={sourceFilter === sf}
+              className={`px-2.5 py-1.5 text-xs font-semibold uppercase ${
+                sourceFilter === sf
+                  ? "bg-zinc-600 text-white"
+                  : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-700"
+              }`}
+            >
+              {sf}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           onClick={exportCsv}
@@ -1569,7 +1596,7 @@ function TransactionList() {
           sort={txnSort.sort}
           onSortChange={handleTxnSortChange}
           emptyText={
-            query || typeFilter !== "ALL"
+            query || typeFilter !== "ALL" || sourceFilter !== "all"
               ? "No transactions match that filter."
               : "Nothing logged yet."
           }

@@ -23,8 +23,10 @@ import {
 import {
   DataTable,
   Pagination,
+  TableToolbar,
   usePager,
   useTableSort,
+  useTableTools,
   type DataColumn,
 } from "~/app/_components/ui";
 
@@ -360,6 +362,7 @@ function CurrencyGroup({ currency, list }: { currency: string; list: WbPosition[
       header: "Symbol",
       sortValue: (p) => p.symbol,
       sortDescFirst: false,
+      searchValue: (p) => p.symbol,
       render: (p) => (
         <span className="font-semibold text-zinc-100">{p.symbol}</span>
       ),
@@ -387,11 +390,16 @@ function CurrencyGroup({ currency, list }: { currency: string; list: WbPosition[
     defaultKey: "qty",
     storageKey: "wb-positions",
   });
-  const pager = usePager(posSort.applySort(list), 10);
+  const posTools = useTableTools<WbPosition>({ storageKey: "wb-pos-tools" });
+  const pager = usePager(
+    posSort.applySort(posTools.apply(list, columns)),
+    10,
+  );
   const handlePosSortChange = (key: string) => {
     posSort.toggleSort(key);
     pager.reset();
   };
+  const handlePosToolsChange = () => pager.reset();
   return (
     <div className="mt-3">
       <div className="flex items-baseline justify-between">
@@ -403,12 +411,26 @@ function CurrencyGroup({ currency, list }: { currency: string; list: WbPosition[
         </span>
       </div>
       <div className="mt-2 overflow-hidden rounded-xl border border-zinc-800">
+        <div className="border-b border-zinc-800/60 px-3 py-2">
+          <TableToolbar
+            tools={posTools}
+            columns={columns}
+            rows={list}
+            searchPlaceholder="Search symbol…"
+            onChange={handlePosToolsChange}
+          />
+        </div>
         <DataTable
           columns={columns}
           rows={pager.rows}
           keyOf={(p, i) => `${p.symbol}-${i}`}
           sort={posSort.sort}
           onSortChange={handlePosSortChange}
+          emptyText={
+            posTools.hasActive
+              ? "No positions match the current search."
+              : undefined
+          }
           footer={<Pagination page={pager.page} pageCount={pager.pageCount} onPage={pager.setPage} />}
         />
       </div>
@@ -479,6 +501,7 @@ function RecentTrades({ trades }: { trades: WbRecentTrade[] }) {
       header: "Symbol",
       sortValue: (tr) => tr.symbol,
       sortDescFirst: false,
+      searchValue: (tr) => tr.symbol,
       render: (tr) => <span className="font-semibold text-zinc-100">{tr.symbol}</span>,
     },
     {
@@ -486,6 +509,8 @@ function RecentTrades({ trades }: { trades: WbRecentTrade[] }) {
       header: "Qty",
       align: "right",
       sortValue: (tr) => tr.quantity,
+      filterValue: (tr) => (tr.quantity >= 0 ? "BUY" : "SELL"),
+      filterLabel: "Side",
       render: (tr) => (
         <span className={tr.quantity >= 0 ? "text-emerald-400" : "text-rose-400"}>
           {tr.quantity >= 0 ? "+" : ""}
@@ -498,6 +523,8 @@ function RecentTrades({ trades }: { trades: WbRecentTrade[] }) {
       header: "Price",
       align: "right",
       sortValue: (tr) => tr.tradePrice,
+      filterValue: (tr) => (tr.currency ?? "").toUpperCase(),
+      filterLabel: "Currency",
       render: (tr) => (
         <span className="text-zinc-300">
           {tr.tradePrice == null ? "—" : money(tr.tradePrice)}
@@ -510,11 +537,18 @@ function RecentTrades({ trades }: { trades: WbRecentTrade[] }) {
     defaultKey: "date",
     storageKey: "wb-trades",
   });
-  const tradePager = usePager(tradeSort.applySort(trades), 10);
+  const tradeTools = useTableTools<WbRecentTrade>({
+    storageKey: "wb-trades-tools",
+  });
+  const tradePager = usePager(
+    tradeSort.applySort(tradeTools.apply(trades, columns)),
+    10,
+  );
   const handleTradeSortChange = (key: string) => {
     tradeSort.toggleSort(key);
     tradePager.reset();
   };
+  const handleTradeToolsChange = () => tradePager.reset();
   return (
     <div className="mt-5 border-t border-zinc-800 pt-4">
       <h3 className="text-sm font-bold uppercase tracking-wide text-zinc-400">
@@ -526,12 +560,26 @@ function RecentTrades({ trades }: { trades: WbRecentTrade[] }) {
         </p>
       ) : (
         <div className="mt-3 overflow-hidden rounded-xl border border-zinc-800">
+          <div className="border-b border-zinc-800/60 px-3 py-2">
+            <TableToolbar
+              tools={tradeTools}
+              columns={columns}
+              rows={trades}
+              searchPlaceholder="Search symbol…"
+              onChange={handleTradeToolsChange}
+            />
+          </div>
           <DataTable
             columns={columns}
             rows={tradePager.rows}
             keyOf={(tr) => tr.id}
             sort={tradeSort.sort}
             onSortChange={handleTradeSortChange}
+            emptyText={
+              tradeTools.hasActive
+                ? "No trades match the current filters."
+                : undefined
+            }
             footer={
               <Pagination page={tradePager.page} pageCount={tradePager.pageCount} onPage={tradePager.setPage} />
             }

@@ -24,7 +24,10 @@ import {
   DataTable,
   Pagination,
   StatCard,
+  TableToolbar,
   usePager,
+  useTableSort,
+  useTableTools,
   type DataColumn,
 } from "~/app/_components/ui";
 
@@ -321,6 +324,9 @@ const positionColumns: DataColumn<LbPosition>[] = [
   {
     key: "symbol",
     header: "Symbol",
+    sortValue: (p) => p.symbol,
+    sortDescFirst: false,
+    searchValue: (p) => p.symbol,
     render: (p) => (
       <span className="font-mono font-semibold text-zinc-100">{p.symbol}</span>
     ),
@@ -329,18 +335,24 @@ const positionColumns: DataColumn<LbPosition>[] = [
     key: "qty",
     header: "Qty",
     align: "right",
+    sortValue: (p) => p.quantity,
     render: (p) => <span className="tabular-nums text-zinc-300">{qtyFmt(p.quantity)}</span>,
   },
   {
     key: "cost",
     header: "Cost",
     align: "right",
+    sortValue: (p) => p.costPrice,
     render: (p) => <span className="tabular-nums text-zinc-400">{moneyFmt(p.costPrice)}</span>,
   },
   {
     key: "ccy",
     header: "Ccy",
     align: "right",
+    sortValue: (p) => p.currency ?? "",
+    sortDescFirst: false,
+    filterValue: (p) => (p.currency ?? "").toUpperCase(),
+    filterLabel: "Currency",
     render: (p) => <CurBadge currency={p.currency} />,
   },
 ];
@@ -349,16 +361,24 @@ const tradeColumns: DataColumn<LbTrade>[] = [
   {
     key: "date",
     header: "Date",
+    sortValue: (t) => t.tradeDate.replace(/\D/g, ""),
     render: (t) => <span className="whitespace-nowrap tabular-nums text-zinc-400">{fmtYmd(t.tradeDate)}</span>,
   },
   {
     key: "symbol",
     header: "Symbol",
+    sortValue: (t) => t.symbol,
+    sortDescFirst: false,
+    searchValue: (t) => t.symbol,
     render: (t) => <span className="font-mono font-semibold text-zinc-100">{t.symbol}</span>,
   },
   {
     key: "side",
     header: "Side",
+    sortValue: (t) => (t.quantity >= 0 ? "BUY" : "SELL"),
+    sortDescFirst: false,
+    filterValue: (t) => (t.quantity >= 0 ? "BUY" : "SELL"),
+    filterLabel: "Side",
     render: (t) => (
       <span className={`font-semibold ${t.quantity >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
         {t.quantity >= 0 ? "BUY" : "SELL"}
@@ -369,12 +389,16 @@ const tradeColumns: DataColumn<LbTrade>[] = [
     key: "qty",
     header: "Qty",
     align: "right",
+    sortValue: (t) => Math.abs(t.quantity),
     render: (t) => <span className="tabular-nums text-zinc-300">{qtyFmt(Math.abs(t.quantity))}</span>,
   },
   {
     key: "price",
     header: "Price",
     align: "right",
+    sortValue: (t) => t.tradePrice,
+    filterValue: (t) => (t.currency ?? "").toUpperCase(),
+    filterLabel: "Currency",
     render: (t) => (
       <span className="tabular-nums text-zinc-300">
         {moneyFmt(t.tradePrice)}
@@ -442,8 +466,32 @@ export function LongbridgeCard() {
 
   // Hooks must run unconditionally — before any early return.
   const data = sync.data ?? null;
-  const posPager = usePager(data?.positions ?? [], 10);
-  const tradePager = usePager(data?.trades ?? [], 10);
+  const posTools = useTableTools<LbPosition>({ storageKey: "lb-pos-tools" });
+  const posSort = useTableSort(positionColumns, {
+    defaultKey: "symbol",
+    storageKey: "lb-positions",
+  });
+  const posPager = usePager(
+    posSort.applySort(posTools.apply(data?.positions ?? [], positionColumns)),
+    10,
+  );
+  const tradeTools = useTableTools<LbTrade>({ storageKey: "lb-trades-tools" });
+  const tradeSort = useTableSort(tradeColumns, {
+    defaultKey: "date",
+    storageKey: "lb-trades",
+  });
+  const tradePager = usePager(
+    tradeSort.applySort(tradeTools.apply(data?.trades ?? [], tradeColumns)),
+    10,
+  );
+  const handlePosSortChange = (key: string) => {
+    posSort.toggleSort(key);
+    posPager.reset();
+  };
+  const handleTradeSortChange = (key: string) => {
+    tradeSort.toggleSort(key);
+    tradePager.reset();
+  };
 
   if (sessionStatus === "loading") {
     return (
@@ -553,10 +601,26 @@ export function LongbridgeCard() {
                 Positions ({data.positions.length})
               </p>
               <div className="overflow-hidden rounded-xl border border-zinc-800">
+                <div className="border-b border-zinc-800/60 px-3 py-2">
+                  <TableToolbar
+                    tools={posTools}
+                    columns={positionColumns}
+                    rows={data.positions}
+                    searchPlaceholder="Search symbol…"
+                    onChange={() => posPager.reset()}
+                  />
+                </div>
                 <DataTable
                   columns={positionColumns}
                   rows={posPager.rows}
                   keyOf={(p, i) => `${p.accountChannel}-${p.symbol}-${i}`}
+                  sort={posSort.sort}
+                  onSortChange={handlePosSortChange}
+                  emptyText={
+                    posTools.hasActive
+                      ? "No positions match the current filters."
+                      : undefined
+                  }
                   footer={
                     <Pagination page={posPager.page} pageCount={posPager.pageCount} onPage={posPager.setPage} />
                   }
@@ -571,10 +635,26 @@ export function LongbridgeCard() {
                 Recent trades ({data.tradeCount})
               </p>
               <div className="overflow-hidden rounded-xl border border-zinc-800">
+                <div className="border-b border-zinc-800/60 px-3 py-2">
+                  <TableToolbar
+                    tools={tradeTools}
+                    columns={tradeColumns}
+                    rows={data.trades}
+                    searchPlaceholder="Search symbol…"
+                    onChange={() => tradePager.reset()}
+                  />
+                </div>
                 <DataTable
                   columns={tradeColumns}
                   rows={tradePager.rows}
                   keyOf={(t, i) => `${t.orderId}-${i}`}
+                  sort={tradeSort.sort}
+                  onSortChange={handleTradeSortChange}
+                  emptyText={
+                    tradeTools.hasActive
+                      ? "No trades match the current filters."
+                      : undefined
+                  }
                   footer={
                     <Pagination page={tradePager.page} pageCount={tradePager.pageCount} onPage={tradePager.setPage} />
                   }

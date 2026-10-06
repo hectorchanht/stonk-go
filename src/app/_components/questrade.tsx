@@ -25,8 +25,10 @@ import {
   DataTable,
   Pagination,
   StatCard,
+  TableToolbar,
   usePager,
   useTableSort,
+  useTableTools,
   type DataColumn,
 } from "~/app/_components/ui";
 
@@ -312,6 +314,7 @@ function CurrencyGroup({ currency, list }: { currency: string; list: QtPosition[
       header: "Symbol",
       sortValue: (p) => p.symbol,
       sortDescFirst: false,
+      searchValue: (p) => p.symbol,
       render: (p) => (
         <span className="font-semibold text-zinc-100">
           {p.symbol}
@@ -355,11 +358,16 @@ function CurrencyGroup({ currency, list }: { currency: string; list: QtPosition[
     defaultKey: "value",
     storageKey: "qt-positions",
   });
-  const pager = usePager(posSort.applySort(list), 10);
+  const posTools = useTableTools<QtPosition>({ storageKey: "qt-pos-tools" });
+  const pager = usePager(
+    posSort.applySort(posTools.apply(list, columns)),
+    10,
+  );
   const handlePosSortChange = (key: string) => {
     posSort.toggleSort(key);
     pager.reset();
   };
+  const handlePosToolsChange = () => pager.reset();
   return (
     <div className="mt-3">
       <div className="flex items-baseline justify-between">
@@ -369,12 +377,26 @@ function CurrencyGroup({ currency, list }: { currency: string; list: QtPosition[
         <span className="text-lg font-bold tabular-nums">{money(subtotal)}</span>
       </div>
       <div className="mt-2 overflow-hidden rounded-xl border border-zinc-800">
+        <div className="border-b border-zinc-800/60 px-3 py-2">
+          <TableToolbar
+            tools={posTools}
+            columns={columns}
+            rows={list}
+            searchPlaceholder="Search symbol…"
+            onChange={handlePosToolsChange}
+          />
+        </div>
         <DataTable
           columns={columns}
           rows={pager.rows}
           keyOf={(p, i) => `${p.accountNumber}-${p.symbol}-${i}`}
           sort={posSort.sort}
           onSortChange={handlePosSortChange}
+          emptyText={
+            posTools.hasActive
+              ? "No positions match the current search."
+              : undefined
+          }
           footer={<Pagination page={pager.page} pageCount={pager.pageCount} onPage={pager.setPage} />}
         />
       </div>
@@ -506,6 +528,7 @@ function AnalyticsView({ data }: { data: SyncResult["analytics"] }) {
       header: "Symbol",
       sortValue: (tr) => tr.symbol,
       sortDescFirst: false,
+      searchValue: (tr) => tr.symbol,
       render: (tr) => <span className="font-semibold text-zinc-100">{tr.symbol}</span>,
     },
     {
@@ -513,6 +536,8 @@ function AnalyticsView({ data }: { data: SyncResult["analytics"] }) {
       header: "Qty",
       align: "right",
       sortValue: (tr) => tr.quantity,
+      filterValue: (tr) => (tr.quantity >= 0 ? "BUY" : "SELL"),
+      filterLabel: "Side",
       render: (tr) => <span className="text-zinc-300">{qtyFmt(tr.quantity)}</span>,
     },
     {
@@ -532,11 +557,18 @@ function AnalyticsView({ data }: { data: SyncResult["analytics"] }) {
     defaultKey: "date",
     storageKey: "qt-trades",
   });
-  const tradePager = usePager(qtTradeSort.applySort(data.recentTrades), 10);
+  const qtTradeTools = useTableTools<(typeof data.recentTrades)[number]>({
+    storageKey: "qt-trades-tools",
+  });
+  const tradePager = usePager(
+    qtTradeSort.applySort(qtTradeTools.apply(data.recentTrades, tradeColumns)),
+    10,
+  );
   const handleQtTradeSortChange = (key: string) => {
     qtTradeSort.toggleSort(key);
     tradePager.reset();
   };
+  const handleQtTradeToolsChange = () => tradePager.reset();
 
   return (
     <div className="mt-5 border-t border-zinc-800 pt-4">
@@ -564,12 +596,26 @@ function AnalyticsView({ data }: { data: SyncResult["analytics"] }) {
       </div>
       {data.recentTrades.length > 0 && (
         <div className="mt-4 overflow-hidden rounded-xl border border-zinc-800">
+          <div className="border-b border-zinc-800/60 px-3 py-2">
+            <TableToolbar
+              tools={qtTradeTools}
+              columns={tradeColumns}
+              rows={data.recentTrades}
+              searchPlaceholder="Search symbol…"
+              onChange={handleQtTradeToolsChange}
+            />
+          </div>
           <DataTable
             columns={tradeColumns}
             rows={tradePager.rows}
             keyOf={(tr) => tr.id}
             sort={qtTradeSort.sort}
             onSortChange={handleQtTradeSortChange}
+            emptyText={
+              qtTradeTools.hasActive
+                ? "No trades match the current filters."
+                : undefined
+            }
             footer={
               <Pagination page={tradePager.page} pageCount={tradePager.pageCount} onPage={tradePager.setPage} />
             }

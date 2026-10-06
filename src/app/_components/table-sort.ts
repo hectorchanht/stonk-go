@@ -97,3 +97,136 @@ export function resolveSortToggle<T>(
   }
   return { key, dir: col.sortDescFirst === false ? 1 : -1 };
 }
+
+/* ---------------- search + column filters ---------------- */
+
+/** Structural subset of DataColumn needed for search/filter (no React types). */
+export interface FilterableColumn<T> {
+  key: string;
+  /** Text matched by the toolbar search box (case-insensitive substring). */
+  searchValue?: (row: T) => string;
+  /** Categorical value for the toolbar's filter dropdown for this column. */
+  filterValue?: (row: T) => string | null | undefined;
+  /** Explicit filter options; when omitted they are derived from the rows. */
+  filterOptions?: { value: string; label: string }[];
+}
+
+export interface FilterOption {
+  value: string;
+  label: string;
+  count: number;
+}
+
+/** Case-insensitive substring match across every column with a searchValue. */
+export function matchesSearch<T>(
+  row: T,
+  columns: FilterableColumn<T>[],
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return columns.some((c) => {
+    if (!c.searchValue) return false;
+    let v: string;
+    try {
+      v = c.searchValue(row);
+    } catch {
+      return false;
+    }
+    return typeof v === "string" && v.toLowerCase().includes(q);
+  });
+}
+
+/** Every active column filter must match (AND). Unknown keys are ignored. */
+export function matchesFilters<T>(
+  row: T,
+  columns: FilterableColumn<T>[],
+  filters: Record<string, string>,
+): boolean {
+  for (const [key, selected] of Object.entries(filters)) {
+    if (!selected) continue; // "" = All
+    const col = columns.find((c) => c.key === key);
+    if (!col?.filterValue) continue;
+    let v: string | null | undefined;
+    try {
+      v = col.filterValue(row);
+    } catch {
+      return false;
+    }
+    if ((v ?? "") !== selected) return false;
+  }
+  return true;
+}
+
+/** Search + column filters, applied together. Never mutates the input. */
+export function applyTableFilters<T>(
+  rows: T[],
+  columns: FilterableColumn<T>[],
+  search: string,
+  filters: Record<string, string>,
+): T[] {
+  const q = search.trim();
+  const hasFilters = Object.values(filters).some((v) => v !== "");
+  if (!q && !hasFilters) return rows;
+  return rows.filter(
+    (r) => matchesSearch(r, columns, q) && matchesFilters(r, columns, filters),
+  );
+}
+
+/**
+ * Build dropdown options for every filterable column from the full row
+ * list. Explicit filterOptions win; otherwise unique filterValue results
+ * become options, sorted by count desc then label asc, with per-option
+ * counts. Null/empty values are grouped under "—".
+ */
+export function deriveFilterOptions<T>(
+  rows: T[],
+  columns: FilterableColumn<T>[],
+): Record<string, FilterOption[]> {
+  const out: Record<string, FilterOption[]> = {};
+  for (const col of columns) {
+    if (!col.filterValue && !col.filterOptions) continue;
+    if (col.filterOptions) {
+      const counts = new Map<string, number>();
+      if (col.filterValue) {
+        for (const r of rows) {
+          let v: string | null | undefined;
+          try {
+            v = col.filterValue(r);
+          } catch {
+            continue;
+          }
+          const key = v ?? "";
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        }
+      }
+      out[col.key] = col.filterOptions.map((o) => ({
+        value: o.value,
+        label: o.label,
+        count: counts.get(o.value) ?? 0,
+      }));
+      continue;
+    }
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      let v: string | null | undefined;
+      try {
+        v = col.filterValue!(r);
+      } catch {
+        continue;
+      }
+      const key = v ?? "";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    out[col.key] = [...counts.entries()]
+      .map(([value, count]) => ({
+        value,
+        label: value === "" ? "—" : value,
+        count,
+      }))
+      .sort(
+        (a, b) => b.count - a.count || a.label.localeCompare(b.label),
+      );
+  }
+  return out;
+}

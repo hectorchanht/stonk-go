@@ -3,9 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
   Bitcoin,
   Check,
   ChevronDown,
@@ -23,7 +20,15 @@ import {
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { useCurrency } from "~/app/_components/currency";
-import { sortRows, type SortDir } from "~/app/_components/ui";
+import {
+  DataTable,
+  Pagination,
+  TableToolbar,
+  usePager,
+  useTableSort,
+  useTableTools,
+  type DataColumn,
+} from "~/app/_components/ui";
 import { syncBinanceViaWs } from "~/app/_components/binance-ws";
 import {
   Code,
@@ -366,75 +371,73 @@ function GearMenu({
   );
 }
 
-type BalSortKey = "asset" | "qty" | "price" | "value";
+type BalRow = SyncResult["items"][number];
 
 function BalancesTable({ data }: { data: SyncResult }) {
   const { fmt } = useCurrency();
   const money = (cents: number | null) =>
     cents == null ? "—" : fmt(cents / 100);
-  const [sortKey, setSortKey] = useState<BalSortKey>("value");
-  const [sortDir, setSortDir] = useState<SortDir>(-1);
-  const sortVal = (
-    r: SyncResult["items"][number],
-    k: BalSortKey,
-  ): string | number | bigint | null => {
-    switch (k) {
-      case "asset":
-        return r.asset;
-      case "qty": {
+
+  const columns: DataColumn<BalRow>[] = [
+    {
+      key: "asset",
+      header: "Asset",
+      sortValue: (r) => r.asset,
+      sortDescFirst: false,
+      searchValue: (r) => r.asset,
+      render: (r) => <span className="font-semibold">{r.asset}</span>,
+    },
+    {
+      key: "qty",
+      header: "Qty",
+      align: "right",
+      sortValue: (r) => {
         const n = Number(r.quantity);
         return Number.isNaN(n) ? null : n;
-      }
-      case "price":
-        return r.priceUsd == null || Number.isNaN(Number(r.priceUsd))
+      },
+      render: (r) => (
+        <span className="tabular-nums text-zinc-300" title="Native quantity (exact)">
+          {r.quantity}
+        </span>
+      ),
+    },
+    {
+      key: "price",
+      header: "Price",
+      align: "right",
+      sortValue: (r) =>
+        r.priceUsd == null || Number.isNaN(Number(r.priceUsd))
           ? null
-          : Number(r.priceUsd);
-      case "value":
-        return r.valueCents;
-    }
-  };
-  // Stable, view-only: ties keep sync order; unpriced rows sink to the bottom.
-  const rows = sortRows(data.items, (r) => sortVal(r, sortKey), sortDir);
-  const toggleSort = (k: BalSortKey) => {
-    if (sortKey === k) {
-      setSortDir((d) => (d === 1 ? -1 : 1));
-    } else {
-      setSortKey(k);
-      setSortDir(k === "asset" ? 1 : -1);
-    }
-  };
-  const sortTh = (
-    label: string,
-    k: BalSortKey,
-    align: "left" | "right" = "right",
-  ) => (
-    <button
-      type="button"
-      onClick={() => toggleSort(k)}
-      aria-label={`Sort by ${label}`}
-      aria-sort={
-        sortKey === k ? (sortDir === 1 ? "ascending" : "descending") : undefined
-      }
-      className={`inline-flex min-h-[44px] cursor-pointer items-center gap-1 uppercase hover:text-zinc-300 ${
-        sortKey === k ? "text-zinc-200" : "text-zinc-500"
-      } ${align === "right" ? "flex-row-reverse" : ""}`}
-    >
-      {label}
-      {sortKey === k ? (
-        sortDir === 1 ? (
-          <ArrowUp size={12} aria-hidden />
-        ) : (
-          <ArrowDown size={12} aria-hidden />
-        )
-      ) : (
-        <ArrowUpDown size={12} aria-hidden className="opacity-40" />
-      )}
-    </button>
+          : Number(r.priceUsd),
+      render: (r) => (
+        <span className="tabular-nums text-zinc-400">
+          {r.priceUsd == null ? "—" : money(Math.round(Number(r.priceUsd) * 100))}
+        </span>
+      ),
+    },
+    {
+      key: "value",
+      header: "Value",
+      align: "right",
+      sortValue: (r) => r.valueCents,
+      render: (r) => <span className="tabular-nums">{money(r.valueCents)}</span>,
+    },
+  ];
+
+  const tools = useTableTools<BalRow>({ storageKey: "ex-bal-tools" });
+  const balSort = useTableSort(columns, {
+    defaultKey: "value",
+    storageKey: "ex-balances",
+  });
+  const pager = usePager(
+    balSort.applySort(tools.apply(data.items, columns)),
+    10,
   );
-  // Long asset lists collapse: show the top 8, expand for the rest.
-  const [showAll, setShowAll] = useState(false);
-  const MAX_VISIBLE = 8;
-  const visible = showAll ? rows : rows.slice(0, MAX_VISIBLE);
+  const handleSortChange = (key: string) => {
+    balSort.toggleSort(key);
+    pager.reset();
+  };
+  const handleToolsChange = () => pager.reset();
   return (
     <div className="mt-3">
       <div className="flex items-baseline justify-between">
@@ -452,45 +455,36 @@ function BalancesTable({ data }: { data: SyncResult }) {
           No price for {data.unpriced.join(", ")} — quantities shown, excluded from total.
         </p>
       )}
-      <div className="mt-3 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs uppercase tracking-wide text-zinc-500">
-              <th className="pb-1 pr-3">{sortTh("Asset", "asset", "left")}</th>
-              <th className="pb-1 pr-3 text-right">{sortTh("Qty", "qty")}</th>
-              <th className="pb-1 pr-3 text-right">{sortTh("Price", "price")}</th>
-              <th className="pb-1 text-right">{sortTh("Value", "value")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((r) => (
-              <tr key={r.asset} className="border-t border-zinc-800/60 text-zinc-200">
-                <td className="py-2 pr-3 font-semibold">{r.asset}</td>
-                <td className="py-2 pr-3 text-right tabular-nums text-zinc-300" title="Native quantity (exact)">
-                  {r.quantity}
-                </td>
-                <td className="py-2 pr-3 text-right tabular-nums text-zinc-400">
-                  {r.priceUsd == null ? "—" : money(Math.round(Number(r.priceUsd) * 100))}
-                </td>
-                <td className="py-2 text-right tabular-nums">{money(r.valueCents)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {rows.length > MAX_VISIBLE && (
-        <button
-          type="button"
-          onClick={() => setShowAll((s) => !s)}
-          className="mt-2 flex w-full items-center justify-center gap-1 rounded-lg border border-zinc-800/60 px-3 py-1.5 text-xs font-medium text-zinc-500 hover:text-zinc-200"
-        >
-          {showAll ? "Show fewer" : `Show all ${rows.length} assets`}
-          <ChevronDown
-            size={13}
-            className={`transition-transform ${showAll ? "rotate-180" : ""}`}
+      <div className="mt-3 overflow-hidden rounded-xl border border-zinc-800">
+        <div className="border-b border-zinc-800/60 px-3 py-2">
+          <TableToolbar
+            tools={tools}
+            columns={columns}
+            rows={data.items}
+            searchPlaceholder="Search asset…"
+            onChange={handleToolsChange}
           />
-        </button>
-      )}
+        </div>
+        <DataTable
+          columns={columns}
+          rows={pager.rows}
+          keyOf={(r) => r.asset}
+          sort={balSort.sort}
+          onSortChange={handleSortChange}
+          emptyText={
+            tools.hasActive
+              ? "No assets match the current search."
+              : "No balances."
+          }
+          footer={
+            <Pagination
+              page={pager.page}
+              pageCount={pager.pageCount}
+              onPage={pager.setPage}
+            />
+          }
+        />
+      </div>
       <p className="mt-2 text-[11px] text-zinc-600">
         Quantities are native (e.g. BTC), values in USD at each asset&apos;s spot
         price at sync time.

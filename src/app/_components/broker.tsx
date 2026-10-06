@@ -32,8 +32,10 @@ import {
   RowSkeleton,
   Spinner,
   StatCard,
+  TableToolbar,
   usePager,
   useTableSort,
+  useTableTools,
   type DataColumn,
 } from "~/app/_components/ui";
 import { DividendIncome } from "~/app/_components/dividend-income";
@@ -179,12 +181,14 @@ function PositionsTable({ positions }: { positions: PositionLike[] }) {
   const money = useMoney();
   const total = positions.reduce<number>((a, p) => a + (valueOf(p) ?? 0), 0);
   const priced = positions.filter((p) => p.markPrice != null).length;
-  const pager = usePager(positions, 10);
 
   const columns: DataColumn<PositionLike>[] = [
     {
       key: "symbol",
       header: "Symbol",
+      sortValue: (p) => p.symbol,
+      sortDescFirst: false,
+      searchValue: (p) => `${p.symbol} ${p.description ?? ""}`,
       render: (p) => (
         <>
           <span className="font-semibold text-zinc-100">{p.symbol}</span>
@@ -205,12 +209,14 @@ function PositionsTable({ positions }: { positions: PositionLike[] }) {
       key: "qty",
       header: "Qty",
       align: "right",
+      sortValue: (p) => p.quantity,
       render: (p) => <span className="text-zinc-300">{qtyFmt(p.quantity)}</span>,
     },
     {
       key: "mark",
       header: "Mark",
       align: "right",
+      sortValue: (p) => p.markPrice,
       render: (p) => (
         <span className="text-zinc-400">
           {p.markPrice == null ? "—" : money(p.markPrice)}
@@ -221,11 +227,26 @@ function PositionsTable({ positions }: { positions: PositionLike[] }) {
       key: "value",
       header: "Value",
       align: "right",
+      sortValue: (p) => valueOf(p),
+      filterValue: (p) => p.currency.toUpperCase(),
+      filterLabel: "Currency",
       render: (p) => (
         <span className="font-medium text-zinc-100">{money(valueOf(p))}</span>
       ),
     },
   ];
+
+  const tools = useTableTools<PositionLike>({ storageKey: "ibkr-pos-tools" });
+  const posSort = useTableSort(columns, {
+    defaultKey: "value",
+    storageKey: "ibkr-positions",
+  });
+  const pager = usePager(posSort.applySort(tools.apply(positions, columns)), 10);
+  const handleSortChange = (key: string) => {
+    posSort.toggleSort(key);
+    pager.reset();
+  };
+  const handleToolsChange = () => pager.reset();
 
   return (
     <>
@@ -243,10 +264,24 @@ function PositionsTable({ positions }: { positions: PositionLike[] }) {
         </p>
       )}
       <div className="mt-3 overflow-hidden rounded-xl border border-zinc-800">
+        <div className="border-b border-zinc-800/60 px-3 py-2">
+          <TableToolbar
+            tools={tools}
+            columns={columns}
+            rows={positions}
+            searchPlaceholder="Search symbol or name…"
+            onChange={handleToolsChange}
+          />
+        </div>
         <DataTable
           columns={columns}
           rows={pager.rows}
           keyOf={(p, i) => p.id ?? `${p.symbol}-${i}`}
+          sort={posSort.sort}
+          onSortChange={handleSortChange}
+          emptyText={
+            tools.hasActive ? "No positions match the current filters." : undefined
+          }
           footer={
             <Pagination
               page={pager.page}
@@ -327,8 +362,6 @@ function AnalyticsView({ data }: { data: Analytics }) {
           0,
         );
 
-  const symPager = usePager(data.symbols, 10);
-
   const toneOf = (v: number | null): "pos" | "neg" | "neutral" =>
     v == null ? "neutral" : v > 0 ? "pos" : v < 0 ? "neg" : "neutral";
 
@@ -336,6 +369,9 @@ function AnalyticsView({ data }: { data: Analytics }) {
     {
       key: "symbol",
       header: "Symbol",
+      sortValue: (s) => s.symbol,
+      sortDescFirst: false,
+      searchValue: (s) => `${s.symbol} ${data.names?.[s.symbol] ?? ""}`,
       render: (s) => (
         <span className="font-semibold text-zinc-100">
           {s.symbol}
@@ -351,12 +387,16 @@ function AnalyticsView({ data }: { data: Analytics }) {
       key: "trades",
       header: "Trades",
       align: "right",
+      sortValue: (s) => s.trades,
       render: (s) => <span className="text-zinc-400">{s.trades}</span>,
     },
     {
       key: "pnl",
       header: "Realized P/L",
       align: "right",
+      sortValue: (s) => s.realizedPnl,
+      filterValue: (s) => (s.currency ?? "USD").toUpperCase(),
+      filterLabel: "Currency",
       render: (s) => (
         <span>
           {moneyFxSigned(s.realizedPnl, s.currency)}
@@ -368,11 +408,27 @@ function AnalyticsView({ data }: { data: Analytics }) {
       key: "fees",
       header: "Fees",
       align: "right",
+      sortValue: (s) => s.commissions,
       render: (s) => (
         <span className="text-zinc-400">{money(s.commissions)}</span>
       ),
     },
   ];
+
+  const symTools = useTableTools<SymbolAnalytics>({ storageKey: "ibkr-sym-tools" });
+  const symSort = useTableSort(symbolColumns, {
+    defaultKey: "pnl",
+    storageKey: "ibkr-symbols",
+  });
+  const symPager = usePager(
+    symSort.applySort(symTools.apply(data.symbols, symbolColumns)),
+    10,
+  );
+  const handleSymSortChange = (key: string) => {
+    symSort.toggleSort(key);
+    symPager.reset();
+  };
+  const handleSymToolsChange = () => symPager.reset();
 
   const tradeColumns: DataColumn<RecentTrade>[] = [
     {
@@ -390,6 +446,7 @@ function AnalyticsView({ data }: { data: Analytics }) {
       header: "Symbol",
       sortValue: (tr) => tr.symbol,
       sortDescFirst: false,
+      searchValue: (tr) => `${tr.symbol} ${data.names?.[tr.symbol] ?? ""}`,
       render: (tr) => (
         <span className="font-semibold text-zinc-100">
           {tr.symbol}
@@ -406,6 +463,8 @@ function AnalyticsView({ data }: { data: Analytics }) {
       header: "Qty",
       align: "right",
       sortValue: (tr) => tr.quantity,
+      filterValue: (tr) => (tr.quantity >= 0 ? "BUY" : "SELL"),
+      filterLabel: "Side",
       render: (tr) => (
         <span className="text-zinc-300">{qtyFmt(tr.quantity)}</span>
       ),
@@ -435,16 +494,22 @@ function AnalyticsView({ data }: { data: Analytics }) {
     },
   ];
 
+  const tradeTools = useTableTools<RecentTrade>({
+    storageKey: "ibkr-trades-tools",
+  });
   const tradeSort = useTableSort(tradeColumns, {
     defaultKey: "date",
     storageKey: "ibkr-trades",
   });
-  const sortedTrades = tradeSort.applySort(data.recentTrades);
+  const sortedTrades = tradeSort.applySort(
+    tradeTools.apply(data.recentTrades, tradeColumns),
+  );
   const tradePager = usePager(sortedTrades, 10);
   const handleTradeSortChange = (key: string) => {
     tradeSort.toggleSort(key);
     tradePager.reset();
   };
+  const handleTradeToolsChange = () => tradePager.reset();
 
   return (
     <div className="mt-5 border-t border-zinc-800 pt-4">
@@ -481,10 +546,26 @@ function AnalyticsView({ data }: { data: Analytics }) {
         <>
           {data.symbols.length > 0 && (
             <div className="mt-4 overflow-hidden rounded-xl border border-zinc-800">
+              <div className="border-b border-zinc-800/60 px-3 py-2">
+                <TableToolbar
+                  tools={symTools}
+                  columns={symbolColumns}
+                  rows={data.symbols}
+                  searchPlaceholder="Search symbol…"
+                  onChange={handleSymToolsChange}
+                />
+              </div>
               <DataTable
                 columns={symbolColumns}
                 rows={symPager.rows}
                 keyOf={(s) => s.symbol}
+                sort={symSort.sort}
+                onSortChange={handleSymSortChange}
+                emptyText={
+                  symTools.hasActive
+                    ? "No symbols match the current filters."
+                    : undefined
+                }
                 footer={
                   <Pagination
                     page={symPager.page}
@@ -501,12 +582,26 @@ function AnalyticsView({ data }: { data: Analytics }) {
                 Recent trades
               </h4>
               <div className="mt-2 overflow-hidden rounded-xl border border-zinc-800">
+                <div className="border-b border-zinc-800/60 px-3 py-2">
+                  <TableToolbar
+                    tools={tradeTools}
+                    columns={tradeColumns}
+                    rows={data.recentTrades}
+                    searchPlaceholder="Search symbol…"
+                    onChange={handleTradeToolsChange}
+                  />
+                </div>
                 <DataTable
                   columns={tradeColumns}
                   rows={tradePager.rows}
                   keyOf={(tr) => tr.id}
                   sort={tradeSort.sort}
                   onSortChange={handleTradeSortChange}
+                  emptyText={
+                    tradeTools.hasActive
+                      ? "No trades match the current filters."
+                      : undefined
+                  }
                   footer={
                     <Pagination
                       page={tradePager.page}
