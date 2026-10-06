@@ -120,6 +120,31 @@ One-time dashboard setup:
 Local worker preview: `npm run preview` (builds with opennext and serves via
 workerd).
 
+## Interactive Brokers (optional)
+
+The dashboard has an **Interactive Brokers** card that pulls your real
+positions (read-only) via IBKR's **Flex Web Service** — a token-based
+reporting API, so no IB Gateway or TWS needs to run anywhere.
+
+One-time setup in Client Portal:
+
+1. **Reports → Flex Queries** — create an *Activity* Flex Query with the
+   **Open Positions** section. Note its Query ID.
+2. **Settings → Account Settings → Reporting → Flex Web Service** —
+   generate a token (lasts up to ~1 year; set a reminder to rotate).
+3. Set `IBKR_FLEX_TOKEN` and `IBKR_FLEX_QUERY_ID`:
+   - locally: in `.env`
+   - on Cloudflare: dashboard → Worker → Settings → Variables (as secrets)
+4. Reload the page and hit **Sync from IBKR**.
+
+Notes:
+
+- Flex data is **end-of-day** (refreshes after market close), not live.
+- The token is read-only reporting access, but treat it like a password.
+- Synced positions are a snapshot in the `BrokerPosition` table; your
+  manual transaction log stays the source of truth for cost basis.
+- If the env vars are missing, the card shows these setup steps instead.
+
 ## Notes & roadmap
 
 - SQLite is the default; for a hosted deploy, switch `DATABASE_URL` to

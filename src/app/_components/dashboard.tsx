@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
+import { BrokerCard } from "~/app/_components/broker";
 
 type Summary = RouterOutputs["portfolio"]["summary"];
 type HoldingRow = Summary["rows"][number];
@@ -536,6 +537,7 @@ export function Dashboard() {
 
           <Allocation rows={data.rows} />
           <HoldingsTable rows={data.rows} />
+          <BrokerCard />
           <TransactionForm />
           <TransactionList />
 

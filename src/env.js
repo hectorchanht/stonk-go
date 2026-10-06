@@ -30,6 +30,11 @@ export const env = createEnv({
     // only wired up when both are set (see src/server/auth.ts).
     DISCORD_CLIENT_ID: z.string().optional(),
     DISCORD_CLIENT_SECRET: z.string().optional(),
+    // Optional: Interactive Brokers Flex Web Service (read-only positions sync).
+    // Create a Flex Query + token in Client Portal; the ibkr router reads
+    // these from the worker env first, then process.env (local dev).
+    IBKR_FLEX_TOKEN: z.string().optional(),
+    IBKR_FLEX_QUERY_ID: z.string().optional(),
   },
 
   /**
@@ -52,6 +57,8 @@ export const env = createEnv({
     NEXTAUTH_URL: process.env.NEXTAUTH_URL,
     DISCORD_CLIENT_ID: process.env.DISCORD_CLIENT_ID,
     DISCORD_CLIENT_SECRET: process.env.DISCORD_CLIENT_SECRET,
+    IBKR_FLEX_TOKEN: process.env.IBKR_FLEX_TOKEN,
+    IBKR_FLEX_QUERY_ID: process.env.IBKR_FLEX_QUERY_ID,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

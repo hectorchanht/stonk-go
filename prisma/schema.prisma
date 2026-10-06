@@ -53,6 +53,24 @@ model Transaction {
     @@index([executedAt])
 }
 
+// Snapshot of positions synced from Interactive Brokers via the
+// Flex Web Service (read-only). Refreshed by ibkr.sync; the manual
+// transaction log remains the source of truth for cost basis.
+model BrokerPosition {
+    id            String   @id @default(cuid())
+    accountId     String
+    symbol        String
+    description   String?
+    assetCategory String // "STK" | "OPT" | "FUT" | "CASH" | ...
+    currency      String
+    quantity      Float
+    markPrice     Float?
+    syncedAt      DateTime @default(now())
+
+    @@index([accountId])
+    @@index([symbol])
+}
+
 // Necessary for NextAuth
 model Account {
     id                       String  @id @default(cuid())

@@ -37,9 +37,38 @@ export interface TransactionRow {
   createdAt: Date;
 }
 
+export interface BrokerPositionRow {
+  id: string;
+  accountId: string;
+  symbol: string;
+  description: string | null;
+  assetCategory: string;
+  currency: string;
+  quantity: number;
+  markPrice: number | null;
+  syncedAt: Date;
+}
+
 type SortDir = "asc" | "desc";
 
 export interface AppDb {
+  brokerPosition: {
+    findMany(args: {
+      orderBy: Array<{ symbol?: SortDir; accountId?: SortDir }>;
+    }): Promise<BrokerPositionRow[]>;
+    deleteMany(): Promise<{ count: number }>;
+    createMany(args: {
+      data: Array<{
+        accountId: string;
+        symbol: string;
+        description?: string | null;
+        assetCategory: string;
+        currency: string;
+        quantity: number;
+        markPrice?: number | null;
+      }>;
+    }): Promise<{ count: number }>;
+  };
   holding: {
     findMany(args: { orderBy: { symbol: SortDir } }): Promise<HoldingRow[]>;
     upsert(args: {
@@ -86,6 +115,20 @@ function iso(d: Date | string): string {
   return d instanceof Date ? d.toISOString() : new Date(d).toISOString();
 }
 
+function mapBrokerPosition(r: RawRow): BrokerPositionRow {
+  return {
+    id: r.id as string,
+    accountId: r.accountId as string,
+    symbol: r.symbol as string,
+    description: (r.description as string | null) ?? null,
+    assetCategory: r.assetCategory as string,
+    currency: r.currency as string,
+    quantity: r.quantity as number,
+    markPrice: (r.markPrice as number | null) ?? null,
+    syncedAt: toDate(r.syncedAt),
+  };
+}
+
 function mapHolding(r: RawRow): HoldingRow {
   return {
     id: r.id as string,
@@ -113,6 +156,56 @@ function mapTransaction(r: RawRow): TransactionRow {
 }
 
 export function createD1Db(d1: D1Database): AppDb {
+  const brokerPosition: AppDb["brokerPosition"] = {
+    findMany: async (args) => {
+      const order = args.orderBy
+        .flatMap((o) =>
+          Object.entries(o).map(
+            ([k, v]) => `"${k}" ${v === "desc" ? "DESC" : "ASC"}`,
+          ),
+        )
+        .join(", ");
+      const sql = `SELECT * FROM "BrokerPosition"${order ? ` ORDER BY ${order}` : ""}`;
+      const { results } = await d1.prepare(sql).all();
+      return (results as unknown as RawRow[]).map(mapBrokerPosition);
+    },
+
+    deleteMany: async () => {
+      const r = await d1.prepare(`DELETE FROM "BrokerPosition"`).run();
+      return { count: r.meta.changes ?? 0 };
+    },
+
+    createMany: async (args) => {
+      // D1 has no bulk-insert API; sequential prepared statements are fine
+      // for position counts (tens of rows).
+      const now = new Date().toISOString();
+      let count = 0;
+      for (const d of args.data) {
+        await d1
+          .prepare(
+            `INSERT INTO "BrokerPosition"
+               ("id", "accountId", "symbol", "description", "assetCategory",
+                "currency", "quantity", "markPrice", "syncedAt")
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            d.accountId,
+            d.symbol,
+            d.description ?? null,
+            d.assetCategory,
+            d.currency,
+            d.quantity,
+            d.markPrice ?? null,
+            now,
+          )
+          .run();
+        count++;
+      }
+      return { count };
+    },
+  };
+
   const holding: AppDb["holding"] = {
     findMany: async (args) => {
       const dir = args.orderBy.symbol === "desc" ? "DESC" : "ASC";
@@ -258,5 +351,5 @@ export function createD1Db(d1: D1Database): AppDb {
     },
   };
 
-  return { holding, transaction };
+  return { brokerPosition, holding, transaction };
 }
