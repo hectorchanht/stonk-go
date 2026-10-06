@@ -1,7 +1,14 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
-import { getQuote, getQuotes, type Quote } from "~/server/market";
+import {
+  getQuote,
+  getQuotes,
+  getFxRates,
+  toUsd,
+  inferCurrency,
+  type Quote,
+} from "~/server/market";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "~/server/api/trpc";
 import { computeFlair } from "~/server/wsb";
 import { generateInsights } from "~/server/ai";

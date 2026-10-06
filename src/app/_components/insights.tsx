@@ -57,7 +57,10 @@ export function AiInsights({
   totals: Summary["totals"];
 }) {
   const { data: txns } = api.portfolio.transactions.useQuery({ limit: 10 });
-  const { locale } = useLocale();
+  const { aiLocale: globalAiLocale } = useLocale();
+  // Per-section locale override — defaults to global AI locale.
+  const [localeOverride, setLocaleOverride] = useState<"en" | "zh-Hant" | "zh-Hans" | null>(null);
+  const locale = localeOverride ?? globalAiLocale;
 
   const input = useMemo(() => {
     const mv = totals.marketValue > 0 ? totals.marketValue : 1;
@@ -155,12 +158,28 @@ export function AiInsights({
                 : ""}{" "}
               · {cached ? timeAgo(cached.at) : "just now"}
             </p>
-            <button
-              onClick={regenerate}
-              className="rounded-lg border border-zinc-700 px-2.5 py-1 text-xs text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
-            >
-              <RefreshCw size={13} className="mr-1.5 inline" />Regenerate
-            </button>
+            <div className="flex items-center gap-2">
+              <select
+                value={locale}
+                onChange={(e) => {
+                  const v = e.target.value as "en" | "zh-Hant" | "zh-Hans";
+                  setLocaleOverride(v === globalAiLocale ? null : v);
+                  setCached(null);
+                }}
+                title="Language for this section"
+                className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-300 focus:border-violet-600 focus:outline-none"
+              >
+                <option value="en">EN</option>
+                <option value="zh-Hant">繁</option>
+                <option value="zh-Hans">简</option>
+              </select>
+              <button
+                onClick={regenerate}
+                className="rounded-lg border border-zinc-700 px-2.5 py-1 text-xs text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+              >
+                <RefreshCw size={13} className="mr-1.5 inline" />Regenerate
+              </button>
+            </div>
           </div>
         </>
       ) : q.isLoading ? (

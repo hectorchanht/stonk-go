@@ -29,6 +29,8 @@ interface ChatSettings {
   model: string;
   emojis: boolean;
   followUps: boolean;
+  /** Per-section locale override; empty = use global. */
+  locale: string;
 }
 
 const DEFAULT_SETTINGS: ChatSettings = {
@@ -42,6 +44,7 @@ const DEFAULT_SETTINGS: ChatSettings = {
   model: "",
   emojis: true,
   followUps: true,
+  locale: "",
 };
 
 function loadSettings(defaultSkills: string[]): ChatSettings {
@@ -61,6 +64,7 @@ function loadSettings(defaultSkills: string[]): ChatSettings {
         model: typeof s.model === "string" ? s.model : DEFAULT_SETTINGS.model,
         emojis: typeof s.emojis === "boolean" ? s.emojis : DEFAULT_SETTINGS.emojis,
         followUps: typeof s.followUps === "boolean" ? s.followUps : DEFAULT_SETTINGS.followUps,
+        locale: typeof s.locale === "string" ? s.locale : DEFAULT_SETTINGS.locale,
       };
     }
   } catch {
@@ -89,7 +93,7 @@ export function AiChat({
   rows: Summary["rows"];
   totals: Summary["totals"];
 }) {
-  const { locale } = useLocale();
+  const { aiLocale: globalAiLocale } = useLocale();
   const { data: txns } = api.portfolio.transactions.useQuery({ limit: 10 });
   const { data: meta } = api.ai.meta.useQuery();
 
@@ -105,6 +109,8 @@ export function AiChat({
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Per-section locale: settings override, else global AI locale.
+  const locale = settings.locale || globalAiLocale;
 
   // Sync defaults once meta loads.
   useEffect(() => {
@@ -330,6 +336,33 @@ export function AiChat({
               </p>
             </div>
           )}
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Language <span className="normal-case text-zinc-600">(per-section)</span>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {[
+                { id: "", name: "Global" },
+                { id: "en", name: "EN" },
+                { id: "zh-Hant", name: "繁" },
+                { id: "zh-Hans", name: "简" },
+              ].map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() => setSettings((s) => ({ ...s, locale: l.id }))}
+                  title={l.id ? `Reply in ${l.name}` : `Use global AI language (${globalAiLocale})`}
+                  className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                    settings.locale === l.id
+                      ? "border-violet-600 bg-violet-950/50 text-violet-300"
+                      : "border-zinc-700 bg-zinc-900 text-zinc-500 hover:border-zinc-600"
+                  }`}
+                >
+                  {l.name}
+                </button>
+              ))}
+            </div>
+          </div>
           <div>
             <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
               Tone

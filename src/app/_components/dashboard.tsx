@@ -42,6 +42,7 @@ import {
   useCurrency,
 } from "~/app/_components/currency";
 import {
+  AiLocalePicker,
   LocalePicker,
   LocaleProvider,
 } from "~/app/_components/locale";
@@ -879,7 +880,14 @@ function HeaderMenu({
             </div>
             <div className="border-t border-zinc-700/60 px-4 py-2.5">
               <div className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">Language</div>
-              <LocalePicker />
+              <div className="flex items-center gap-2">
+                <LocalePicker />
+                <span className="text-xs text-zinc-600">UI</span>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <AiLocalePicker />
+                <span className="text-xs text-zinc-600">AI</span>
+              </div>
             </div>
             <div className="border-t border-zinc-700/60">
               {session ? (

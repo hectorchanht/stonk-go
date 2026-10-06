@@ -43,14 +43,36 @@ function loadLocale(): LocaleCode {
 const Ctx = createContext<{
   locale: LocaleCode;
   setLocale: (l: LocaleCode) => void;
-}>({ locale: "en", setLocale: () => undefined });
+  /** Language for AI responses — separate from UI locale. */
+  aiLocale: LocaleCode;
+  setAiLocale: (l: LocaleCode) => void;
+}>({
+  locale: "en",
+  setLocale: () => undefined,
+  aiLocale: "en",
+  setAiLocale: () => undefined,
+});
+
+const AI_LOCALE_KEY = "holdr.ai-locale";
+
+function loadAiLocale(): LocaleCode {
+  try {
+    const v = window.localStorage.getItem(AI_LOCALE_KEY);
+    if (v === "en" || v === "zh-Hant" || v === "zh-Hans") return v;
+  } catch {
+    /* ignore */
+  }
+  return "en";
+}
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
   // undefined = not yet loaded (avoids SSR mismatch); falls back to "en".
   const [locale, setLocaleState] = useState<LocaleCode | undefined>(undefined);
+  const [aiLocale, setAiLocaleState] = useState<LocaleCode | undefined>(undefined);
 
   useEffect(() => {
     setLocaleState(loadLocale());
+    setAiLocaleState(loadAiLocale());
   }, []);
 
   const setLocale = useCallback((l: LocaleCode) => {
@@ -62,8 +84,24 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const setAiLocale = useCallback((l: LocaleCode) => {
+    setAiLocaleState(l);
+    try {
+      window.localStorage.setItem(AI_LOCALE_KEY, l);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   return (
-    <Ctx.Provider value={{ locale: locale ?? "en", setLocale }}>
+    <Ctx.Provider
+      value={{
+        locale: locale ?? "en",
+        setLocale,
+        aiLocale: aiLocale ?? "en",
+        setAiLocale,
+      }}
+    >
       {children}
     </Ctx.Provider>
   );
@@ -72,6 +110,8 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 export function useLocale(): {
   locale: LocaleCode;
   setLocale: (l: LocaleCode) => void;
+  aiLocale: LocaleCode;
+  setAiLocale: (l: LocaleCode) => void;
 } {
   return useContext(Ctx);
 }
@@ -92,8 +132,28 @@ export function LocalePicker() {
     <select
       value={locale}
       onChange={(e) => setLocale(e.target.value as LocaleCode)}
-      aria-label="AI insights language"
-      title="AI insights language"
+      aria-label="Interface language"
+      title="Interface language"
+      className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm font-semibold text-zinc-200 hover:border-zinc-500"
+    >
+      {LOCALES.map((l) => (
+        <option key={l.code} value={l.code} title={l.label}>
+          {l.short}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** Picker for the AI response language (separate from UI locale). */
+export function AiLocalePicker() {
+  const { aiLocale, setAiLocale } = useLocale();
+  return (
+    <select
+      value={aiLocale}
+      onChange={(e) => setAiLocale(e.target.value as LocaleCode)}
+      aria-label="AI response language"
+      title="AI response language"
       className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm font-semibold text-zinc-200 hover:border-zinc-500"
     >
       {LOCALES.map((l) => (

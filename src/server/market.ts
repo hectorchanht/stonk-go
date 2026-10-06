@@ -264,3 +264,43 @@ export async function resolveSymbolNames(
   const quotes = await getQuotes(hkCodes);
   return Object.fromEntries(quotes.map((q) => [q.symbol, q.name]));
 }
+
+/* ---------------- FX rates (server-side) ---------------- */
+
+const FX_URLS = [
+  "https://latest.currency-api.pages.dev/v1/currencies/usd.json",
+  "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json",
+];
+const FX_TTL_MS = 3600_000; // 1 hour
+let fxCache: { at: number; rates: Record<string, number> } | null = null;
+
+/** USD-based FX rates (e.g. { hkd: 7.8 }). Cached 1h. Never throws. */
+export async function getFxRates(): Promise<Record<string, number>> {
+  if (fxCache && Date.now() - fxCache.at < FX_TTL_MS) return fxCache.rates;
+  for (const url of FX_URLS) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) continue;
+      const json = (await res.json()) as { usd?: Record<string, number> };
+      if (json.usd) {
+        fxCache = { at: Date.now(), rates: json.usd };
+        return json.usd;
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  return fxCache?.rates ?? {};
+}
+
+/** Convert an amount in `currency` to USD. Falls back to as-is. */
+export function toUsd(
+  amount: number,
+  currency: string | null | undefined,
+  rates: Record<string, number>,
+): number {
+  const code = (currency ?? "USD").toUpperCase();
+  if (code === "USD") return amount;
+  const rate = rates[code.toLowerCase()];
+  return rate ? amount / rate : amount;
+}

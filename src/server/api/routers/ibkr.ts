@@ -29,7 +29,7 @@ async function analyticsWithNames(
   trades: TradeLike[],
   cashFlows: CashFlowLike[],
 ) {
-  const analytics = computeAnalytics(trades, cashFlows);
+  const analytics = await computeAnalytics(trades, cashFlows);
   const names = await resolveSymbolNames([
     ...analytics.symbols.map((s) => s.symbol),
     ...analytics.recentTrades.map((t) => t.symbol),

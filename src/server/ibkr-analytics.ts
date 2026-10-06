@@ -1,5 +1,5 @@
 import type { BrokerCashFlowRow, BrokerTradeRow } from "~/server/d1db";
-import { inferCurrency } from "~/server/market";
+import { inferCurrency, getFxRates, toUsd } from "~/server/market";
 
 export type TradeLike = Pick<
   BrokerTradeRow,
@@ -20,24 +20,41 @@ export type CashFlowLike = Pick<
 >;
 
 /** Pure analytics over synced IBKR records. Shared by `analytics` and transient `sync`. */
-export function computeAnalytics(
+export async function computeAnalytics(
   trades: TradeLike[],
   cashFlows: CashFlowLike[],
 ) {
-  const sum = (vs: Array<number | null>) =>
-    vs.reduce<number>((a, v) => a + (v ?? 0), 0);
+  const fx = await getFxRates();
+  // Convert each amount to USD before summing — never mix HKD and USD raw.
+  const toUsdSafe = (v: number | null, currency: string | null | undefined) =>
+    v == null ? 0 : toUsd(v, currency ?? inferCurrency(""), fx);
+  const sumFx = (
+    items: Array<{ v: number | null; c: string | null | undefined }>,
+  ) => items.reduce<number>((a, x) => a + toUsdSafe(x.v, x.c), 0);
 
-  const realizedPnl = sum(trades.map((t) => t.realizedPnl));
-  const commissions = sum(
-    trades.map((t) => (t.commission ? Math.abs(t.commission) : 0)),
+  const realizedPnl = sumFx(
+    trades.map((t) => ({
+      v: t.realizedPnl,
+      c: t.currency ?? inferCurrency(t.symbol),
+    })),
+  );
+  const commissions = sumFx(
+    trades.map((t) => ({
+      v: t.commission ? Math.abs(t.commission) : 0,
+      c: t.currency ?? inferCurrency(t.symbol),
+    })),
   );
   const hasRealized = trades.some((t) => t.realizedPnl != null);
 
-  const dividends = sum(
-    cashFlows.filter((c) => /dividend/i.test(c.type)).map((c) => c.amount),
+  const dividends = sumFx(
+    cashFlows
+      .filter((c) => /dividend/i.test(c.type))
+      .map((c) => ({ v: c.amount, c: c.currency })),
   );
-  const withholding = sum(
-    cashFlows.filter((c) => /withholding/i.test(c.type)).map((c) => c.amount),
+  const withholding = sumFx(
+    cashFlows
+      .filter((c) => /withholding/i.test(c.type))
+      .map((c) => ({ v: c.amount, c: c.currency })),
   );
 
   const bySymbol = new Map<
