@@ -163,7 +163,7 @@ export function GainLossPorn({ rows }: { rows: HoldingRow[] }) {
         </h2>
         {hasGains ? (
           <>
-            <div className="mt-2 text-3xl font-extrabold tabular-nums text-emerald-400">
+            <div className="mt-2 break-words font-extrabold tabular-nums text-emerald-400 text-[clamp(1.5rem,7vw,1.875rem)]">
               {num(winner.totalPL)}
             </div>
             <div className="mt-1 text-lg font-bold text-zinc-100">
@@ -195,7 +195,7 @@ export function GainLossPorn({ rows }: { rows: HoldingRow[] }) {
           <Skull size={14} className="mr-1.5 inline text-rose-500" />Loss porn
           <InfoTip text="Your single biggest losing position by dollars lost. We don't judge. Press F to pay respects." />
         </h2>
-        <div className="mt-2 text-3xl font-extrabold tabular-nums text-rose-400">
+        <div className="mt-2 break-words font-extrabold tabular-nums text-rose-400 text-[clamp(1.5rem,7vw,1.875rem)]">
           {num(loser.totalPL)}
         </div>
         <div className="mt-1 text-lg font-bold text-zinc-100">

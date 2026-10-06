@@ -3,18 +3,31 @@
 import { useCallback, useMemo, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 import {
+  ArrowDown,
+  ArrowUp,
+  Download,
   LogIn,
   LogOut,
   MoreHorizontal,
   Plus,
   RefreshCw,
+  Search,
   Sparkles,
   X,
 } from "lucide-react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { BrokerCard } from "~/app/_components/broker";
-import { CollapsibleSection, InfoTip } from "~/app/_components/ui";
+import {
+  CollapsibleSection,
+  DataTable,
+  InfoTip,
+  Pagination,
+  StatCard,
+  downloadCsv,
+  usePager,
+  type DataColumn,
+} from "~/app/_components/ui";
 import { AiInsights } from "~/app/_components/insights";
 import {
   CurrencyPicker,
@@ -65,41 +78,6 @@ const plClass = (v: number | null) =>
 const card =
   "rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5";
 
-function StatCard({
-  label,
-  value,
-  sub,
-  tone,
-  info,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  tone?: "pos" | "neg" | "neutral";
-  info?: string;
-}) {
-  const toneClass =
-    tone === "pos"
-      ? "text-emerald-400"
-      : tone === "neg"
-        ? "text-rose-400"
-        : "text-zinc-100";
-  return (
-    <div className={`${card} min-w-0 p-3 sm:p-5`}>
-      <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-        {label}
-        {info && <InfoTip text={info} />}
-      </div>
-      <div
-        className={`mt-1 font-bold tabular-nums leading-tight ${toneClass} text-[clamp(1.15rem,5vw,1.875rem)]`}
-      >
-        {value}
-      </div>
-      {sub && <div className="mt-1 truncate text-sm text-zinc-500">{sub}</div>}
-    </div>
-  );
-}
-
 const ALLOC_COLORS = [
   "#4ade80",
   "#60a5fa",
@@ -147,6 +125,8 @@ function Allocation({ rows }: { rows: HoldingRow[] }) {
   );
 }
 
+type HoldingSortKey = "symbol" | "marketValue" | "dayPL" | "totalPL" | "weightPct";
+
 function HoldingsTable({
   rows,
   flair,
@@ -164,6 +144,94 @@ function HoldingsTable({
     },
   });
 
+  const [query, setQuery] = useState("");
+  const [sortKey, setSortKey] = useState<HoldingSortKey>("marketValue");
+  const [sortDir, setSortDir] = useState<1 | -1>(-1);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const f = q
+      ? rows.filter(
+          (r) =>
+            r.symbol.toLowerCase().includes(q) ||
+            (r.name ?? "").toLowerCase().includes(q),
+        )
+      : rows.slice();
+    const val = (r: HoldingRow): string | number =>
+      sortKey === "symbol"
+        ? r.symbol
+        : (r[sortKey] ?? Number.NEGATIVE_INFINITY);
+    f.sort((a, b) => {
+      const va = val(a);
+      const vb = val(b);
+      const cmp =
+        typeof va === "string"
+          ? va.localeCompare(vb as string)
+          : va - (vb as number);
+      return cmp * sortDir;
+    });
+    return f;
+  }, [rows, query, sortKey, sortDir]);
+
+  const pager = usePager(filtered, 10);
+
+  const toggleSort = (k: HoldingSortKey) => {
+    if (sortKey === k) {
+      setSortDir((d) => (d === 1 ? -1 : 1));
+    } else {
+      setSortKey(k);
+      setSortDir(k === "symbol" ? 1 : -1);
+    }
+    pager.reset();
+  };
+
+  const sortHeader = (
+    label: string,
+    k: HoldingSortKey,
+    align: "left" | "right" = "right",
+  ) => (
+    <button
+      type="button"
+      onClick={() => toggleSort(k)}
+      className={`inline-flex items-center gap-1 uppercase hover:text-zinc-200 ${
+        sortKey === k ? "text-zinc-200" : ""
+      } ${align === "right" ? "flex-row-reverse" : ""}`}
+    >
+      {label}
+      {sortKey === k &&
+        (sortDir === 1 ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+    </button>
+  );
+
+  const exportCsv = () =>
+    downloadCsv(
+      "holdr-holdings.csv",
+      [
+        "symbol",
+        "name",
+        "source",
+        "quantity",
+        "avg_cost",
+        "price",
+        "market_value",
+        "day_pl",
+        "total_pl",
+        "weight_pct",
+      ],
+      filtered.map((r) => [
+        r.symbol,
+        r.name ?? "",
+        r.source,
+        r.quantity,
+        r.avgCost ?? "",
+        r.price ?? "",
+        r.marketValue ?? "",
+        r.dayPL ?? "",
+        r.totalPL ?? "",
+        r.weightPct ?? "",
+      ]),
+    );
+
   if (rows.length === 0) {
     return (
       <div className={card}>
@@ -174,92 +242,159 @@ function HoldingsTable({
     );
   }
 
+  const columns: DataColumn<HoldingRow>[] = [
+    {
+      key: "symbol",
+      header: sortHeader("Symbol", "symbol", "left"),
+      render: (r) => (
+        <>
+          <div className="font-semibold text-zinc-100">{r.symbol}</div>
+          {r.source === "broker" && (
+            <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-400">
+              IBKR
+            </div>
+          )}
+          {r.name && (
+            <div className="max-w-[180px] truncate text-xs text-zinc-500">
+              {r.name}
+            </div>
+          )}
+          <FlairBadge flair={flair?.[r.symbol]} />
+        </>
+      ),
+    },
+    {
+      key: "qty",
+      header: "Qty",
+      align: "right",
+      render: (r) => (
+        <span className="text-zinc-300">
+          {r.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })}
+        </span>
+      ),
+    },
+    {
+      key: "avgCost",
+      header: "Avg cost",
+      align: "right",
+      render: (r) => <span className="text-zinc-300">{money(r.avgCost)}</span>,
+    },
+    {
+      key: "price",
+      header: "Price",
+      align: "right",
+      render: (r) => <span className="text-zinc-300">{money(r.price)}</span>,
+    },
+    {
+      key: "marketValue",
+      header: sortHeader("Mkt value", "marketValue"),
+      align: "right",
+      render: (r) => (
+        <span className="font-medium text-zinc-100">{money(r.marketValue)}</span>
+      ),
+    },
+    {
+      key: "dayPL",
+      header: sortHeader("Day P/L", "dayPL"),
+      align: "right",
+      render: (r) => (
+        <span className={plClass(r.dayPL)}>
+          <div>{money(r.dayPL, { sign: true })}</div>
+          <div className="text-xs">{pct(r.dayChangePct, { sign: true })}</div>
+        </span>
+      ),
+    },
+    {
+      key: "totalPL",
+      header: sortHeader("Total P/L", "totalPL"),
+      align: "right",
+      render: (r) => (
+        <span className={plClass(r.totalPL)}>
+          <div>{money(r.totalPL, { sign: true })}</div>
+          <div className="text-xs">{pct(r.totalPLPct, { sign: true })}</div>
+        </span>
+      ),
+    },
+    {
+      key: "weight",
+      header: sortHeader("Weight", "weightPct"),
+      align: "right",
+      render: (r) => <span className="text-zinc-300">{pct(r.weightPct)}</span>,
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      render: (r) =>
+        r.source === "manual" ? (
+          <button
+            onClick={() => {
+              if (
+                confirm(
+                  `Delete ${r.symbol} and ALL of its transactions? This cannot be undone.`,
+                )
+              ) {
+                del.mutate({ symbol: r.symbol });
+              }
+            }}
+            className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
+            title={`Delete ${r.symbol}`}
+          >
+            <X size={14} />
+          </button>
+        ) : (
+          <span
+            className="text-xs text-zinc-600"
+            title="Synced from IBKR — read-only"
+          >
+            synced
+          </span>
+        ),
+    },
+  ];
+
   return (
-    <div className={`${card} overflow-x-auto p-0`}>
-      <table className="w-full min-w-[760px] text-left text-sm">
-        <thead>
-          <tr className="border-y border-zinc-800 text-xs uppercase tracking-wider text-zinc-500">
-            <th className="px-4 py-2 sm:px-5">Symbol</th>
-            <th className="px-4 py-2 text-right sm:px-5">Qty</th>
-            <th className="px-4 py-2 text-right sm:px-5">Avg cost</th>
-            <th className="px-4 py-2 text-right sm:px-5">Price</th>
-            <th className="px-4 py-2 text-right sm:px-5">Mkt value</th>
-            <th className="px-4 py-2 text-right sm:px-5">Day P/L</th>
-            <th className="px-4 py-2 text-right sm:px-5">Total P/L</th>
-            <th className="px-4 py-2 text-right sm:px-5">Weight</th>
-            <th className="px-4 py-2 sm:px-5" />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.symbol} className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-800/30">
-              <td className="px-4 py-3 sm:px-5">
-                <div className="font-semibold text-zinc-100">{r.symbol}</div>
-                {r.source === "broker" && (
-                  <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-400">
-                    IBKR
-                  </div>
-                )}
-                {r.name && (
-                  <div className="max-w-[180px] truncate text-xs text-zinc-500">
-                    {r.name}
-                  </div>
-                )}
-                <FlairBadge flair={flair?.[r.symbol]} />
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-zinc-300 sm:px-5">
-                {r.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-zinc-300 sm:px-5">
-                {money(r.avgCost)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-zinc-300 sm:px-5">
-                {money(r.price)}
-              </td>
-              <td className="px-4 py-3 text-right font-medium tabular-nums text-zinc-100 sm:px-5">
-                {money(r.marketValue)}
-              </td>
-              <td className={`px-4 py-3 text-right tabular-nums sm:px-5 ${plClass(r.dayPL)}`}>
-                <div>{money(r.dayPL, { sign: true })}</div>
-                <div className="text-xs">{pct(r.dayChangePct, { sign: true })}</div>
-              </td>
-              <td className={`px-4 py-3 text-right tabular-nums sm:px-5 ${plClass(r.totalPL)}`}>
-                <div>{money(r.totalPL, { sign: true })}</div>
-                <div className="text-xs">{pct(r.totalPLPct, { sign: true })}</div>
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-zinc-300 sm:px-5">
-                {pct(r.weightPct)}
-              </td>
-              <td className="px-4 py-3 text-right sm:px-5">
-                {r.source === "manual" ? (
-                  <button
-                    onClick={() => {
-                      if (
-                        confirm(
-                          `Delete ${r.symbol} and ALL of its transactions? This cannot be undone.`
-                        )
-                      ) {
-                        del.mutate({ symbol: r.symbol });
-                      }
-                    }}
-                    className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
-                    title={`Delete ${r.symbol}`}
-                  >
-                    <X size={14} />
-                  </button>
-                ) : (
-                  <span
-                    className="text-xs text-zinc-600"
-                    title="Synced from IBKR — read-only"
-                  >
-                    synced
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className={`${card} overflow-hidden p-0`}>
+      <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2">
+        <div className="relative min-w-0 flex-1">
+          <Search
+            size={14}
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500"
+          />
+          <input
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              pager.reset();
+            }}
+            placeholder="Filter by symbol or name…"
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 py-1.5 pl-8 pr-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-500"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={exportCsv}
+          title="Export holdings as CSV"
+          aria-label="Export holdings as CSV"
+          className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 p-2 text-zinc-300 hover:bg-zinc-700"
+        >
+          <Download size={15} />
+        </button>
+      </div>
+      <DataTable
+        columns={columns}
+        rows={pager.rows}
+        keyOf={(r) => r.symbol}
+        minWidth="760px"
+        emptyText={query ? "No holdings match that filter." : "No positions yet."}
+        footer={
+          <Pagination
+            page={pager.page}
+            pageCount={pager.pageCount}
+            onPage={pager.setPage}
+          />
+        }
+      />
     </div>
   );
 }
@@ -444,10 +579,14 @@ function TransactionForm() {
   );
 }
 
+type TxnFilter = "ALL" | "BUY" | "SELL";
+
 function TransactionList() {
   const money = useMoney();
   const utils = api.useUtils();
-  const { data, isLoading } = api.portfolio.transactions.useQuery({ limit: 50 });
+  const { data, isLoading } = api.portfolio.transactions.useQuery({
+    limit: 200,
+  });
   const del = api.portfolio.deleteTransaction.useMutation({
     onSuccess: () => {
       void utils.portfolio.summary.invalidate();
@@ -456,71 +595,193 @@ function TransactionList() {
     },
   });
 
-  return (
-    <div className={`${card} p-0`}>
-      {isLoading ? (
-        <p className="px-4 py-4 text-sm text-zinc-500 sm:px-5">Loading…</p>
-      ) : !data || data.length === 0 ? (
-        <p className="px-4 py-4 text-sm text-zinc-500 sm:px-5">
-          Nothing logged yet.
-        </p>
-      ) : (
-        <ul className="divide-y divide-zinc-800/60">
-          {data.map((t) => (
-            <li
-              key={t.id}
-              className="flex items-center gap-3 px-4 py-2.5 text-sm sm:px-5"
+  const [typeFilter, setTypeFilter] = useState<TxnFilter>("ALL");
+  const [query, setQuery] = useState("");
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (data ?? []).filter(
+      (t) =>
+        (typeFilter === "ALL" || t.type === typeFilter) &&
+        (!q ||
+          t.symbol.toLowerCase().includes(q) ||
+          (t.note ?? "").toLowerCase().includes(q)),
+    );
+  }, [data, typeFilter, query]);
+
+  const pager = usePager(filtered, 12);
+
+  const exportCsv = () =>
+    downloadCsv(
+      "holdr-transactions.csv",
+      ["date", "type", "symbol", "quantity", "price", "fees", "note", "source"],
+      filtered.map((t) => [
+        new Date(t.executedAt).toISOString(),
+        t.type,
+        t.symbol,
+        t.quantity,
+        t.price,
+        t.fees,
+        t.note ?? "",
+        t.source,
+      ]),
+    );
+
+  const columns: DataColumn<NonNullable<typeof data>[number]>[] = [
+    {
+      key: "type",
+      header: "Type",
+      render: (t) => (
+        <span
+          className={`rounded px-2 py-0.5 text-xs font-bold ${
+            t.type === "BUY"
+              ? "bg-emerald-900/60 text-emerald-400"
+              : "bg-rose-900/60 text-rose-400"
+          }`}
+        >
+          {t.type}
+        </span>
+      ),
+    },
+    {
+      key: "symbol",
+      header: "Symbol",
+      render: (t) => (
+        <>
+          <span className="font-semibold text-zinc-100">{t.symbol}</span>
+          {t.source === "ibkr" && (
+            <span
+              className="ml-1.5 rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] font-bold text-sky-400"
+              title="Synced from IBKR — managed by the next sync"
             >
-              <span
-                className={`rounded px-2 py-0.5 text-xs font-bold ${
-                  t.type === "BUY"
-                    ? "bg-emerald-900/60 text-emerald-400"
-                    : "bg-rose-900/60 text-rose-400"
-                }`}
-              >
-                {t.type}
-              </span>
-              <span className="font-semibold text-zinc-100">{t.symbol}</span>
-              {t.source === "ibkr" && (
-                <span
-                  className="rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] font-bold text-sky-400"
-                  title="Synced from IBKR — managed by the next sync"
-                >
-                  IBKR
-                </span>
-              )}
-              <span className="tabular-nums text-zinc-400">
-                {t.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })} @{" "}
-                {money(t.price)}
-              </span>
-              {t.note && (
-                <span className="hidden truncate text-zinc-500 sm:inline">
-                  {t.note}
-                </span>
-              )}
-              <span className="ml-auto shrink-0 text-xs text-zinc-500">
-                {new Date(t.executedAt).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </span>
-              {t.source !== "ibkr" && (
-                <button
-                  onClick={() => {
-                    if (confirm("Delete this transaction? The holding will be recomputed.")) {
-                      del.mutate({ id: t.id });
-                    }
-                  }}
-                  className="shrink-0 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
-                  title="Delete transaction"
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </li>
+              IBKR
+            </span>
+          )}
+          {t.note && (
+            <div className="max-w-[220px] truncate text-xs text-zinc-500">
+              {t.note}
+            </div>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "detail",
+      header: "Detail",
+      align: "right",
+      render: (t) => (
+        <span className="whitespace-nowrap text-zinc-400">
+          {t.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })} @{" "}
+          {money(t.price)}
+        </span>
+      ),
+    },
+    {
+      key: "date",
+      header: "Date",
+      align: "right",
+      render: (t) => (
+        <span className="whitespace-nowrap text-xs text-zinc-500">
+          {new Date(t.executedAt).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      render: (t) =>
+        t.source !== "ibkr" ? (
+          <button
+            onClick={() => {
+              if (
+                confirm(
+                  "Delete this transaction? The holding will be recomputed.",
+                )
+              ) {
+                del.mutate({ id: t.id });
+              }
+            }}
+            className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
+            title="Delete transaction"
+          >
+            <X size={14} />
+          </button>
+        ) : null,
+    },
+  ];
+
+  return (
+    <div className={`${card} overflow-hidden p-0`}>
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-2">
+        <div className="relative min-w-0 flex-1 basis-40">
+          <Search
+            size={14}
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500"
+          />
+          <input
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              pager.reset();
+            }}
+            placeholder="Filter by symbol or note…"
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 py-1.5 pl-8 pr-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-zinc-500"
+          />
+        </div>
+        <div className="flex shrink-0 overflow-hidden rounded-lg border border-zinc-700">
+          {(["ALL", "BUY", "SELL"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => {
+                setTypeFilter(t);
+                pager.reset();
+              }}
+              className={`px-2.5 py-1.5 text-xs font-semibold ${
+                typeFilter === t
+                  ? "bg-zinc-600 text-white"
+                  : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+              }`}
+            >
+              {t}
+            </button>
           ))}
-        </ul>
+        </div>
+        <button
+          type="button"
+          onClick={exportCsv}
+          title="Export transactions as CSV"
+          aria-label="Export transactions as CSV"
+          className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-800 p-2 text-zinc-300 hover:bg-zinc-700"
+        >
+          <Download size={15} />
+        </button>
+      </div>
+      {isLoading ? (
+        <p className="px-4 py-4 text-sm text-zinc-500">Loading…</p>
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={pager.rows}
+          keyOf={(t) => t.id}
+          emptyText={
+            query || typeFilter !== "ALL"
+              ? "No transactions match that filter."
+              : "Nothing logged yet."
+          }
+          footer={
+            <Pagination
+              page={pager.page}
+              pageCount={pager.pageCount}
+              onPage={pager.setPage}
+            />
+          }
+        />
       )}
     </div>
   );

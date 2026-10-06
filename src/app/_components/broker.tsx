@@ -18,6 +18,13 @@ import {
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { useCurrency } from "~/app/_components/currency";
+import {
+  DataTable,
+  Pagination,
+  StatCard,
+  usePager,
+  type DataColumn,
+} from "~/app/_components/ui";
 
 type SyncResult = RouterOutputs["ibkr"]["sync"];
 type Analytics = RouterOutputs["ibkr"]["analytics"];
@@ -72,8 +79,8 @@ function importSummary(s: {
 function useMoney() {
   const { fmt } = useCurrency();
   return useCallback(
-    (v: number | null) =>
-      v == null || !Number.isFinite(v) ? "—" : fmt(v),
+    (v: number | null, opts?: { sign?: boolean }) =>
+      v == null || !Number.isFinite(v) ? "—" : fmt(v, opts),
     [fmt],
   );
 }
@@ -134,84 +141,198 @@ function PositionsTable({ positions }: { positions: PositionLike[] }) {
   const money = useMoney();
   const total = positions.reduce<number>((a, p) => a + (valueOf(p) ?? 0), 0);
   const priced = positions.filter((p) => p.markPrice != null).length;
+  const pager = usePager(positions, 10);
+
+  const columns: DataColumn<PositionLike>[] = [
+    {
+      key: "symbol",
+      header: "Symbol",
+      render: (p) => (
+        <>
+          <span className="font-semibold text-zinc-100">{p.symbol}</span>
+          {p.description && (
+            <span className="ml-2 hidden text-xs text-zinc-500 sm:inline">
+              {p.description}
+            </span>
+          )}
+          {p.assetCategory && p.assetCategory !== "STK" && (
+            <span className="ml-2 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+              {p.assetCategory}
+            </span>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "qty",
+      header: "Qty",
+      align: "right",
+      render: (p) => <span className="text-zinc-300">{qtyFmt(p.quantity)}</span>,
+    },
+    {
+      key: "mark",
+      header: "Mark",
+      align: "right",
+      render: (p) => (
+        <span className="text-zinc-400">
+          {p.markPrice == null ? "—" : money(p.markPrice)}
+        </span>
+      ),
+    },
+    {
+      key: "value",
+      header: "Value",
+      align: "right",
+      render: (p) => (
+        <span className="font-medium text-zinc-100">{money(valueOf(p))}</span>
+      ),
+    },
+  ];
+
   return (
     <>
-      <div className="mt-3 flex items-baseline justify-between">
-        <span className="text-sm text-zinc-400">Broker market value</span>
-        <span className="text-xl font-bold">{money(total)}</span>
+      <div className="mt-3 flex items-baseline justify-between gap-3">
+        <span className="shrink-0 text-sm text-zinc-400">
+          Broker market value
+        </span>
+        <span className="break-words text-right font-bold tabular-nums text-zinc-100 text-[clamp(1.1rem,4.5vw,1.25rem)]">
+          {money(total)}
+        </span>
       </div>
       {priced < positions.length && (
         <p className="text-xs text-zinc-500">
           {positions.length - priced} position(s) missing a mark price
         </p>
       )}
-      <div className="mt-3 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs uppercase tracking-wide text-zinc-500">
-              <th className="pb-2 pr-3">Symbol</th>
-              <th className="pb-2 pr-3">Qty</th>
-              <th className="pb-2 pr-3">Mark</th>
-              <th className="pb-2 pr-3 text-right">Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            {positions.map((p, i) => (
-              <tr key={p.id ?? `${p.symbol}-${i}`} className="border-t border-zinc-800/60 text-zinc-200">
-                <td className="py-2 pr-3">
-                  <span className="font-semibold">{p.symbol}</span>
-                  {p.description && (
-                    <span className="ml-2 hidden text-xs text-zinc-500 sm:inline">
-                      {p.description}
-                    </span>
-                  )}
-                  {p.assetCategory && p.assetCategory !== "STK" && (
-                    <span className="ml-2 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
-                      {p.assetCategory}
-                    </span>
-                  )}
-                </td>
-                <td className="py-2 pr-3 tabular-nums">{qtyFmt(p.quantity)}</td>
-                <td className="py-2 pr-3 tabular-nums text-zinc-400">
-                  {p.markPrice == null ? "—" : money(p.markPrice)}
-                </td>
-                <td className="py-2 text-right tabular-nums">{money(valueOf(p))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="mt-3 overflow-hidden rounded-xl border border-zinc-800">
+        <DataTable
+          columns={columns}
+          rows={pager.rows}
+          keyOf={(p, i) => p.id ?? `${p.symbol}-${i}`}
+          footer={
+            <Pagination
+              page={pager.page}
+              pageCount={pager.pageCount}
+              onPage={pager.setPage}
+            />
+          }
+        />
       </div>
     </>
   );
 }
+
+type SymbolAnalytics = Analytics["symbols"][number];
+type RecentTrade = Analytics["recentTrades"][number];
 
 function AnalyticsView({ data }: { data: Analytics }) {
   const money = useMoney();
   const moneySigned = useMoneySigned();
   const t = data.totals;
   const hasTrades = t.trades > 0;
+
+  const symPager = usePager(data.symbols, 10);
+  const tradePager = usePager(data.recentTrades, 10);
+
+  const toneOf = (v: number | null): "pos" | "neg" | "neutral" =>
+    v == null ? "neutral" : v > 0 ? "pos" : v < 0 ? "neg" : "neutral";
+
+  const symbolColumns: DataColumn<SymbolAnalytics>[] = [
+    {
+      key: "symbol",
+      header: "Symbol",
+      render: (s) => (
+        <span className="font-semibold text-zinc-100">{s.symbol}</span>
+      ),
+    },
+    {
+      key: "trades",
+      header: "Trades",
+      align: "right",
+      render: (s) => <span className="text-zinc-400">{s.trades}</span>,
+    },
+    {
+      key: "pnl",
+      header: "Realized P/L",
+      align: "right",
+      render: (s) => moneySigned(s.realizedPnl),
+    },
+    {
+      key: "fees",
+      header: "Fees",
+      align: "right",
+      render: (s) => (
+        <span className="text-zinc-400">{money(s.commissions)}</span>
+      ),
+    },
+  ];
+
+  const tradeColumns: DataColumn<RecentTrade>[] = [
+    {
+      key: "date",
+      header: "Date",
+      render: (tr) => (
+        <span className="whitespace-nowrap text-zinc-400">
+          {fmtYmd(tr.tradeDate)}
+        </span>
+      ),
+    },
+    {
+      key: "symbol",
+      header: "Symbol",
+      render: (tr) => (
+        <span className="font-semibold text-zinc-100">{tr.symbol}</span>
+      ),
+    },
+    {
+      key: "qty",
+      header: "Qty",
+      align: "right",
+      render: (tr) => (
+        <span className="text-zinc-300">{qtyFmt(tr.quantity)}</span>
+      ),
+    },
+    {
+      key: "price",
+      header: "Price",
+      align: "right",
+      render: (tr) => (
+        <span className="text-zinc-300">
+          {tr.tradePrice == null ? "—" : money(tr.tradePrice)}
+        </span>
+      ),
+    },
+    {
+      key: "pnl",
+      header: "P/L",
+      align: "right",
+      render: (tr) => moneySigned(tr.realizedPnl),
+    },
+  ];
+
   return (
     <div className="mt-5 border-t border-zinc-800 pt-4">
       <h3 className="text-sm font-bold uppercase tracking-wide text-zinc-400">
-        <BarChart3 size={15} className="mr-1.5 inline text-zinc-400" />Trade analysis
+        <BarChart3 size={15} className="mr-1.5 inline text-zinc-400" />Trade
+        analysis
       </h3>
       <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <div className="rounded-lg bg-zinc-800/50 p-3">
-          <div className="text-xs text-zinc-500">Realized P/L</div>
-          <div className="mt-1 text-lg font-bold tabular-nums">{moneySigned(t.realizedPnl)}</div>
-        </div>
-        <div className="rounded-lg bg-zinc-800/50 p-3">
-          <div className="text-xs text-zinc-500">Dividends</div>
-          <div className="mt-1 text-lg font-bold tabular-nums text-emerald-400">{money(t.dividends)}</div>
-        </div>
-        <div className="rounded-lg bg-zinc-800/50 p-3">
-          <div className="text-xs text-zinc-500">Commissions paid</div>
-          <div className="mt-1 text-lg font-bold tabular-nums text-rose-400">{money(t.commissions)}</div>
-        </div>
-        <div className="rounded-lg bg-zinc-800/50 p-3">
-          <div className="text-xs text-zinc-500">Trades</div>
-          <div className="mt-1 text-lg font-bold tabular-nums">{t.trades}</div>
-        </div>
+        <StatCard
+          label="Realized P/L"
+          value={money(t.realizedPnl, { sign: true })}
+          tone={toneOf(t.realizedPnl)}
+        />
+        <StatCard
+          label="Dividends"
+          value={money(t.dividends)}
+          tone={t.dividends != null && t.dividends > 0 ? "pos" : "neutral"}
+        />
+        <StatCard
+          label="Commissions paid"
+          value={money(t.commissions)}
+          tone={t.commissions != null && t.commissions > 0 ? "neg" : "neutral"}
+        />
+        <StatCard label="Trades" value={String(t.trades)} />
       </div>
 
       {!hasTrades ? (
@@ -223,27 +344,19 @@ function AnalyticsView({ data }: { data: Analytics }) {
       ) : (
         <>
           {data.symbols.length > 0 && (
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase tracking-wide text-zinc-500">
-                    <th className="pb-2 pr-3">Symbol</th>
-                    <th className="pb-2 pr-3">Trades</th>
-                    <th className="pb-2 pr-3 text-right">Realized P/L</th>
-                    <th className="pb-2 text-right">Fees</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.symbols.slice(0, 10).map((s) => (
-                    <tr key={s.symbol} className="border-t border-zinc-800/60 text-zinc-200">
-                      <td className="py-2 pr-3 font-semibold">{s.symbol}</td>
-                      <td className="py-2 pr-3 tabular-nums text-zinc-400">{s.trades}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums">{moneySigned(s.realizedPnl)}</td>
-                      <td className="py-2 text-right tabular-nums text-zinc-400">{money(s.commissions)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="mt-4 overflow-hidden rounded-xl border border-zinc-800">
+              <DataTable
+                columns={symbolColumns}
+                rows={symPager.rows}
+                keyOf={(s) => s.symbol}
+                footer={
+                  <Pagination
+                    page={symPager.page}
+                    pageCount={symPager.pageCount}
+                    onPage={symPager.setPage}
+                  />
+                }
+              />
             </div>
           )}
           {data.recentTrades.length > 0 && (
@@ -251,31 +364,19 @@ function AnalyticsView({ data }: { data: Analytics }) {
               <h4 className="mt-4 text-xs font-bold uppercase tracking-wide text-zinc-500">
                 Recent trades
               </h4>
-              <div className="mt-2 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-xs uppercase tracking-wide text-zinc-500">
-                      <th className="pb-2 pr-3">Date</th>
-                      <th className="pb-2 pr-3">Symbol</th>
-                      <th className="pb-2 pr-3">Qty</th>
-                      <th className="pb-2 pr-3 text-right">Price</th>
-                      <th className="pb-2 text-right">P/L</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.recentTrades.map((tr) => (
-                      <tr key={tr.id} className="border-t border-zinc-800/60 text-zinc-200">
-                        <td className="py-1.5 pr-3 tabular-nums text-zinc-400">{fmtYmd(tr.tradeDate)}</td>
-                        <td className="py-1.5 pr-3 font-semibold">{tr.symbol}</td>
-                        <td className="py-1.5 pr-3 tabular-nums">{qtyFmt(tr.quantity)}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">
-                          {tr.tradePrice == null ? "—" : money(tr.tradePrice)}
-                        </td>
-                        <td className="py-1.5 text-right tabular-nums">{moneySigned(tr.realizedPnl)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="mt-2 overflow-hidden rounded-xl border border-zinc-800">
+                <DataTable
+                  columns={tradeColumns}
+                  rows={tradePager.rows}
+                  keyOf={(tr) => tr.id}
+                  footer={
+                    <Pagination
+                      page={tradePager.page}
+                      pageCount={tradePager.pageCount}
+                      onPage={tradePager.setPage}
+                    />
+                  }
+                />
               </div>
             </>
           )}
