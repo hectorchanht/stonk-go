@@ -261,8 +261,7 @@ const FX_TTL_MS = 3600_000; // 1 hour
 let fxCache: { at: number; rates: Record<string, number> } | null = null;
 
 /** USD-based FX rates (e.g. { hkd: 7.8 }). Cached 1h. Never throws. */
-export async function getFxRates(): Promise<Record<string, number>> {
-  if (fxCache && Date.now() - fxCache.at < FX_TTL_MS) return fxCache.rates;
+export async function getFxRates(): Promise<Record<string, number>> {  if (fxCache && Date.now() - fxCache.at < FX_TTL_MS) return fxCache.rates;
   for (const url of FX_URLS) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
@@ -278,3 +277,10 @@ export async function getFxRates(): Promise<Record<string, number>> {
   }
   return fxCache?.rates ?? {};
 }
+
+/* ---------------- Historical daily closes ---------------- */
+
+// Re-exported here so existing import sites (`~/server/market`) keep
+// working; the implementation lives in ./yahoo (pure, unit-tested).
+export { getDailyCloses, parseChartBars } from "./yahoo";
+export type { DailyBar } from "./yahoo";

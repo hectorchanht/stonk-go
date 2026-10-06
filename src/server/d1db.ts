@@ -168,6 +168,15 @@ export interface PushSubscriptionRow {
   createdAt: Date;
 }
 
+export interface YahooDailyBarRow {
+  symbol: string;
+  date: string; // YYYY-MM-DD (trading day, UTC)
+  /** Exact decimal string — never a float. */
+  close: string;
+  adjclose: string | null;
+  fetchedAt: Date;
+}
+
 type SortDir = "asc" | "desc";
 
 interface BulkInsertable<TData> {
@@ -414,12 +423,49 @@ export interface AppDb {
     }): Promise<PushSubscriptionRow>;
     delete(args: { where: { endpoint: string } }): Promise<PushSubscriptionRow>;
   };
+  /**
+   * Yahoo historical daily bars — price-history cache for the true value
+   * curve. Prices are exact decimal strings (no float).
+   *
+   * NOTE: this table is created by migration 20261006183500, which is
+   * applied MANUALLY via the Cloudflare dashboard (git integration does not
+   * auto-run migrations). Callers must handle a missing table via
+   * isMissingTableError() and degrade gracefully.
+   */
+  yahooDailyBar: {
+    findMany(args: {
+      where?: { symbol?: string; date?: { gte?: string; lte?: string } };
+      orderBy?: Array<{ date?: SortDir; symbol?: SortDir }>;
+    }): Promise<YahooDailyBarRow[]>;
+    deleteMany(args: {
+      where: { symbol?: string; date?: { gte?: string; lte?: string } };
+    }): Promise<{ count: number }>;
+    createMany(args: {
+      data: Array<{
+        symbol: string;
+        date: string;
+        close: string;
+        adjclose?: string | null;
+      }>;
+    }): Promise<{ count: number }>;
+  };
 }
 
 type RawRow = Record<string, unknown>;
 
 function toDate(v: unknown): Date {
   return v instanceof Date ? v : new Date(v as string);
+}
+
+/**
+ * True when a D1 error means the table doesn't exist — i.e. its migration
+ * hasn't been applied yet (Cloudflare git integration does not auto-run
+ * migrations; they're applied manually via the dashboard). Callers use this
+ * to degrade gracefully instead of hard-crashing.
+ */
+export function isMissingTableError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /no such table/i.test(msg);
 }
 
 function iso(d: Date | string): string {
@@ -594,6 +640,16 @@ function mapPushSubscription(r: RawRow): PushSubscriptionRow {
     p256dh: r.p256dh as string,
     auth: r.auth as string,
     createdAt: toDate(r.createdAt),
+  };
+}
+
+function mapYahooDailyBar(r: RawRow): YahooDailyBarRow {
+  return {
+    symbol: r.symbol as string,
+    date: r.date as string,
+    close: r.close as string,
+    adjclose: (r.adjclose as string | null) ?? null,
+    fetchedAt: toDate(r.fetchedAt),
   };
 }
 
@@ -1359,6 +1415,76 @@ export function createD1Db(d1: D1Database): AppDb {
     },
   };
 
+  const yahooDailyBar: AppDb["yahooDailyBar"] = {
+    findMany: async (args) => {
+      const conds: string[] = [];
+      const binds: unknown[] = [];
+      const w = args.where;
+      if (w?.symbol !== undefined) {
+        conds.push(`"symbol" = ?`);
+        binds.push(w.symbol);
+      }
+      if (w?.date?.gte !== undefined) {
+        conds.push(`"date" >= ?`);
+        binds.push(w.date.gte);
+      }
+      if (w?.date?.lte !== undefined) {
+        conds.push(`"date" <= ?`);
+        binds.push(w.date.lte);
+      }
+      let sql = `SELECT * FROM "YahooDailyBar"`;
+      if (conds.length > 0) sql += ` WHERE ${conds.join(" AND ")}`;
+      sql += orderClause(args.orderBy ?? []);
+      const { results } = await d1
+        .prepare(sql)
+        .bind(...binds)
+        .all();
+      return (results as unknown as RawRow[]).map(mapYahooDailyBar);
+    },
+
+    deleteMany: async (args) => {
+      const conds: string[] = [];
+      const binds: unknown[] = [];
+      const w = args.where;
+      if (w.symbol !== undefined) {
+        conds.push(`"symbol" = ?`);
+        binds.push(w.symbol);
+      }
+      if (w.date?.gte !== undefined) {
+        conds.push(`"date" >= ?`);
+        binds.push(w.date.gte);
+      }
+      if (w.date?.lte !== undefined) {
+        conds.push(`"date" <= ?`);
+        binds.push(w.date.lte);
+      }
+      const where = conds.length > 0 ? ` WHERE ${conds.join(" AND ")}` : "";
+      const r = await d1
+        .prepare(`DELETE FROM "YahooDailyBar"${where}`)
+        .bind(...binds)
+        .run();
+      return { count: r.meta.changes ?? 0 };
+    },
+
+    createMany: async (args) => {
+      // D1 batch: one round trip per chunk instead of per row.
+      const now = new Date().toISOString();
+      const stmts = args.data.map((b) =>
+        d1
+          .prepare(
+            `INSERT INTO "YahooDailyBar" ("symbol", "date", "close", "adjclose", "fetchedAt") VALUES (?, ?, ?, ?, ?)`,
+          )
+          .bind(b.symbol, b.date, b.close, b.adjclose ?? null, now),
+      );
+      let count = 0;
+      for (let i = 0; i < stmts.length; i += 500) {
+        const res = await d1.batch(stmts.slice(i, i + 500));
+        for (const r of res) count += r.meta.changes ?? 0;
+      }
+      return { count };
+    },
+  };
+
   return {
     brokerTrade,
     brokerCashFlow,
@@ -1369,6 +1495,7 @@ export function createD1Db(d1: D1Database): AppDb {
     portfolioSnapshot,
     priceAlert,
     pushSubscription,
+    yahooDailyBar,
     exchangeCredential,
     exchangeBalance,
     exchangeSync,

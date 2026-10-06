@@ -14,8 +14,15 @@ import { xirr as computeXirr } from "~/server/xirr";
 import {
   buildInvestedCurve,
   downsamplePoints,
+  buildDailyHoldings,
+  aggregateDailyValue,
+  latestBarOnOrBefore,
+  utcDay,
   type CashFlow,
+  type CurvePoint,
+  type PriceBar,
 } from "~/server/performance";
+import { getPriceHistory } from "~/server/price-history";
 import { computeFlair } from "~/server/wsb";
 import { generateInsights } from "~/server/ai";
 import {
@@ -267,6 +274,96 @@ async function buildSummary(
   };
 }
 
+/**
+ * True historical value curve: daily holdings from the full trade log ×
+ * Yahoo daily (adjusted) closes, converted to USD via historical FX.
+ *
+ * Prices come from the D1 read-through cache (getPriceHistory), which
+ * degrades to direct Yahoo fetches when its table isn't migrated yet.
+ * Returns null when no honest curve can be built (no price history at all)
+ * — the caller then falls back to snapshots / the invested step function.
+ */
+async function buildTrueCurve(
+  db: AppDb,
+  txns: Array<{
+    symbol: string;
+    type: string;
+    quantity: number;
+    price: number;
+    fees: number | null;
+    executedAt: Date;
+  }>,
+  liveValueUsd: number,
+  days: number,
+): Promise<{
+  points: Array<CurvePoint & { invested: number }>;
+  missingSymbols: string[];
+} | null> {
+  const symbols = [
+    ...new Set(txns.map((t) => t.symbol.trim().toUpperCase())),
+  ].filter(Boolean);
+  if (symbols.length === 0) return null;
+  const firstMs = Math.min(
+    ...txns.map((t) => new Date(t.executedAt).getTime()),
+  );
+  if (!Number.isFinite(firstMs)) return null;
+  const fromISO = utcDay(new Date(firstMs));
+  const toISO = utcDay(new Date());
+
+  const needsHkd = symbols.some((s) => inferCurrency(s) === "HKD");
+
+  // Price histories in parallel; a symbol whose fetch fails prices nothing
+  // (reported via missingSymbols) instead of killing the whole curve.
+  const settled: Array<[string, PriceBar[]]> = await Promise.all(
+    [...symbols, ...(needsHkd ? ["HKD=X"] : [])].map(async (s) => {
+      try {
+        const { bars } = await getPriceHistory(db, s, fromISO, toISO);
+        return [s, bars] as [string, PriceBar[]];
+      } catch {
+        return [s, []] as [string, PriceBar[]];
+      }
+    }),
+  );
+  const closesBySymbol: Record<string, PriceBar[]> = {};
+  for (const [s, bars] of settled) {
+    if (s !== "HKD=X") closesBySymbol[s] = bars;
+  }
+  const fxBars = settled.find(([s]) => s === "HKD=X")?.[1] ?? [];
+
+  // Historical FX with a current-rate fallback. If HKD is needed and no FX
+  // exists anywhere, bail out — converting HKD as USD would be ~7.8× wrong.
+  const fxNow = await getFxRates();
+  const hkdNow = fxNow.hkd;
+  if (needsHkd && fxBars.length === 0 && !(hkdNow && hkdNow > 0)) return null;
+  const fxToUsd = (date: string, currency: string): number => {
+    if (currency === "USD") return 1;
+    const bar = latestBarOnOrBefore(fxBars, date);
+    if (bar && bar.close > 0) return 1 / bar.close;
+    const r = fxNow[currency.toLowerCase()];
+    return r && r > 0 ? 1 / r : 1;
+  };
+
+  const holdings = buildDailyHoldings(txns, fxToUsd);
+  if (holdings.length === 0) return null;
+  const { priced, missingSymbols } = aggregateDailyValue(
+    holdings,
+    closesBySymbol,
+    fxToUsd,
+  );
+
+  let points = priced;
+  if (days > 0) {
+    const cutoff = utcDay(new Date(Date.now() - days * DAY_MS));
+    points = points.filter((p) => p.date >= cutoff);
+  }
+  // A permanently-zero curve is never useful — let the fallback handle it.
+  if (points.length < 2 || points.every((p) => p.value === 0)) return null;
+
+  // Endpoint: today's live value replaces the last close (labels say so).
+  points[points.length - 1]!.value = liveValueUsd;
+  return { points: downsamplePoints(points, 180), missingSymbols };
+}
+
 export const portfolioRouter = createTRPCRouter({
   /** Full dashboard data: manual holdings + broker snapshot, live prices, totals. */
   summary: publicProcedure
@@ -332,9 +429,13 @@ export const portfolioRouter = createTRPCRouter({
 
   /**
    * Equity curve for the Performance section — works from day one.
-   * Prefers true daily snapshots when at least 2 exist in range; otherwise
-   * falls back to a curve derived from the trade log (net USD invested per
-   * day, ending at today's live value), so the section never sits empty.
+   *
+   * Source priority:
+   * 1. "true" — true historical value: daily holdings from the full trade
+   *    log × Yahoo daily (adjusted) closes, USD via historical FX.
+   * 2. "snapshots" — true daily snapshots when at least 2 exist in range.
+   * 3. "trades" — fallback: net USD invested per day from the trade log,
+   *    ending at today's live value.
    * days=0 → all.
    */
   equityCurve: publicProcedure
@@ -344,6 +445,33 @@ export const portfolioRouter = createTRPCRouter({
         .merge(summaryInput),
     )
     .query(async ({ ctx, input }) => {
+      const txns = await ctx.db.transaction.findMany({
+        orderBy: [{ executedAt: "asc" }],
+      });
+
+      // 1. True historical value curve. Yahoo/FX failures fall through to
+      // the older sources — never a broken chart.
+      if (txns.length > 0) {
+        try {
+          const s = await buildSummary(ctx, input.brokerPositions);
+          const tru = await buildTrueCurve(
+            ctx.db,
+            txns,
+            s.totals.marketValue,
+            input.days,
+          );
+          if (tru) {
+            return {
+              source: "true" as const,
+              points: tru.points,
+              missingSymbols: tru.missingSymbols,
+            };
+          }
+        } catch {
+          /* fall through */
+        }
+      }
+
       const cutoff =
         input.days > 0
           ? new Date(Date.now() - input.days * DAY_MS).toLocaleDateString(
@@ -364,9 +492,6 @@ export const portfolioRouter = createTRPCRouter({
           ),
         };
       }
-      const txns = await ctx.db.transaction.findMany({
-        orderBy: [{ executedAt: "asc" }],
-      });
       if (txns.length === 0) return { source: "none" as const, points: [] };
       const fx = await getFxRates();
       const flows = txnsToUsdFlows(txns, fx);

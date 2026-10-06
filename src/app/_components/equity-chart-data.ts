@@ -67,6 +67,30 @@ export function curveColor(points: EquityPoint[]): string {
   return last.value >= first.value ? "#34d399" : "#fb7185";
 }
 
+export interface InvestedPoint extends EquityPoint {
+  /** Net USD invested up to this date (true-curve points carry it). */
+  invested?: number | null;
+}
+
+/**
+ * Return on invested capital: pct_t = (value_t − invested_t) / invested_t × 100.
+ *
+ * The honest formulation when deposits/withdrawals exist: each day's gain is
+ * measured against the capital actually deployed up to that day. Simple —
+ * NOT time-weighted (TWR needs daily valuations net of flows, which we
+ * don't have). The UI must label it exactly this way and never claim TWR.
+ * Days with non-positive invested are skipped (nothing deployed → no return).
+ */
+export function toReturnOnInvested(points: InvestedPoint[]): EquityPoint[] {
+  const out: EquityPoint[] = [];
+  for (const p of points) {
+    const inv = p.invested;
+    if (inv == null || !(inv > 0) || !Number.isFinite(p.value)) continue;
+    out.push({ date: p.date, value: ((p.value - inv) / inv) * 100 });
+  }
+  return out;
+}
+
 /**
  * Cumulative simple % return series from dated values:
  * pct_i = (value_i − value_0) / value_0 × 100.

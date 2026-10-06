@@ -5,6 +5,7 @@ import {
   isoToChartDay,
   toAreaData,
   toPercentSeries,
+  toReturnOnInvested,
 } from "./equity-chart-data";
 
 describe("isoToChartDay", () => {
@@ -118,5 +119,26 @@ describe("toPercentSeries", () => {
     expect(out[0]!.date).toBe("2026-08-01");
     expect(out[1]!.date).toBe("2026-09-01");
     expect(out[1]!.value).toBeCloseTo(17.64, 2);
+  });
+});
+
+describe("toReturnOnInvested", () => {
+  it("computes (value − invested) / invested × 100", () => {
+    const out = toReturnOnInvested([
+      { date: "2024-01-01", value: 1100, invested: 1000 },
+      { date: "2024-01-02", value: 900, invested: 1000 },
+    ]);
+    expect(out[0]!.value).toBeCloseTo(10, 6);
+    expect(out[1]!.value).toBeCloseTo(-10, 6);
+  });
+
+  it("skips days with non-positive or missing invested", () => {
+    const out = toReturnOnInvested([
+      { date: "2024-01-01", value: 100, invested: 0 },
+      { date: "2024-01-02", value: 100, invested: -50 },
+      { date: "2024-01-03", value: 100 },
+      { date: "2024-01-04", value: 120, invested: 100 },
+    ]);
+    expect(out).toEqual([{ date: "2024-01-04", value: 20 }]);
   });
 });

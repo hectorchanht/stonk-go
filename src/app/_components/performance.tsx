@@ -7,7 +7,7 @@ import { useCurrency } from "~/app/_components/currency";
 import { StatCard } from "~/app/_components/ui";
 import { EquityChart } from "~/app/_components/equity-chart";
 import { ReturnChart } from "~/app/_components/return-chart";
-import { toPercentSeries } from "~/app/_components/equity-chart-data";
+import { toPercentSeries, toReturnOnInvested } from "~/app/_components/equity-chart-data";
 
 /**
  * Performance section: equity curve from daily snapshots + XIRR.
@@ -61,6 +61,17 @@ export function PerformanceSection({
 
   const pts = curve?.points ?? [];
   const source = curve?.source ?? "none";
+  const missingSymbols =
+    curve?.source === "true" ? (curve.missingSymbols ?? []) : [];
+  // % formulation by source: true curves carry per-day invested, so the
+  // honest series is return-on-invested; snapshot curves only support a
+  // simple cumulative vs the first visible point.
+  const pctPts =
+    source === "true"
+      ? toReturnOnInvested(pts)
+      : source === "snapshots"
+        ? toPercentSeries(pts)
+        : [];
   const first = pts[0];
   const last = pts[pts.length - 1];
   const periodReturn =
@@ -128,26 +139,32 @@ export function PerformanceSection({
           formatMoney={(v) => money(v)}
           formatAxisMoney={(v) => fmtCompact(v)}
         />
-      ) : source === "snapshots" ? (
-        <ReturnChart points={toPercentSeries(pts)} />
+      ) : pctPts.length >= 2 ? (
+        <ReturnChart points={pctPts} />
       ) : (
         <p className="py-8 text-center text-sm text-zinc-500">
-          The % view needs daily snapshots — they&rsquo;re recorded
-          automatically each day you open the app, so this chart builds itself
-          over time.
+          The % view needs daily history — once your trade log prices (or
+          daily snapshots) cover 2+ days, the return chart appears here.
         </p>
       )}
       {!isLoading && pts.length >= 2 && view === "value" && (
         <p className="mt-1 text-right text-[11px] text-zinc-500">
-          {source === "trades"
-            ? "From your trade log · last point is today's live value"
-            : "Daily snapshots"}
+          {source === "true"
+            ? `True historical value · holdings excl. cash · last point is today's live value${
+                missingSymbols.length > 0
+                  ? ` · ${missingSymbols.length} symbol${missingSymbols.length === 1 ? "" : "s"} lack price history`
+                  : ""
+              }`
+            : source === "trades"
+              ? "From your trade log · last point is today's live value"
+              : "Daily snapshots"}
         </p>
       )}
-      {!isLoading && pts.length >= 2 && view === "pct" && source === "snapshots" && (
+      {!isLoading && view === "pct" && pctPts.length >= 2 && (
         <p className="mt-1 text-right text-[11px] text-zinc-500">
-          Cumulative simple return since {first?.date} · not time-weighted —
-          deposits/withdrawals shift it
+          {source === "true"
+            ? "Return on invested capital · holdings excl. cash · simple, not time-weighted"
+            : `Cumulative simple return since ${first?.date} · not time-weighted — deposits/withdrawals shift it`}
         </p>
       )}
       <div className="mt-3 grid grid-cols-2 gap-3">

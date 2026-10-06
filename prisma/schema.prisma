@@ -284,3 +284,17 @@ model PushSubscription {
 
     @@index([endpoint])
 }
+
+// Yahoo historical daily bars: price-history cache for the true value curve.
+// Read-through: the curve builder reads D1 first, fetches only missing days
+// from Yahoo, and upserts them back. Prices are TEXT (no float).
+model YahooDailyBar {
+    symbol    String
+    date      String   // YYYY-MM-DD (trading day, UTC)
+    close     String   // exact decimal string
+    adjclose  String?
+    fetchedAt DateTime @default(now())
+
+    @@id([symbol, date])
+    @@index([symbol, date])
+}

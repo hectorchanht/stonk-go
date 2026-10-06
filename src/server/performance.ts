@@ -3,6 +3,8 @@
  * anywhere including tests and client components.
  */
 
+import { inferCurrency } from "~/server/currency";
+
 /** A dated cash flow in USD. Negative = money in (buy), positive = money out. */
 export interface CashFlow {
   date: Date;
@@ -14,6 +16,11 @@ export interface CurvePoint {
   date: string;
   /** USD value on that date. */
   value: number;
+  /**
+   * Net USD invested up to this date — present on true-curve points so the
+   * client can derive the return-on-invested % series.
+   */
+  invested?: number;
 }
 
 const DAY_MS = 86_400_000;
@@ -97,4 +104,144 @@ export function buildInvestedCurve(
   if (points.length > 0) points[points.length - 1]!.value = currentValueUsd;
 
   return downsamplePoints(points, opts?.maxPoints ?? MAX_POINTS);
+}
+
+/* ---------------- True historical value curve ---------------- */
+
+/** UTC calendar day, YYYY-MM-DD. */
+export const utcDay = (d: Date): string => d.toISOString().slice(0, 10);
+
+export interface TradeLeg {
+  symbol: string;
+  type: string;
+  quantity: number;
+  price: number;
+  fees: number | null;
+  executedAt: Date | string;
+}
+
+export interface DailyHolding {
+  /** UTC calendar date, YYYY-MM-DD. */
+  date: string;
+  /** Uppercase symbol → shares held at end of day. */
+  qtyBySymbol: Record<string, number>;
+  /** Cumulative net USD invested up to this day (buys add, sells subtract). */
+  invested: number;
+}
+
+/** Minimal daily bar shape — structural, matches server/yahoo.DailyBar. */
+export interface PriceBar {
+  date: string;
+  close: number;
+  adjclose: number | null;
+}
+
+export interface PricedDay {
+  date: string;
+  /** USD holdings value for the day. Excludes cash — the trade log has none. */
+  value: number;
+  invested: number;
+}
+
+/**
+ * Walk the trade log chronologically → per-day holdings + invested baseline.
+ * Every UTC calendar day from the first trade through today is emitted
+ * (quiet days repeat the previous day's state), so the curve has no gaps.
+ *
+ * fxToUsd(date, currency) converts 1 unit of native currency to USD for that
+ * date — the router feeds historical FX with a current-rate fallback.
+ * Trade types other than SELL are treated as buys (money in), matching the
+ * cash-flow convention used by the XIRR math.
+ */
+export function buildDailyHoldings(
+  trades: TradeLeg[],
+  fxToUsd: (date: string, currency: string) => number,
+): DailyHolding[] {
+  const legs = trades
+    .map((t) => ({ ...t, at: new Date(t.executedAt) }))
+    .filter(
+      (t) =>
+        Number.isFinite(t.at.getTime()) && t.quantity > 0 && t.price > 0,
+    )
+    .sort((a, b) => a.at.getTime() - b.at.getTime());
+  if (legs.length === 0) return [];
+
+  const first = legs[0]!.at;
+  const startMs = Date.UTC(
+    first.getUTCFullYear(),
+    first.getUTCMonth(),
+    first.getUTCDate(),
+  );
+  const now = new Date();
+  const endMs = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
+
+  const qty: Record<string, number> = {};
+  let invested = 0;
+  let li = 0;
+  const days: DailyHolding[] = [];
+  for (let t = startMs; t <= endMs && days.length < 5000; t += DAY_MS) {
+    const iso = new Date(t).toISOString().slice(0, 10);
+    while (li < legs.length && utcDay(legs[li]!.at) <= iso) {
+      const leg = legs[li]!;
+      const sym = leg.symbol.trim().toUpperCase();
+      const isSell = leg.type === "SELL";
+      const dir = isSell ? -1 : 1;
+      qty[sym] = (qty[sym] ?? 0) + dir * leg.quantity;
+      const gross = leg.quantity * leg.price;
+      // Buys: money in (cost + fees). Sells: money out (proceeds − fees).
+      const signed = isSell ? -(gross - (leg.fees ?? 0)) : gross + (leg.fees ?? 0);
+      invested += signed * fxToUsd(iso, inferCurrency(sym));
+      li++;
+    }
+    days.push({ date: iso, qtyBySymbol: { ...qty }, invested });
+  }
+  return days;
+}
+
+/** Latest bar with bar.date <= iso (bars ascending). Null when none. */
+export function latestBarOnOrBefore(
+  bars: PriceBar[],
+  iso: string,
+): PriceBar | null {
+  let out: PriceBar | null = null;
+  for (const b of bars) {
+    if (b.date <= iso) out = b;
+    else break;
+  }
+  return out;
+}
+
+/**
+ * Turn daily holdings into daily USD values: Σ qty × adjclose → native → USD.
+ * Bars forward-fill (weekends/holidays reuse the latest bar on or before the
+ * day). Symbols with no usable bar are skipped and reported in
+ * missingSymbols — the caller labels the chart accordingly instead of
+ * silently understating it.
+ */
+export function aggregateDailyValue(
+  days: DailyHolding[],
+  closesBySymbol: Record<string, PriceBar[]>,
+  fxToUsd: (date: string, currency: string) => number,
+): { priced: PricedDay[]; missingSymbols: string[] } {
+  const missing = new Set<string>();
+  const priced: PricedDay[] = days.map((d) => {
+    let value = 0;
+    for (const sym of Object.keys(d.qtyBySymbol)) {
+      const q = d.qtyBySymbol[sym]!;
+      if (q === 0) continue;
+      const bar = latestBarOnOrBefore(closesBySymbol[sym] ?? [], d.date);
+      if (!bar) {
+        missing.add(sym);
+        continue;
+      }
+      const px = bar.adjclose ?? bar.close;
+      value += q * px * fxToUsd(d.date, inferCurrency(sym));
+    }
+    return { date: d.date, value, invested: d.invested };
+  });
+  return { priced, missingSymbols: [...missing] };
 }
