@@ -520,6 +520,48 @@ function BrowserBrokerCard({
     onError: (e) => setError(e.message),
   });
 
+  const exportQ = api.ibkr.exportCredentials.useQuery(undefined, {
+    enabled: false,
+    retry: false,
+  });
+
+  /** Download the saved IBKR token + query ID as a JSON backup file. */
+  const downloadCreds = useCallback(async () => {
+    const res = await exportQ.refetch();
+    const d = res.data;
+    if (!d) {
+      setError("Couldn't export credentials — is anything saved?");
+      return;
+    }
+    try {
+      const blob = new Blob(
+        [
+          JSON.stringify(
+            {
+              token: d.token,
+              queryId: d.queryId,
+              exportedAt: new Date().toISOString(),
+              note: "IBKR Flex Web Service credentials (read-only report token). Keep this file safe.",
+            },
+            null,
+            2,
+          ),
+        ],
+        { type: "application/json" },
+      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "holdr-ibkr-credentials.json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError("Couldn't create the download file.");
+    }
+  }, [exportQ]);
+
   useEffect(() => {
     setCreds(loadCreds());
     setSnapshot(loadSnapshot());
@@ -623,6 +665,10 @@ function BrowserBrokerCard({
                   onClick: () => setShowForm(true),
                 },
                 {
+                  label: "⬇ Export saved credentials",
+                  onClick: () => void downloadCreds(),
+                },
+                {
                   label: clearCreds.isPending
                     ? "Removing…"
                     : "Remove saved credentials",
@@ -704,6 +750,10 @@ function BrowserBrokerCard({
   ];
   if (session?.user) {
     if (savedQ.data?.saved) {
+      gearItems.push({
+        label: "⬇ Export saved credentials",
+        onClick: () => void downloadCreds(),
+      });
       gearItems.push({
         label: clearCreds.isPending ? "Removing…" : "Remove saved credentials",
         onClick: () => clearCreds.mutate(),

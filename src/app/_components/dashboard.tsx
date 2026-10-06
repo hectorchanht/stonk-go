@@ -16,7 +16,6 @@ import {
   FlairBadge,
   YoloMeter,
   GainLossPorn,
-  TendiesCounter,
 } from "~/app/_components/wsb";
 import type { PositionFlair } from "~/server/wsb";
 
@@ -545,6 +544,8 @@ export function Dashboard() {
 
 function DashboardInner() {
   const money = useMoney();
+  // Log-transaction form stays hidden until the floating + button is tapped.
+  const [txnOpen, setTxnOpen] = useState(false);
   // IBKR snapshot reported up by the BrokerCard (lives in this browser only).
   const [brokerPositions, setBrokerPositions] = useState<BrokerPositionInput[]>([]);
   const brokerInput = useMemo(
@@ -701,7 +702,6 @@ function DashboardInner() {
             <div className="space-y-4">
               <YoloMeter rows={data.rows} />
               <GainLossPorn rows={data.rows} />
-              <TendiesCounter totalPL={t!.totalPL} />
             </div>
           </CollapsibleSection>
 
@@ -716,18 +716,32 @@ function DashboardInner() {
           <CollapsibleSection
             id="ibkr"
             title="Interactive Brokers"
-            info="Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour."
+            info="Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour. New trades in your IBKR account appear after the next sync — IBKR publishes end-of-day reports, there is no live push. Manual logs update instantly but are separate from IBKR data."
           >
             <BrokerCard onPositions={setBrokerPositions} />
           </CollapsibleSection>
 
-          <CollapsibleSection
-            id="log-txn"
-            title="Log transaction"
-            info="Record a buy or sell. Holdings, cost basis and flair are all recomputed from this log."
-          >
-            <TransactionForm />
-          </CollapsibleSection>
+          {txnOpen && (
+            <section id="section-log-txn" className="scroll-mt-4">
+              <div className="flex items-center justify-between py-1">
+                <span className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
+                  Log transaction
+                  <InfoTip text="Record a buy or sell. Holdings, cost basis and flair are all recomputed from this log." />
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setTxnOpen(false)}
+                  aria-label="Close log transaction"
+                  className="rounded-lg px-2 py-1 text-lg leading-none text-zinc-500 hover:text-zinc-200"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="mt-2">
+                <TransactionForm />
+              </div>
+            </section>
+          )}
 
           <CollapsibleSection
             id="txns"
@@ -741,19 +755,22 @@ function DashboardInner() {
           <button
             type="button"
             onClick={() => {
-              window.dispatchEvent(
-                new CustomEvent("holdr:open-section", { detail: "log-txn" }),
-              );
-              requestAnimationFrame(() => {
-                document
-                  .getElementById("section-log-txn")
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
-                window.setTimeout(() => {
-                  document
-                    .getElementById("txn-symbol")
-                    ?.focus({ preventScroll: true });
-                }, 450);
-              });
+              setTxnOpen(true);
+              const t0 = Date.now();
+              const tryScroll = () => {
+                const el = document.getElementById("section-log-txn");
+                if (el) {
+                  el.scrollIntoView({ behavior: "smooth", block: "start" });
+                  window.setTimeout(() => {
+                    document
+                      .getElementById("txn-symbol")
+                      ?.focus({ preventScroll: true });
+                  }, 450);
+                } else if (Date.now() - t0 < 2000) {
+                  requestAnimationFrame(tryScroll);
+                }
+              };
+              requestAnimationFrame(tryScroll);
             }}
             title="Log a transaction"
             aria-label="Log a transaction"

@@ -9,7 +9,7 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
  * and the UI degrades gracefully.
  */
 
-const MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8";
+const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 
 export interface InsightPosition {
   symbol: string;

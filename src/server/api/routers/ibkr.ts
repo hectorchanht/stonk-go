@@ -257,6 +257,27 @@ export const ibkrRouter = createTRPCRouter({
     return { saved: row != null };
   }),
 
+  /**
+   * Return the caller's decrypted IBKR credentials so they can back them up
+   * (download as a file). Deliberate exception to "never return secrets":
+   * it is the user's own credential, and Flex tokens are read-only report
+   * tokens (they cannot place trades). Anyone signed into this account could
+   * already see the same portfolio data via sync.
+   */
+  exportCredentials: protectedProcedure.query(async ({ ctx }) => {
+    const row = await ctx.db.brokerCredential.findUnique({
+      where: { userId: ctx.session.user.id },
+    });
+    if (!row) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "No saved credentials",
+      });
+    }
+    const dec = await decryptCredentials(row.iv, row.encToken, row.encQueryId);
+    return { token: dec.token, queryId: dec.queryId };
+  }),
+
   /** Delete the caller's saved IBKR credentials. */
   clearCredentials: protectedProcedure.mutation(async ({ ctx }) => {
     const row = await ctx.db.brokerCredential.findUnique({
