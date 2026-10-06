@@ -34,6 +34,7 @@ import {
 import { api, type RouterOutputs } from "~/trpc/react";
 import { BrokerCard } from "~/app/_components/broker";
 import { QuestradeCard } from "~/app/_components/questrade";
+import { FutuCard } from "~/app/_components/futu";
 import { ExchangeCards, type ExchangePositionLike } from "~/app/_components/exchanges";
 import {
   PerformanceSection,
@@ -1098,13 +1099,13 @@ function HeaderMenu() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Stock brokers: IBKR + Questrade grouped in one widget with tabs.     */
+/* Stock brokers: IBKR + Questrade + Futu grouped in one widget with tabs.     */
 /* Both cards stay mounted (inactive one hidden) so IBKR's auto-sync   */
 /* and position reporting keep working whichever tab is showing.       */
 /* ------------------------------------------------------------------ */
 
 const BROKER_TAB_KEY = "holdr.brokers.selected";
-type BrokerTab = "ibkr" | "questrade";
+type BrokerTab = "ibkr" | "questrade" | "futu";
 
 function StockBrokers({
   onPositions,
@@ -1117,8 +1118,9 @@ function StockBrokers({
 
   useEffect(() => {
     try {
-      if (window.localStorage.getItem(BROKER_TAB_KEY) === "questrade") {
-        setTab("questrade");
+      const saved = window.localStorage.getItem(BROKER_TAB_KEY);
+      if (saved === "questrade" || saved === "futu") {
+        setTab(saved as BrokerTab);
       }
     } catch {
       /* ignore */
@@ -1138,6 +1140,7 @@ function StockBrokers({
   const tabs: { id: BrokerTab; label: string }[] = [
     { id: "ibkr", label: "Interactive Brokers" },
     { id: "questrade", label: "Questrade" },
+    { id: "futu", label: "Futu 富途" },
   ];
 
   return (
@@ -1169,6 +1172,9 @@ function StockBrokers({
       </div>
       <div className={tab === "questrade" ? "" : "hidden"}>
         <QuestradeCard />
+      </div>
+      <div className={tab === "futu" ? "" : "hidden"}>
+        <FutuCard />
       </div>
     </div>
   );
@@ -1243,7 +1249,7 @@ const WIDGET_DEFS: WidgetDef[] = [
     title: "Stock brokers",
     icon: Landmark,
     defaultSpan: "full",
-    info: "Your stock broker accounts in one place — Interactive Brokers and Questrade. Read-only sync; switch tabs to view each.",
+    info: "Your stock broker accounts in one place — Interactive Brokers, Questrade and Futu. Read-only sync; switch tabs to view each.",
   },
   {
     id: "exchanges",

@@ -159,6 +159,7 @@ model User {
     exchangeCredentials ExchangeCredential[]
     exchangeBalances ExchangeBalance[]
     exchangeSyncs ExchangeSync[]
+    syncTokens    SyncToken[]
 }
 
 // Per-user IBKR Flex credentials, AES-GCM encrypted (see src/server/crypto.ts).
@@ -232,6 +233,24 @@ model ExchangeSync {
     user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
     @@index([userId, exchange])
+}
+
+// Long-lived bearer tokens for local sync agents (e.g. the Futu OpenD
+// sync script in tools/futu-sync). Only the SHA-256 hash is stored — the
+// plaintext token is shown once at creation and never again. Single-purpose
+// scopes ("futu:ingest"); revocable by the owner at any time.
+model SyncToken {
+    id         String    @id @default(cuid())
+    userId     String
+    name       String
+    tokenHash  String    @unique // SHA-256 hex of the bearer token
+    scope      String    // "futu:ingest"
+    createdAt  DateTime  @default(now())
+    lastUsedAt DateTime?
+    revokedAt  DateTime?
+    user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId])
 }
 
 model VerificationToken {

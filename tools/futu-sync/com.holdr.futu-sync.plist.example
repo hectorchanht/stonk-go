@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Example launchd job: run the Futu sync agent every hour (macOS).
+  1. cp com.holdr.futu-sync.plist.example ~/Library/LaunchAgents/com.holdr.futu-sync.plist
+  2. Edit the two /path/to placeholders below.
+  3. launchctl load ~/Library/LaunchAgents/com.holdr.futu-sync.plist
+  Logs: /tmp/holdr-futu-sync.log and /tmp/holdr-futu-sync.err.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.holdr.futu-sync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/path/to/holdr/tools/futu-sync/sync.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/path/to/holdr/tools/futu-sync</string>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/tmp/holdr-futu-sync.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/holdr-futu-sync.err.log</string>
+</dict>
+</plist>

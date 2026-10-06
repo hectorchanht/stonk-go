@@ -177,6 +177,18 @@ export interface YahooDailyBarRow {
   fetchedAt: Date;
 }
 
+export interface SyncTokenRow {
+  id: string;
+  userId: string;
+  name: string;
+  /** SHA-256 hex of the bearer token — the plaintext is never stored. */
+  tokenHash: string;
+  scope: string;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  revokedAt: Date | null;
+}
+
 type SortDir = "asc" | "desc";
 
 interface BulkInsertable<TData> {
@@ -330,6 +342,32 @@ export interface AppDb {
         note?: string | null;
       };
     }): Promise<ExchangeSyncRow>;
+  };
+  /**
+   * Bearer tokens for local sync agents. Only hashes are stored; lookups
+   * are by tokenHash (ingest auth) or by userId (token management UI).
+   */
+  syncToken: {
+    findFirst(args: {
+      where: { tokenHash: string };
+    }): Promise<SyncTokenRow | null>;
+    findMany(args: {
+      where: { userId: string };
+      orderBy: { createdAt: SortDir };
+    }): Promise<SyncTokenRow[]>;
+    create(args: {
+      data: {
+        userId: string;
+        name: string;
+        tokenHash: string;
+        scope: string;
+      };
+    }): Promise<SyncTokenRow>;
+    update(args: {
+      where: { id: string };
+      data: { lastUsedAt?: Date; revokedAt?: Date | null };
+    }): Promise<SyncTokenRow>;
+    delete(args: { where: { id: string } }): Promise<SyncTokenRow>;
   };
   holding: {
     findMany(args: { orderBy: { symbol: SortDir } }): Promise<HoldingRow[]>;
@@ -574,6 +612,19 @@ function mapExchangeSync(r: RawRow): ExchangeSyncRow {
     driftCents: String(r.driftCents),
     ok: (r.ok as number | boolean) === true || (r.ok as number) === 1,
     note: (r.note as string | null) ?? null,
+  };
+}
+
+function mapSyncToken(r: RawRow): SyncTokenRow {
+  return {
+    id: r.id as string,
+    userId: r.userId as string,
+    name: r.name as string,
+    tokenHash: r.tokenHash as string,
+    scope: r.scope as string,
+    createdAt: toDate(r.createdAt),
+    lastUsedAt: r.lastUsedAt == null ? null : toDate(r.lastUsedAt),
+    revokedAt: r.revokedAt == null ? null : toDate(r.revokedAt),
   };
 }
 
@@ -1055,6 +1106,82 @@ export function createD1Db(d1: D1Database): AppDb {
     },
   };
 
+  const syncToken: AppDb["syncToken"] = {
+    findFirst: async (args) => {
+      const row = await d1
+        .prepare(`SELECT * FROM "SyncToken" WHERE "tokenHash" = ?`)
+        .bind(args.where.tokenHash)
+        .first();
+      return row ? mapSyncToken(row as unknown as RawRow) : null;
+    },
+
+    findMany: async (args) => {
+      const dir = args.orderBy.createdAt === "desc" ? "DESC" : "ASC";
+      const { results } = await d1
+        .prepare(
+          `SELECT * FROM "SyncToken" WHERE "userId" = ? ORDER BY "createdAt" ${dir}`,
+        )
+        .bind(args.where.userId)
+        .all();
+      return (results as unknown as RawRow[]).map(mapSyncToken);
+    },
+
+    create: async (args) => {
+      const d = args.data;
+      const now = new Date().toISOString();
+      const id = crypto.randomUUID();
+      await d1
+        .prepare(
+          `INSERT INTO "SyncToken"
+             ("id", "userId", "name", "tokenHash", "scope", "createdAt", "lastUsedAt", "revokedAt")
+           VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)`,
+        )
+        .bind(id, d.userId, d.name, d.tokenHash, d.scope, now)
+        .run();
+      const row = await d1
+        .prepare(`SELECT * FROM "SyncToken" WHERE "id" = ?`)
+        .bind(id)
+        .first();
+      if (!row) throw new Error(`create failed for sync token`);
+      return mapSyncToken(row as unknown as RawRow);
+    },
+
+    update: async (args) => {
+      const sets: string[] = [];
+      const binds: unknown[] = [];
+      if (args.data.lastUsedAt !== undefined) {
+        sets.push(`"lastUsedAt" = ?`);
+        binds.push(args.data.lastUsedAt.toISOString());
+      }
+      if (args.data.revokedAt !== undefined) {
+        sets.push(`"revokedAt" = ?`);
+        binds.push(args.data.revokedAt ? args.data.revokedAt.toISOString() : null);
+      }
+      if (sets.length > 0) {
+        await d1
+          .prepare(`UPDATE "SyncToken" SET ${sets.join(", ")} WHERE "id" = ?`)
+          .bind(...binds, args.where.id)
+          .run();
+      }
+      const row = await d1
+        .prepare(`SELECT * FROM "SyncToken" WHERE "id" = ?`)
+        .bind(args.where.id)
+        .first();
+      if (!row) throw new Error(`sync token not found`);
+      return mapSyncToken(row as unknown as RawRow);
+    },
+
+    delete: async (args) => {
+      const row = await d1
+        .prepare(`SELECT * FROM "SyncToken" WHERE "id" = ?`)
+        .bind(args.where.id)
+        .first();
+      if (!row) throw new Error(`sync token not found`);
+      await d1.prepare(`DELETE FROM "SyncToken" WHERE "id" = ?`).bind(args.where.id).run();
+      return mapSyncToken(row as unknown as RawRow);
+    },
+  };
+
   const holding: AppDb["holding"] = {
     findMany: async (args) => {
       const dir = args.orderBy.symbol === "desc" ? "DESC" : "ASC";
@@ -1499,5 +1626,6 @@ export function createD1Db(d1: D1Database): AppDb {
     exchangeCredential,
     exchangeBalance,
     exchangeSync,
+    syncToken,
   };
 }
