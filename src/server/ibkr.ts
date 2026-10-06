@@ -91,7 +91,9 @@ const ERROR_HINTS: Record<string, string> = {
 
 function flexErrorMessage(code: string, detail: string): string {
   const hint = ERROR_HINTS[code];
-  return hint ? `IBKR Flex error ${code}: ${hint}` : `IBKR Flex error ${code}: ${detail || "unknown"}`;
+  // Upstream detail capped at 200 chars — same honest-error UI pattern as the
+  // Binance card. Only IBKR's own code/text: never tokens or request URLs.
+  return hint ? `IBKR Flex error ${code}: ${hint}` : `IBKR Flex error ${code}: ${detail.slice(0, 200) || "unknown"}`;
 }
 
 function attrs(tag: string): Record<string, string> {

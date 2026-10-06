@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   parseDecimal,
   exchangeRefreshToken,
+  getAccounts,
   parseAccountsResponse,
   parsePositionsResponse,
   parseBalancesResponse,
@@ -11,6 +12,7 @@ import {
   activityToTrade,
   activityToCashFlow,
   reconcileAccount,
+  QuestradeError,
   type QtPosition,
   type QtBalance,
 } from "./questrade";
@@ -101,6 +103,68 @@ describe("exchangeRefreshToken", () => {
   it("gives a clear hint on 401 (expired manual token)", async () => {
     mockFetchOnce({ code: 1017, message: "Token is invalid" }, false, 401);
     await expect(exchangeRefreshToken("STALE")).rejects.toThrow(/new manual authorization token/i);
+  });
+});
+
+/* ---------------- v1 error surfacing (honest upstream errors) ---------------- */
+
+describe("v1Get error surfacing", () => {
+  /** Await a promise expected to reject; returns the rejection as unknown. */
+  async function catchError(p: Promise<unknown>): Promise<unknown> {
+    try {
+      await p;
+    } catch (e) {
+      return e;
+    }
+    throw new Error("expected promise to reject");
+  }
+
+  function asQtError(e: unknown): QuestradeError {
+    expect(e).toBeInstanceOf(QuestradeError);
+    return e as QuestradeError;
+  }
+
+  it("includes the API code and message on failure", async () => {
+    mockFetchOnce({ code: 1001, message: "Access denied" }, false, 403);
+    const err = asQtError(await catchError(getAccounts("https://api01.iq.questrade.com/", "TOKEN")));
+    expect(err.message).toBe(
+      "Questrade GET v1/accounts failed (HTTP 403, code 1001): Access denied",
+    );
+    expect(err.code).toBe("1001");
+  });
+
+  it("caps a long upstream message at 200 chars", async () => {
+    mockFetchOnce({ code: 1001, message: "x".repeat(500) }, false, 500);
+    const err = asQtError(await catchError(getAccounts("https://api01.iq.questrade.com/", "TOKEN")));
+    expect(err.message).toContain(`: ${"x".repeat(200)}`);
+    expect(err.message).not.toContain("x".repeat(201));
+  });
+
+  it("stays readable when the error body has no code or message", async () => {
+    mockFetchOnce({ unexpected: true }, false, 500);
+    await expect(getAccounts("https://api01.iq.questrade.com/", "TOKEN")).rejects.toThrow(
+      "Questrade GET v1/accounts failed (HTTP 500)",
+    );
+  });
+
+  it("stays readable when the error body is not JSON", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: () => Promise.reject(new Error("bad json")),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getAccounts("https://api01.iq.questrade.com/", "TOKEN")).rejects.toThrow(
+      "Questrade GET v1/accounts failed (HTTP 502)",
+    );
+  });
+
+  it("never leaks the access token into the error", async () => {
+    mockFetchOnce({ code: 1001, message: "nope" }, false, 403);
+    const err = asQtError(
+      await catchError(getAccounts("https://api01.iq.questrade.com/", "SECRET_TOKEN_XYZ")),
+    );
+    expect(err.message).not.toContain("SECRET_TOKEN_XYZ");
   });
 });
 

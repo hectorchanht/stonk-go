@@ -143,12 +143,24 @@ export interface QtCredentials {
   expiresIn: number;
 }
 
-function tokenError(json: unknown, httpStatus: number): QuestradeError {
-  const r = json !== null && typeof json === "object" && !Array.isArray(json)
-    ? (json as Record<string, unknown>)
-    : null;
+/**
+ * Pull {code, message} out of a Questrade error JSON body ({code, message}).
+ * The message is capped at 200 chars — the same honest-error UI pattern the
+ * Binance card uses. Only the API's own code/text are ever included: no
+ * tokens, no URLs, no request details.
+ */
+function errorFields(json: unknown): { code: string | null; message: string } {
+  const r =
+    json !== null && typeof json === "object" && !Array.isArray(json)
+      ? (json as Record<string, unknown>)
+      : null;
   const code = typeof r?.code === "number" ? String(r.code) : null;
-  const message = typeof r?.message === "string" ? r.message : "";
+  const message = typeof r?.message === "string" ? r.message.slice(0, 200) : "";
+  return { code, message };
+}
+
+function tokenError(json: unknown, httpStatus: number): QuestradeError {
+  const { code, message } = errorFields(json);
   if (httpStatus === 401) {
     return new QuestradeError(
       "Questrade token rejected (401) — generate a new manual authorization token in Questrade → API centre.",
@@ -214,12 +226,11 @@ async function v1Get(
   }
   if (!res.ok) {
     const json: unknown = await res.json().catch(() => null);
-    const r =
-      json !== null && typeof json === "object" && !Array.isArray(json)
-        ? (json as Record<string, unknown>)
-        : null;
-    const detail = typeof r?.message === "string" ? `: ${r.message}` : "";
-    throw new QuestradeError(`Questrade GET ${path} failed (HTTP ${res.status})${detail}`);
+    const { code, message } = errorFields(json);
+    throw new QuestradeError(
+      `Questrade GET ${path} failed (HTTP ${res.status}${code ? `, code ${code}` : ""})${message ? `: ${message}` : ""}`,
+      code,
+    );
   }
   return (await res.json()) as unknown;
 }
