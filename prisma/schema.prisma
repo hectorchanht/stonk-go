@@ -37,6 +37,8 @@ model Holding {
 
 // Immutable log of every buy/sell. Holdings are recomputed from this table,
 // so deleting or editing a transaction automatically fixes the position.
+// Rows with source="ibkr" are imported from IBKR Flex syncs (deduplicated by
+// externalId) — they merge broker activity into the same log and cost basis.
 model Transaction {
     id         String @id @default(cuid())
     symbol     String // normalized, e.g. "AAPL"
@@ -46,6 +48,11 @@ model Transaction {
     fees       Float           @default(0)
     executedAt DateTime        @default(now())
     note       String?
+    // "manual" | "ibkr" — where this row came from.
+    source     String  @default("manual")
+    // Stable IBKR trade key ("ibkr:<transactionID>") for idempotent imports.
+    // Null for manual rows.
+    externalId String? @unique
 
     createdAt DateTime @default(now())
 
@@ -54,8 +61,9 @@ model Transaction {
 }
 
 // Snapshot of positions synced from Interactive Brokers via the
-// Flex Web Service (read-only). Refreshed by ibkr.sync; the manual
-// transaction log remains the source of truth for cost basis.
+// Flex Web Service (read-only). Refreshed by ibkr.sync; the same sync merges
+// the Flex trades into the Transaction log, which stays the source of truth
+// for holdings and cost basis.
 model BrokerPosition {
     id            String   @id @default(cuid())
     accountId     String

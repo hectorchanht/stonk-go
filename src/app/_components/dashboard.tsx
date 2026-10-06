@@ -477,6 +477,14 @@ function TransactionList() {
                 {t.type}
               </span>
               <span className="font-semibold text-zinc-100">{t.symbol}</span>
+              {t.source === "ibkr" && (
+                <span
+                  className="rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] font-bold text-sky-400"
+                  title="Synced from IBKR — managed by the next sync"
+                >
+                  IBKR
+                </span>
+              )}
               <span className="tabular-nums text-zinc-400">
                 {t.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })} @{" "}
                 {money(t.price)}
@@ -493,17 +501,19 @@ function TransactionList() {
                   year: "numeric",
                 })}
               </span>
-              <button
-                onClick={() => {
-                  if (confirm("Delete this transaction? The holding will be recomputed.")) {
-                    del.mutate({ id: t.id });
-                  }
-                }}
-                className="shrink-0 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
-                title="Delete transaction"
-              >
-                <X size={14} />
-              </button>
+              {t.source !== "ibkr" && (
+                <button
+                  onClick={() => {
+                    if (confirm("Delete this transaction? The holding will be recomputed.")) {
+                      del.mutate({ id: t.id });
+                    }
+                  }}
+                  className="shrink-0 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
+                  title="Delete transaction"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -804,7 +814,7 @@ function DashboardInner() {
           <CollapsibleSection
             id="ibkr"
             title="Interactive Brokers"
-            info="Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour. New trades in your IBKR account appear after the next sync — IBKR publishes end-of-day reports, there is no live push. Manual logs update instantly but are separate from IBKR data."
+            info="Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour. Synced trades merge into your transaction log (marked IBKR) so holdings and cost basis stay in one place — your manual entries are never touched. IBKR publishes end-of-day reports, so today's trades appear after the next report; there is no live push."
           >
             <BrokerCard onPositions={setBrokerPositions} />
           </CollapsibleSection>

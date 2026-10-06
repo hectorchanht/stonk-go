@@ -2,9 +2,13 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { getQuote, getQuotes, type Quote } from "~/server/market";
-import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
+import { createTRPCRouter, protectedProcedure, publicProcedure } from "~/server/api/trpc";
 import { computeFlair } from "~/server/wsb";
 import { generateInsights } from "~/server/ai";
+import {
+  importIbkrTrades as mergeIbkrTrades,
+  recomputeHolding,
+} from "~/server/ibkr-import";
 import { type AppDb } from "~/server/db";
 
 /**
@@ -12,7 +16,10 @@ import { type AppDb } from "~/server/db";
  *
  * The transaction log is the source of truth: every buy/sell (or deletion)
  * recomputes the affected Holding from scratch, so positions can never drift
- * out of sync with the log.
+ * out of sync with the log. IBKR Flex syncs merge their trades into this
+ * same log (source="ibkr", see ~/server/ibkr-import.ts) instead of living in
+ * a separate display — so a sell in the brokerage updates holdings and cost
+ * basis like any hand-logged trade.
  *
  * Live prices are fetched server-side (see ~/server/market.ts) and cached
  * briefly — the client never calls the quote providers directly.
@@ -37,43 +44,6 @@ const brokerPositionInput = z.object({
 const summaryInput = z.object({
   brokerPositions: z.array(brokerPositionInput).max(500).default([]),
 });
-
-/** Recompute a holding from its full transaction history. */
-async function recomputeHolding(tx: AppDb, symbol: string) {
-  const txns = await tx.transaction.findMany({
-    where: { symbol },
-    orderBy: [{ executedAt: "asc" }, { id: "asc" }],
-  });
-
-  let quantity = 0;
-  let costBasis = 0;
-  for (const t of txns) {
-    if (t.type === "BUY") {
-      costBasis += t.quantity * t.price + t.fees;
-      quantity += t.quantity;
-    } else {
-      if (t.quantity > quantity + 1e-9) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `Cannot sell ${t.quantity} ${symbol}: only ${quantity} held`,
-        });
-      }
-      const ratio = quantity > 0 ? t.quantity / quantity : 0;
-      costBasis -= costBasis * ratio;
-      quantity -= t.quantity;
-    }
-  }
-
-  if (quantity <= 1e-9) {
-    await tx.holding.deleteMany({ where: { symbol } });
-  } else {
-    await tx.holding.upsert({
-      where: { symbol },
-      update: { quantity, avgCost: costBasis / quantity },
-      create: { symbol, quantity, avgCost: costBasis / quantity },
-    });
-  }
-}
 
 export interface HoldingRow {
   id: string;
@@ -356,6 +326,33 @@ export const portfolioRouter = createTRPCRouter({
       }
 
       return txn;
+    }),
+
+  /**
+   * Merge IBKR-synced trades into the transaction log (owner only).
+   * Idempotent — re-importing the same Flex report is a no-op thanks to the
+   * stable externalId on each trade. Manual entries are never touched;
+   * trades the user already logged by hand are skipped as duplicates.
+   */
+  importIbkrTrades: protectedProcedure
+    .input(
+      z.object({
+        trades: z
+          .array(
+            z.object({
+              symbol: z.string().max(16),
+              tradeDate: z.string().regex(/^\d{8}$/),
+              quantity: z.number().finite(),
+              tradePrice: z.number().nullable(),
+              commission: z.number().nullable(),
+              transactionId: z.string().max(64).nullable(),
+            }),
+          )
+          .max(2000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      return mergeIbkrTrades(ctx.db, input.trades);
     }),
 
   /** Delete one transaction; the holding is recomputed from the rest. */

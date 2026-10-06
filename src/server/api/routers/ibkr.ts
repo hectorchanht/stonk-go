@@ -13,6 +13,10 @@ import {
   type CashFlowLike,
   type TradeLike,
 } from "~/server/ibkr-analytics";
+import {
+  importIbkrTrades as mergeIbkrTrades,
+  type ImportStats,
+} from "~/server/ibkr-import";
 import { decryptCredentials, encryptCredentials } from "~/server/crypto";
 
 const SETUP_HINT =
@@ -135,6 +139,7 @@ export const ibkrRouter = createTRPCRouter({
       throw new TRPCError({ code: "BAD_REQUEST", message });
     }
 
+    let tradeImport: ImportStats | null = null;
     if (!transient) {
       // Replace the whole snapshot. Sequential statements: D1 has no
       // interactive transactions, and these lists are small.
@@ -186,6 +191,10 @@ export const ibkrRouter = createTRPCRouter({
           })),
         });
       }
+      // Merge the Flex trades into the transaction log, so holdings and
+      // cost basis reflect brokerage activity instead of the snapshot
+      // being a separate display next to the manual log.
+      tradeImport = await mergeIbkrTrades(ctx.db, result.trades);
     }
 
     const now = new Date();
@@ -213,6 +222,18 @@ export const ibkrRouter = createTRPCRouter({
       positions: result.positions,
       analytics: computeAnalytics(tradeLikes, cashLikes),
       syncedAt: now,
+      // Normalized trades, so the browser can merge them into the
+      // transaction log via portfolio.importIbkrTrades (owner only).
+      trades: result.trades.map((t) => ({
+        symbol: t.symbol,
+        tradeDate: t.tradeDate,
+        quantity: t.quantity,
+        tradePrice: t.tradePrice,
+        commission: t.commission,
+        transactionId: t.transactionId,
+      })),
+      // Set when this sync merged trades server-side (non-transient mode).
+      tradeImport,
     };
   }),
 

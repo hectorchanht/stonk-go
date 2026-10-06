@@ -34,6 +34,10 @@ export interface TransactionRow {
   fees: number;
   executedAt: Date;
   note: string | null;
+  /** "manual" | "ibkr" — where this row came from. */
+  source: string;
+  /** Stable IBKR trade key for idempotent imports; null for manual rows. */
+  externalId: string | null;
   createdAt: Date;
 }
 
@@ -184,7 +188,7 @@ export interface AppDb {
   transaction: {
     findMany(args: {
       where?: { symbol: string };
-      orderBy: Array<{ executedAt?: SortDir; id?: SortDir }>;
+      orderBy: Array<{ executedAt?: SortDir; externalId?: SortDir; id?: SortDir }>;
       take?: number;
     }): Promise<TransactionRow[]>;
     findUnique(args: { where: { id: string } }): Promise<TransactionRow | null>;
@@ -197,6 +201,8 @@ export interface AppDb {
         fees?: number;
         executedAt: Date | string;
         note?: string | null;
+        source?: string;
+        externalId?: string | null;
       };
     }): Promise<TransactionRow>;
     delete(args: { where: { id: string } }): Promise<TransactionRow>;
@@ -296,6 +302,8 @@ function mapTransaction(r: RawRow): TransactionRow {
     fees: (r.fees as number) ?? 0,
     executedAt: toDate(r.executedAt),
     note: (r.note as string | null) ?? null,
+    source: (r.source as string) ?? "manual",
+    externalId: (r.externalId as string | null) ?? null,
     createdAt: toDate(r.createdAt),
   };
 }
@@ -614,13 +622,15 @@ export function createD1Db(d1: D1Database): AppDb {
         fees: d.fees ?? 0,
         executedAt: toDate(d.executedAt),
         note: d.note ?? null,
+        source: d.source ?? "manual",
+        externalId: d.externalId ?? null,
         createdAt: new Date(),
       };
       await d1
         .prepare(
           `INSERT INTO "Transaction"
-             ("id", "symbol", "type", "quantity", "price", "fees", "executedAt", "note", "createdAt")
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             ("id", "symbol", "type", "quantity", "price", "fees", "executedAt", "note", "source", "externalId", "createdAt")
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           row.id,
@@ -631,6 +641,8 @@ export function createD1Db(d1: D1Database): AppDb {
           row.fees,
           iso(row.executedAt),
           row.note,
+          row.source,
+          row.externalId,
           iso(row.createdAt),
         )
         .run();

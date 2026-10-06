@@ -39,6 +39,22 @@ const SNAPSHOT_KEY = "holdr.ibkr.snapshot";
 /** Auto-sync on page load when the cached snapshot is older than this. */
 const AUTO_SYNC_AFTER_MS = 1 * 3600 * 1000;
 
+/** One-line summary of an IBKR trade-import result for the status line. */
+function importSummary(s: {
+  imported: number;
+  duplicatesSkipped: number;
+  oversellSkipped: number;
+}): string {
+  const parts = [
+    `${s.imported} trade${s.imported === 1 ? "" : "s"} merged into your log`,
+  ];
+  if (s.duplicatesSkipped > 0)
+    parts.push(`${s.duplicatesSkipped} already logged by hand`);
+  if (s.oversellSkipped > 0)
+    parts.push(`${s.oversellSkipped} skipped (buy outside report range)`);
+  return parts.join(" · ");
+}
+
 /** Format a USD amount in the user's selected display currency. */
 function useMoney() {
   const { fmt } = useCurrency();
@@ -497,6 +513,8 @@ function BrowserBrokerCard({
   const [snapshot, setSnapshot] = useState<{ at: string; data: SyncResult } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const utils = api.useUtils();
   const autoStarted = useRef(false);
 
   const { data: session } = useSession();
@@ -515,8 +533,33 @@ function BrowserBrokerCard({
       } catch {
         /* storage full or unavailable — in-memory still works */
       }
+      // Owner only: merge the synced IBKR trades into the transaction log
+      // so holdings and cost basis reflect brokerage activity.
+      // Server-mode syncs already merged server-side (data.tradeImport).
+      if (data.tradeImport) {
+        setImportStatus(importSummary(data.tradeImport));
+        void utils.portfolio.summary.invalidate();
+        void utils.portfolio.transactions.invalidate();
+        void utils.portfolio.flair.invalidate();
+      } else if (
+        session?.user &&
+        !data.persisted &&
+        data.trades.length > 0
+      ) {
+        importMut.mutate({ trades: data.trades });
+      }
     },
     onError: (e) => setError(e.message),
+  });
+
+  const importMut = api.portfolio.importIbkrTrades.useMutation({
+    onSuccess: (s) => {
+      setImportStatus(importSummary(s));
+      void utils.portfolio.summary.invalidate();
+      void utils.portfolio.transactions.invalidate();
+      void utils.portfolio.flair.invalidate();
+    },
+    onError: (e) => setImportStatus(`Trade import failed: ${e.message}`),
   });
 
   const saveCreds = api.ibkr.saveCredentials.useMutation({
@@ -668,6 +711,9 @@ function BrowserBrokerCard({
                 {lastSyncLabel ? ` · synced ${lastSyncLabel}` : ""}
                 {" · end-of-day data"}
               </p>
+              {importStatus && (
+                <p className="mt-1 text-xs text-sky-400/90">{importStatus}</p>
+              )}
             </div>
             <GearMenu
               items={[
@@ -835,6 +881,9 @@ function BrowserBrokerCard({
               </>
             ) : ""}
           </p>
+          {importStatus && (
+            <p className="mt-1 text-xs text-sky-400/90">{importStatus}</p>
+          )}
         </div>
         <GearMenu items={gearItems} />
       </div>

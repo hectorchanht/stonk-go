@@ -44,6 +44,8 @@ export interface FlexTrade {
   realizedPnl: number | null;
   openClose: string | null; // "O" | "C" | ...
   transactionType: string | null;
+  /** IBKR's per-execution id — the stable key for idempotent imports. */
+  transactionId: string | null;
 }
 
 export interface FlexCashFlow {
@@ -154,6 +156,7 @@ export function parseFlexPositions(xml: string): FlexResult {
         realizedPnl: num(a.fifoPnlRealized),
         openClose: a.openCloseIndicator ?? null,
         transactionType: a.transactionType ?? null,
+        transactionId: a.transactionID ?? null,
       });
     }
   }
