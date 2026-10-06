@@ -230,6 +230,7 @@ export const ibkrRouter = createTRPCRouter({
       commission: t.commission,
       realizedPnl: t.realizedPnl,
       openClose: t.openClose,
+      currency: t.currency,
     }));
     const cashLikes: CashFlowLike[] = result.cashFlows.map((c, i) => ({
       id: `sync-${i}`,

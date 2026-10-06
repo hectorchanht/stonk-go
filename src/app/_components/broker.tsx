@@ -228,8 +228,66 @@ type RecentTrade = Analytics["recentTrades"][number];
 function AnalyticsView({ data }: { data: Analytics }) {
   const money = useMoney();
   const moneySigned = useMoneySigned();
+  const { rates, fmt } = useCurrency();
   const t = data.totals;
   const hasTrades = t.trades > 0;
+
+  /**
+   * Convert an amount in its native currency (e.g. HKD for HKEX trades)
+   * to USD, so it can be formatted in the user's display currency.
+   * Falls back to treating the amount as-is when no FX rate is available.
+   */
+  const toUsd = useCallback(
+    (amount: number | null, currency: string | null | undefined) => {
+      if (amount == null) return null;
+      const code = (currency ?? "USD").toUpperCase();
+      if (code === "USD") return amount;
+      const rate = rates?.[code.toLowerCase()];
+      return rate ? amount / rate : amount;
+    },
+    [rates],
+  );
+  /** Format an amount in its native currency, converted to display currency. */
+  const moneyFx = useCallback(
+    (v: number | null, currency: string | null | undefined) => {
+      const usd = toUsd(v, currency);
+      return usd == null || !Number.isFinite(usd) ? "—" : fmt(usd);
+    },
+    [toUsd, fmt],
+  );
+  const moneyFxSigned = useCallback(
+    (v: number | null, currency: string | null | undefined) => {
+      const usd = toUsd(v, currency);
+      if (usd == null || !Number.isFinite(usd))
+        return <span className="text-zinc-400">—</span>;
+      const cls =
+        usd > 0 ? "text-emerald-400" : usd < 0 ? "text-rose-400" : "text-zinc-400";
+      return <span className={cls}>{fmt(usd, { sign: true })}</span>;
+    },
+    [toUsd, fmt],
+  );
+  /** Native currency badge, shown when it isn't USD (e.g. HKD). */
+  const curBadge = (currency: string | null | undefined) => {
+    const code = (currency ?? "USD").toUpperCase();
+    if (code === "USD") return null;
+    return (
+      <span className="ml-1 rounded bg-zinc-800 px-1 py-0.5 text-[10px] font-semibold text-zinc-400">
+        {code}
+      </span>
+    );
+  };
+  // Totals converted to USD first — the server sums native amounts, which
+  // mixes currencies when the account trades more than one.
+  const totalRealizedUsd =
+    t.realizedPnl == null
+      ? null
+      : data.symbols.reduce<number | null>(
+          (sum, s) => {
+            const usd = toUsd(s.realizedPnl, s.currency);
+            return sum == null || usd == null ? null : sum + usd;
+          },
+          0,
+        );
 
   const symPager = usePager(data.symbols, 10);
   const tradePager = usePager(data.recentTrades, 10);
@@ -262,7 +320,12 @@ function AnalyticsView({ data }: { data: Analytics }) {
       key: "pnl",
       header: "Realized P/L",
       align: "right",
-      render: (s) => moneySigned(s.realizedPnl),
+      render: (s) => (
+        <span>
+          {moneyFxSigned(s.realizedPnl, s.currency)}
+          {curBadge(s.currency)}
+        </span>
+      ),
     },
     {
       key: "fees",
@@ -320,7 +383,12 @@ function AnalyticsView({ data }: { data: Analytics }) {
       key: "pnl",
       header: "P/L",
       align: "right",
-      render: (tr) => moneySigned(tr.realizedPnl),
+      render: (tr) => (
+        <span>
+          {moneyFxSigned(tr.realizedPnl, tr.currency)}
+          {curBadge(tr.currency)}
+        </span>
+      ),
     },
   ];
 
@@ -333,8 +401,10 @@ function AnalyticsView({ data }: { data: Analytics }) {
       <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Realized P/L"
-          value={money(t.realizedPnl, { sign: true })}
-          tone={toneOf(t.realizedPnl)}
+          value={
+            totalRealizedUsd == null ? "—" : money(totalRealizedUsd, { sign: true })
+          }
+          tone={toneOf(totalRealizedUsd)}
         />
         <StatCard
           label="Dividends"

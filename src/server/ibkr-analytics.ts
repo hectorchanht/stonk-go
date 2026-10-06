@@ -10,6 +10,7 @@ export type TradeLike = Pick<
   | "commission"
   | "realizedPnl"
   | "openClose"
+  | "currency"
 >;
 
 export type CashFlowLike = Pick<
@@ -46,6 +47,7 @@ export function computeAnalytics(
       realizedPnl: number;
       commissions: number;
       qty: number;
+      currency: string | null;
     }
   >();
   for (const t of trades) {
@@ -55,11 +57,15 @@ export function computeAnalytics(
       realizedPnl: 0,
       commissions: 0,
       qty: 0,
+      currency: null,
     };
     e.trades += 1;
     e.realizedPnl += t.realizedPnl ?? 0;
     e.commissions += t.commission ? Math.abs(t.commission) : 0;
     e.qty += t.quantity;
+    // Native currency of the trades (e.g. HKD for HKEX stocks). A symbol
+    // should only ever trade in one currency; first one wins.
+    if (e.currency == null && t.currency) e.currency = t.currency;
     bySymbol.set(t.symbol, e);
   }
   const symbols = [...bySymbol.values()].sort(
@@ -84,6 +90,7 @@ export function computeAnalytics(
       commission: t.commission,
       realizedPnl: t.realizedPnl,
       openClose: t.openClose,
+      currency: t.currency,
     })),
     recentCashFlows: cashFlows.slice(0, 20).map((c) => ({
       id: c.id,
