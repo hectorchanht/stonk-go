@@ -67,6 +67,14 @@ import {
   useDashboardLayout,
   type WidgetDef,
 } from "~/app/_components/widgets";
+import {
+  HOLDINGS_ALL_COLUMNS,
+  HOLDINGS_COLUMNS_KEY,
+  HOLDINGS_DEFAULT_COLUMNS,
+  parseStoredColumns,
+  toggleColumnKey,
+  type HoldingColumnKey,
+} from "~/app/_components/holdings-columns";
 import { AllocationDonut } from "~/app/_components/allocation";
 import { AiInsights } from "~/app/_components/insights";
 import { AiChat } from "~/app/_components/ai-chat";
@@ -148,6 +156,43 @@ function HoldingsTable({
   const [sortKey, setSortKey] = useState<HoldingSortKey>("marketValue");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
+  // User-pickable table columns (Symbol + actions are always shown).
+  const [visibleCols, setVisibleCols] =
+    useState<HoldingColumnKey[]>(HOLDINGS_DEFAULT_COLUMNS);
+  const [colsHydrated, setColsHydrated] = useState(false);
+  const [colsOpen, setColsOpen] = useState(false);
+  useEffect(() => {
+    try {
+      const stored = parseStoredColumns(
+        window.localStorage.getItem(HOLDINGS_COLUMNS_KEY),
+      );
+      if (stored) setVisibleCols(stored);
+    } catch {
+      /* ignore */
+    }
+    setColsHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (!colsHydrated) return;
+    try {
+      window.localStorage.setItem(
+        HOLDINGS_COLUMNS_KEY,
+        JSON.stringify(visibleCols),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [visibleCols, colsHydrated]);
+  useEffect(() => {
+    if (!colsOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setColsOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [colsOpen]);
+  const visibleSet = useMemo(() => new Set(visibleCols), [visibleCols]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const f = q
@@ -212,6 +257,7 @@ function HoldingsTable({
         "source",
         "quantity",
         "avg_cost",
+        "cost_basis",
         "price",
         "market_value",
         "day_pl",
@@ -224,6 +270,7 @@ function HoldingsTable({
         r.source,
         r.quantity,
         r.avgCost ?? "",
+        r.costBasis ?? "",
         r.price ?? "",
         r.marketValue ?? "",
         r.dayPL ?? "",
@@ -257,7 +304,7 @@ function HoldingsTable({
     );
   }
 
-  const columns: DataColumn<HoldingRow>[] = [
+  const allColumns: DataColumn<HoldingRow>[] = [
     {
       key: "symbol",
       header: sortHeader("Symbol", "symbol", "left"),
@@ -289,6 +336,14 @@ function HoldingsTable({
       header: "Avg cost",
       align: "right",
       render: (r) => <span className="text-zinc-700 dark:text-zinc-300">{money(r.avgCost)}</span>,
+    },
+    {
+      key: "cost",
+      header: "Cost",
+      align: "right",
+      render: (r) => (
+        <span className="text-zinc-700 dark:text-zinc-300">{money(r.costBasis)}</span>
+      ),
     },
     {
       key: "price",
@@ -355,6 +410,12 @@ function HoldingsTable({
         ),
     },
   ];
+  const columns: DataColumn<HoldingRow>[] = allColumns.filter(
+    (c) =>
+      c.key === "symbol" ||
+      c.key === "actions" ||
+      visibleSet.has(c.key as HoldingColumnKey),
+  );
 
   return (
     <div className={`${card} overflow-hidden p-0`}>
@@ -376,6 +437,16 @@ function HoldingsTable({
         </div>
         <button
           type="button"
+          onClick={() => setColsOpen((o) => !o)}
+          title="Choose columns"
+          aria-label="Choose columns"
+          aria-expanded={colsOpen}
+          className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 p-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-700"
+        >
+          <SlidersHorizontal size={15} />
+        </button>
+        <button
+          type="button"
           onClick={exportCsv}
           title="Export holdings as CSV"
           aria-label="Export holdings as CSV"
@@ -384,6 +455,65 @@ function HoldingsTable({
           <Download size={15} />
         </button>
       </div>
+
+      {/* Column picker: bottom sheet on mobile, centered dialog on desktop */}
+      {colsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center sm:p-4"
+          onClick={() => setColsOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Choose holdings columns"
+            className="w-full max-w-sm rounded-t-2xl border border-zinc-700 bg-zinc-900 p-4 shadow-2xl sm:rounded-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-200">
+                Columns
+              </h3>
+              <button
+                type="button"
+                onClick={() => setColsOpen(false)}
+                aria-label="Close column picker"
+                className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-800"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto">
+              {HOLDINGS_ALL_COLUMNS.map((c) => {
+                const checked = visibleSet.has(c.key);
+                const isLast = checked && visibleCols.length === 1;
+                return (
+                  <label
+                    key={c.key}
+                    title={isLast ? "At least one column must stay visible" : undefined}
+                    className={`flex min-h-[44px] cursor-pointer items-center gap-3 rounded-lg px-2 hover:bg-zinc-800/60 ${
+                      isLast ? "opacity-60" : ""
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={isLast}
+                      onChange={() =>
+                        setVisibleCols((prev) => toggleColumnKey(prev, c.key))
+                      }
+                      className="h-5 w-5 shrink-0 accent-emerald-500"
+                    />
+                    <span className="text-sm text-zinc-200">{c.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-xs text-zinc-500">
+              Symbol is always shown. At least one column must stay visible.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Mobile: position cards instead of a wide swipe table */}
       <div className="sm:hidden">
@@ -429,6 +559,7 @@ function HoldingsTable({
             <div className="mt-1.5 flex items-center justify-between text-xs text-zinc-500">
               <span className="tabular-nums">
                 {r.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })} @ {money(r.avgCost)}
+                {" · "}Cost {money(r.costBasis)}
               </span>
               <span className="tabular-nums">now {money(r.price)}</span>
               {r.source === "manual" ? (
