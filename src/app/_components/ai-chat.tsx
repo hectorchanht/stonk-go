@@ -104,6 +104,24 @@ export function AiChat({
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
 
+  // Alerts can hand off a pre-filled question via localStorage + section open.
+  useEffect(() => {
+    const check = () => {
+      try {
+        const q = window.localStorage.getItem("holdr.ai-chat-prefill");
+        if (q) {
+          window.localStorage.removeItem("holdr.ai-chat-prefill");
+          setInput(q);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    check();
+    const t = window.setInterval(check, 1000);
+    return () => window.clearInterval(t);
+  }, []);
+
   const snapshot = useMemo(() => {
     const mv = totals.marketValue > 0 ? totals.marketValue : 1;
     const topPositions = rows

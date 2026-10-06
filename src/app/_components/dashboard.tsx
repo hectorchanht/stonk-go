@@ -5,6 +5,7 @@ import { signOut, useSession } from "next-auth/react";
 import {
   ArrowDown,
   ArrowUp,
+  Bell,
   Download,
   LogIn,
   LogOut,
@@ -34,6 +35,7 @@ import {
 } from "~/app/_components/ui";
 import { AiInsights } from "~/app/_components/insights";
 import { AiChat } from "~/app/_components/ai-chat";
+import { SmartAlerts } from "~/app/_components/smart-alerts";
 import {
   CurrencyPicker,
   CurrencyProvider,
@@ -1052,6 +1054,14 @@ function DashboardInner() {
                 sub={`capital invested${missingBasisNote}`}
               />
             </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="alerts"
+            title={<span className="inline-flex items-center gap-1.5"><Bell size={14} className="text-amber-400" /> Smart Alerts</span>}
+            info="Auto-scans your portfolio on every price refresh: big daily movers, concentration risk, deep losers, missing prices or cost basis. Dismissed alerts resurface after 24h."
+          >
+            <SmartAlerts rows={data.rows} />
           </CollapsibleSection>
 
           <CollapsibleSection
