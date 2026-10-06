@@ -62,7 +62,7 @@ async function fetchFinnhub(
 ): Promise<Quote | null> {
   const params = new URLSearchParams({ symbol, token: apiKey });
   const res = await fetch(`https://finnhub.io/api/v1/quote?${params}`, {
-    headers: { "User-Agent": "Mozilla/5.0 (stonk-go portfolio)" },
+    headers: { "User-Agent": "Mozilla/5.0 (Holdr portfolio)" },
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) return null;
@@ -105,7 +105,7 @@ async function fetchYahoo(symbol: string): Promise<Quote | null> {
       symbol
     )}?interval=1d&range=5d`,
     {
-      headers: { "User-Agent": "Mozilla/5.0 (stonk-go portfolio)" },
+      headers: { "User-Agent": "Mozilla/5.0 (Holdr portfolio)" },
       signal: AbortSignal.timeout(10_000),
     }
   );
@@ -163,7 +163,7 @@ async function fetchStooq(symbol: string): Promise<Quote | null> {
       stooqSymbol
     )}&f=sd2t2ohlcv&h&e=csv`,
     {
-      headers: { "User-Agent": "Mozilla/5.0 (stonk-go portfolio)" },
+      headers: { "User-Agent": "Mozilla/5.0 (Holdr portfolio)" },
       signal: AbortSignal.timeout(10_000),
     }
   );

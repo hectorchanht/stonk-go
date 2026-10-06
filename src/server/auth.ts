@@ -53,7 +53,7 @@ function getEmailFrom(): string {
   from ??= process.env.EMAIL_FROM;
   return typeof from === "string" && from.length > 0
     ? from
-    : "stonk-go <login@hectorchan.com>";
+    : "Holdr <login@hectorchan.com>";
 }
 
 const esc = (s: string) =>
@@ -84,10 +84,10 @@ async function sendVerificationRequest(params: {
     body: JSON.stringify({
       from,
       to: [params.identifier],
-      subject: "Sign in to stonk-go",
-      text: `Sign in to stonk-go:\n\n${params.url}\n\nThis link expires in 24 hours. If you didn't request it, ignore this email.`,
+      subject: "Sign in to Holdr",
+      text: `Sign in to Holdr:\n\n${params.url}\n\nThis link expires in 24 hours. If you didn't request it, ignore this email.`,
       html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-        <h2>Sign in to stonk-go</h2>
+        <h2>Sign in to Holdr</h2>
         <p><a href="${esc(params.url)}" style="display:inline-block;padding:12px 24px;background:#059669;color:#fff;text-decoration:none;border-radius:8px">Sign in</a></p>
         <p style="color:#666;font-size:14px">This link expires in 24 hours. If you didn't request it, ignore this email.</p>
         <p style="color:#999;font-size:12px">${esc(params.url)}</p>

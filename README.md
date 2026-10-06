@@ -1,6 +1,7 @@
-# 📈 stonk-go
+# 💎 Holdr
 
-A simple, self-hosted **personal investing portfolio** tracker — log buys and
+A simple, self-hosted **personal investing portfolio** tracker for diamond
+hands — log buys and
 sells, watch your holdings with live market prices, day P/L, total P/L, and
 allocation, all in a dark, mobile-friendly dashboard.
 
@@ -113,7 +114,7 @@ One-time dashboard setup:
 2. **Point the repo at it**: paste the database ID into `wrangler.jsonc`
    (`d1_databases[0].database_id`, replacing `REPLACE_WITH_D1_DATABASE_ID`).
 3. **Connect git integration**: Workers & Pages → Create → connect
-   `hectorchanht/stonk-go`, build command `npm run build:worker`, deploy
+   `hectorchanht/holdr`, build command `npm run build:worker`, deploy
    command `npx wrangler deploy`.
 4. **Apply the schema**: after the first deploy,
    `npx wrangler d1 execute stonk-go-db --remote --file=prisma/migrations/20261005233129_portfolio/migration.sql`

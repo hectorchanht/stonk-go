@@ -562,16 +562,18 @@ export function Dashboard() {
         <div className="flex items-center gap-3">
           <img
             src="/logo.webp"
-            alt="stonk-go logo"
+            alt="Holdr logo"
             width={40}
             height={40}
             className="h-10 w-10 rounded-xl"
           />
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
-              stonk-go
+              Holdr
             </h1>
-            <p className="text-sm text-zinc-500">personal investing portfolio</p>
+            <p className="text-sm text-zinc-500">
+              we are diamond holdrs 💎🙌
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">

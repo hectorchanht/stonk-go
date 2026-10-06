@@ -6,7 +6,7 @@ import { type Metadata } from "next";
 import { Providers } from "~/app/_components/providers";
 
 export const metadata: Metadata = {
-  title: "stonk-go · personal investing portfolio",
+  title: "Holdr · diamond hands portfolio",
   description:
     "A simple self-hosted portfolio tracker: holdings, transactions, and live market prices.",
   icons: [

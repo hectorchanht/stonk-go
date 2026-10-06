@@ -21,8 +21,8 @@ interface PositionLike {
 
 const card = "rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5";
 
-const CREDS_KEY = "stonkgo.ibkr.creds";
-const SNAPSHOT_KEY = "stonkgo.ibkr.snapshot";
+const CREDS_KEY = "holdr.ibkr.creds";
+const SNAPSHOT_KEY = "holdr.ibkr.snapshot";
 /** Auto-sync on page load when the cached snapshot is older than this. */
 const AUTO_SYNC_AFTER_MS = 6 * 3600 * 1000;
 
@@ -289,7 +289,7 @@ function SetupSteps() {
 
 /** Fits IBKR's 200-char "Configure Query with AI" prompt box. */
 const IBKR_AI_PROMPT =
-  "New Activity Flex Query 'stonk-go': Open Positions (add Cost Basis Price), Trades, Cash Transactions - all columns. Format XML, delivery Flex Web Service, widest date range. Tell me the Query ID.";
+  "New Activity Flex Query 'holdr': Open Positions (add Cost Basis Price), Trades, Cash Transactions - all columns. Format XML, delivery Flex Web Service, widest date range. Tell me the Query ID.";
 
 function CopyAiPrompt() {
   const [copied, setCopied] = useState(false);

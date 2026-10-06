@@ -61,7 +61,7 @@ export default function LoginPage() {
         <div className="flex items-center gap-3">
           <img
             src="/logo.webp"
-            alt="stonk-go logo"
+            alt="Holdr logo"
             width={36}
             height={36}
             className="h-9 w-9 rounded-xl"
