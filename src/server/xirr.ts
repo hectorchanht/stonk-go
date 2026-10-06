@@ -28,15 +28,30 @@ export function xirr(flows: XirrFlow[], guess = 0.1): number | null {
       0,
     );
 
-  let r = guess;
-  for (let i = 0; i < 100; i++) {
-    const f = npv(r);
-    const df = dnpv(r);
-    if (!Number.isFinite(f) || !Number.isFinite(df) || df === 0) return null;
-    const nr = r - f / df;
-    if (!Number.isFinite(nr) || nr <= -1) return null;
-    if (Math.abs(nr - r) < 1e-9) return nr;
-    r = nr;
+  const attempt = (start: number): number | null => {
+    let r = start;
+    for (let i = 0; i < 100; i++) {
+      const f = npv(r);
+      const df = dnpv(r);
+      if (!Number.isFinite(f) || !Number.isFinite(df) || df === 0) return null;
+      const nr = r - f / df;
+      if (!Number.isFinite(nr) || nr <= -1) return null;
+      if (Math.abs(nr - r) < 1e-9) return nr;
+      r = nr;
+    }
+    return null;
+  };
+
+  // Newton–Raphson is guess-sensitive: from the default 0.1 guess the first
+  // step shoots past r = -1 for deeply negative returns (a real -80%
+  // annualized XIRR exists but the solver bails). Retry from negative
+  // guesses before giving up.
+  const tried = new Set<number>();
+  for (const g of [guess, -0.5, -0.9]) {
+    if (tried.has(g)) continue;
+    tried.add(g);
+    const r = attempt(g);
+    if (r != null) return r;
   }
   return null;
 }

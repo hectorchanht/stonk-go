@@ -144,6 +144,14 @@ export function PerformanceSection({
   const x = perf?.xirr;
   const xirrTone: "pos" | "neg" | "neutral" =
     x == null ? "neutral" : x > 0 ? "pos" : x < 0 ? "neg" : "neutral";
+  // The countdown only makes sense before 30 days of history exist; past
+  // that, a null XIRR means the solver found no stable rate.
+  const xirrSub =
+    x != null || perf == null
+      ? undefined
+      : perf.spanDays < 30
+        ? `${Math.floor(perf.spanDays)} of 30 days — XIRR unlocks then`
+        : "Couldn't find a stable rate in this history";
 
   return (
     <div className="rounded-xl border border-zinc-200 bg-white/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/60 sm:p-5">
@@ -183,11 +191,7 @@ export function PerformanceSection({
           value={x == null ? "—" : `${(x * 100).toFixed(2)}%`}
           tone={xirrTone}
           info="True annualized return from your full trade log — every flow converted to USD. Appears once you have 30+ days of history; annualizing a shorter span would be noise. Excludes dividends."
-          sub={
-            x == null && (perf?.spanDays ?? 0) > 0
-              ? `${Math.floor(perf!.spanDays)} of 30 days — XIRR unlocks then`
-              : undefined
-          }
+          sub={xirrSub}
         />
         <StatCard
           label="Return this period"
