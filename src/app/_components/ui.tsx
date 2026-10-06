@@ -325,3 +325,110 @@ export function downloadCsv(
   a.remove();
   URL.revokeObjectURL(url);
 }
+
+/* ---------------- loading skeletons ---------------- */
+
+/** Single pulsing bar. */
+export function SkeletonBar({
+  width = "100%",
+  height = "1rem",
+  className = "",
+}: {
+  width?: string;
+  height?: string;
+  className?: string;
+}) {
+  return (
+    <div
+      aria-hidden
+      className={`animate-pulse rounded bg-zinc-800 ${className}`}
+      style={{ width, height }}
+    />
+  );
+}
+
+/** Skeleton for the 4 stat cards in Portfolio overview. */
+export function StatCardSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {[0, 1, 2, 3].map((i) => (
+        <div
+          key={i}
+          className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4"
+        >
+          <SkeletonBar width="40%" height="0.75rem" className="mb-3" />
+          <SkeletonBar width="70%" height="1.5rem" className="mb-2" />
+          <SkeletonBar width="55%" height="0.75rem" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Skeleton rows for lists/tables. */
+export function RowSkeleton({ rows = 4 }: { rows?: number }) {
+  return (
+    <div className="space-y-2.5" aria-label="Loading">
+      {Array.from({ length: rows }).map((_, i) => (
+        <SkeletonBar
+          key={i}
+          width={`${94 - i * 7}%`}
+          height="1.1rem"
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Spinning loader with optional label. */
+export function Spinner({
+  label,
+  size = 16,
+}: {
+  label?: string;
+  size?: number;
+}) {
+  return (
+    <span className="inline-flex items-center gap-2 text-sm text-zinc-400">
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        className="animate-spin"
+        aria-hidden
+      >
+        <circle
+          cx="12"
+          cy="12"
+          r="10"
+          stroke="currentColor"
+          strokeWidth="3"
+          className="opacity-20"
+        />
+        <path
+          d="M22 12a10 10 0 0 0-10-10"
+          stroke="currentColor"
+          strokeWidth="3"
+          strokeLinecap="round"
+        />
+      </svg>
+      {label && <span>{label}</span>}
+    </span>
+  );
+}
+
+/** Three bouncing dots for chat/AI "thinking" states. */
+export function TypingDots() {
+  return (
+    <span className="inline-flex items-center gap-1" aria-label="Thinking">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400"
+          style={{ animationDelay: `${i * 150}ms` }}
+        />
+      ))}
+    </span>
+  );
+}

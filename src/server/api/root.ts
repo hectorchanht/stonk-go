@@ -1,6 +1,7 @@
 import { authRouter } from "~/server/api/routers/auth";
 import { ibkrRouter } from "~/server/api/routers/ibkr";
 import { portfolioRouter } from "~/server/api/routers/portfolio";
+import { aiRouter } from "~/server/api/routers/ai";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 
 /**
@@ -12,6 +13,7 @@ export const appRouter = createTRPCRouter({
   auth: authRouter,
   ibkr: ibkrRouter,
   portfolio: portfolioRouter,
+  ai: aiRouter,
 });
 
 // export type definition of API

@@ -8,6 +8,7 @@ import {
   Download,
   LogIn,
   LogOut,
+  MessageCircle,
   MoreHorizontal,
   Plus,
   RefreshCw,
@@ -23,12 +24,16 @@ import {
   DataTable,
   InfoTip,
   Pagination,
+  RowSkeleton,
+  Spinner,
   StatCard,
+  StatCardSkeleton,
   downloadCsv,
   usePager,
   type DataColumn,
 } from "~/app/_components/ui";
 import { AiInsights } from "~/app/_components/insights";
+import { AiChat } from "~/app/_components/ai-chat";
 import {
   CurrencyPicker,
   CurrencyProvider,
@@ -763,7 +768,9 @@ function TransactionList() {
         </button>
       </div>
       {isLoading ? (
-        <p className="px-4 py-4 text-sm text-zinc-500">Loading…</p>
+        <div className="px-1 py-2">
+          <RowSkeleton rows={6} />
+        </div>
       ) : (
         <DataTable
           columns={columns}
@@ -998,8 +1005,11 @@ function DashboardInner() {
       </header>
 
       {isLoading ? (
-        <div className={card}>
-          <p className="text-zinc-500">Loading portfolio…</p>
+        <div className="space-y-4">
+          <StatCardSkeleton />
+          <div className={card}>
+            <RowSkeleton rows={5} />
+          </div>
         </div>
       ) : isError || !data ? (
         <div className={card}>
@@ -1050,6 +1060,15 @@ function DashboardInner() {
             info="Cloudflare Workers AI reads your portfolio and writes a plain-English brief: concentration, winners, losers, and one suggestion. Cached for 24h per snapshot."
           >
             <AiInsights rows={data.rows} totals={t!} />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="ai-chat"
+            title={<span className="inline-flex items-center gap-1.5"><MessageCircle size={14} className="text-sky-400" /> AI Chat</span>}
+            info="Ask anything about your portfolio in plain language. Pick a provider (Cloudflare is free, or bring your own OpenAI/Anthropic key) and toggle skills to shape the AI's personality."
+            defaultOpen={false}
+          >
+            <AiChat rows={data.rows} totals={t!} />
           </CollapsibleSection>
 
           <CollapsibleSection

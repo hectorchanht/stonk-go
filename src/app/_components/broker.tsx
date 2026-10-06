@@ -21,6 +21,8 @@ import { useCurrency } from "~/app/_components/currency";
 import {
   DataTable,
   Pagination,
+  RowSkeleton,
+  Spinner,
   StatCard,
   usePager,
   type DataColumn,
@@ -1086,9 +1088,10 @@ function BrowserBrokerCard({
             </p>
           )}
           {sync.isPending && !data && (
-            <p className="mt-3 text-sm text-zinc-500">
-              Pulling your IBKR records… (IBKR generates the report, takes ~10–30s)
-            </p>
+            <div className="mt-3 space-y-3">
+              <Spinner label="Pulling your IBKR records… (takes ~10–30s)" />
+              <RowSkeleton rows={4} />
+            </div>
           )}
           {data && (
             <>
@@ -1233,9 +1236,10 @@ function BrowserBrokerCard({
       )}
 
       {sync.isPending && !data && (
-        <p className="mt-3 text-sm text-zinc-500">
-          Pulling your IBKR records… (IBKR generates the report, takes ~10–30s)
-        </p>
+        <div className="mt-3 space-y-3">
+          <Spinner label="Pulling your IBKR records… (takes ~10–30s)" />
+          <RowSkeleton rows={4} />
+        </div>
       )}
 
       {data && (
