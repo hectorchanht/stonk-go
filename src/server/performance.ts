@@ -127,6 +127,13 @@ export interface DailyHolding {
   qtyBySymbol: Record<string, number>;
   /** Cumulative net USD invested up to this day (buys add, sells subtract). */
   invested: number;
+  /**
+   * Uppercase symbol → average native-currency cost per share at end of day
+   * (average-cost walk over the trade log, same math as recomputeHolding).
+   * Lets the curve value symbols that have no price history at their known
+   * cost instead of $0 — no invented prices, no fake cliff.
+   */
+  avgCostBySymbol: Record<string, number>;
 }
 
 /** Minimal daily bar shape — structural, matches server/yahoo.DailyBar. */
@@ -180,6 +187,8 @@ export function buildDailyHoldings(
   );
 
   const qty: Record<string, number> = {};
+  /** Native-currency total cost basis per symbol (average-cost method). */
+  const cost: Record<string, number> = {};
   let invested = 0;
   let li = 0;
   const days: DailyHolding[] = [];
@@ -190,14 +199,28 @@ export function buildDailyHoldings(
       const sym = leg.symbol.trim().toUpperCase();
       const isSell = leg.type === "SELL";
       const dir = isSell ? -1 : 1;
-      qty[sym] = (qty[sym] ?? 0) + dir * leg.quantity;
       const gross = leg.quantity * leg.price;
+      if (isSell) {
+        // Average-cost relief: sells remove a proportional slice of the
+        // cost basis. Clamp — never let a data quirk drive cost negative.
+        const held = qty[sym] ?? 0;
+        const ratio = held > 0 ? Math.min(1, leg.quantity / held) : 0;
+        cost[sym] = (cost[sym] ?? 0) * (1 - ratio);
+      } else {
+        cost[sym] = (cost[sym] ?? 0) + gross + (leg.fees ?? 0);
+      }
+      qty[sym] = (qty[sym] ?? 0) + dir * leg.quantity;
       // Buys: money in (cost + fees). Sells: money out (proceeds − fees).
       const signed = isSell ? -(gross - (leg.fees ?? 0)) : gross + (leg.fees ?? 0);
       invested += signed * fxToUsd(iso, inferCurrency(sym));
       li++;
     }
-    days.push({ date: iso, qtyBySymbol: { ...qty }, invested });
+    const avgCost: Record<string, number> = {};
+    for (const sym of Object.keys(qty)) {
+      const q = qty[sym]!;
+      avgCost[sym] = q > 1e-9 ? (cost[sym] ?? 0) / q : 0;
+    }
+    days.push({ date: iso, qtyBySymbol: { ...qty }, invested, avgCostBySymbol: avgCost });
   }
   return days;
 }
@@ -218,32 +241,46 @@ export function latestBarOnOrBefore(
 /**
  * Turn daily holdings into daily USD values: Σ qty × adjclose → native → USD.
  * Bars forward-fill (weekends/holidays reuse the latest bar on or before the
- * day). Symbols with no usable bar are skipped and reported in
- * missingSymbols — the caller labels the chart accordingly instead of
- * silently understating it.
+ * day). Symbols with no usable bar fall back to their known average cost
+ * (from the trade log — real buy prices, never invented) and are reported
+ * in estimatedSymbols; symbols with neither price nor cost land in
+ * missingSymbols. Nothing is ever silently zeroed in a way the caller
+ * can't label.
  */
 export function aggregateDailyValue(
   days: DailyHolding[],
   closesBySymbol: Record<string, PriceBar[]>,
   fxToUsd: (date: string, currency: string) => number,
-): { priced: PricedDay[]; missingSymbols: string[] } {
+): { priced: PricedDay[]; missingSymbols: string[]; estimatedSymbols: string[] } {
   const missing = new Set<string>();
+  const estimated = new Set<string>();
   const priced: PricedDay[] = days.map((d) => {
     let value = 0;
     for (const sym of Object.keys(d.qtyBySymbol)) {
       const q = d.qtyBySymbol[sym]!;
       if (q === 0) continue;
       const bar = latestBarOnOrBefore(closesBySymbol[sym] ?? [], d.date);
-      if (!bar) {
-        missing.add(sym);
+      if (bar) {
+        const px = bar.adjclose ?? bar.close;
+        value += q * px * fxToUsd(d.date, inferCurrency(sym));
         continue;
       }
-      const px = bar.adjclose ?? bar.close;
-      value += q * px * fxToUsd(d.date, inferCurrency(sym));
+      // No price history: value at known average cost (flat, honest).
+      const avgCost = d.avgCostBySymbol[sym] ?? 0;
+      if (avgCost > 0) {
+        estimated.add(sym);
+        value += q * avgCost * fxToUsd(d.date, inferCurrency(sym));
+      } else {
+        missing.add(sym);
+      }
     }
     return { date: d.date, value, invested: d.invested };
   });
-  return { priced, missingSymbols: [...missing] };
+  return {
+    priced,
+    missingSymbols: [...missing],
+    estimatedSymbols: [...estimated],
+  };
 }
 
 /* ---------------- Per-source breakdown (By Source view) ---------------- */
@@ -261,6 +298,8 @@ export interface SourcedDailyHolding {
   qtyBySource: Record<string, Record<string, number>>;
   /** source → cumulative net USD invested up to this day. */
   investedBySource: Record<string, number>;
+  /** source → UPPER symbol → average native-currency cost per share. */
+  avgCostBySource: Record<string, Record<string, number>>;
 }
 
 const normSource = (s: string): string => {
@@ -306,10 +345,13 @@ export function buildSourcedDailyHoldings(
 
   const qty: Record<string, Record<string, number>> = {};
   const invested: Record<string, number> = {};
+  /** source → symbol → total native cost basis (average-cost method). */
+  const cost: Record<string, Record<string, number>> = {};
   const touch = (src: string): void => {
     if (!qty[src]) {
       qty[src] = {};
       invested[src] = 0;
+      cost[src] = {};
     }
   };
   let li = 0;
@@ -323,8 +365,16 @@ export function buildSourcedDailyHoldings(
       const isSell = leg.type === "SELL";
       const dir = isSell ? -1 : 1;
       const q = qty[leg.src]!;
-      q[sym] = (q[sym] ?? 0) + dir * leg.quantity;
+      const c = cost[leg.src]!;
       const gross = leg.quantity * leg.price;
+      if (isSell) {
+        const held = q[sym] ?? 0;
+        const ratio = held > 0 ? Math.min(1, leg.quantity / held) : 0;
+        c[sym] = (c[sym] ?? 0) * (1 - ratio);
+      } else {
+        c[sym] = (c[sym] ?? 0) + gross + (leg.fees ?? 0);
+      }
+      q[sym] = (q[sym] ?? 0) + dir * leg.quantity;
       // Buys: money in (cost + fees). Sells: money out (proceeds − fees).
       const signed = isSell
         ? -(gross - (leg.fees ?? 0))
@@ -334,11 +384,21 @@ export function buildSourcedDailyHoldings(
     }
     // Snapshot copies so later mutation can't alias earlier days.
     const snap: Record<string, Record<string, number>> = {};
-    for (const [src, q] of Object.entries(qty)) snap[src] = { ...q };
+    const avgSnap: Record<string, Record<string, number>> = {};
+    for (const [src, q] of Object.entries(qty)) {
+      snap[src] = { ...q };
+      const ac: Record<string, number> = {};
+      for (const sym of Object.keys(q)) {
+        const held = q[sym]!;
+        ac[sym] = held > 1e-9 ? (cost[src]![sym] ?? 0) / held : 0;
+      }
+      avgSnap[src] = ac;
+    }
     days.push({
       date: iso,
       qtyBySource: snap,
       investedBySource: { ...invested },
+      avgCostBySource: avgSnap,
     });
   }
   return days;
@@ -348,15 +408,21 @@ export function buildSourcedDailyHoldings(
  * Per-source version of aggregateDailyValue: for each source, Σ qty ×
  * adjclose → native → USD per day. Every source gets an entry for every
  * day (aligned series), with 0 before its first trade. Symbols with no
- * usable bar are skipped and reported in missingSymbols — never silently
- * zeroed in a way the caller can't label.
+ * usable bar fall back to average cost (reported in estimatedSymbols);
+ * symbols with neither land in missingSymbols — never silently zeroed in
+ * a way the caller can't label.
  */
 export function aggregateDailyValueBySource(
   days: SourcedDailyHolding[],
   closesBySymbol: Record<string, PriceBar[]>,
   fxToUsd: (date: string, currency: string) => number,
-): { perSource: Record<string, PricedDay[]>; missingSymbols: string[] } {
+): {
+  perSource: Record<string, PricedDay[]>;
+  missingSymbols: string[];
+  estimatedSymbols: string[];
+} {
   const missing = new Set<string>();
+  const estimated = new Set<string>();
   const sources = [
     ...new Set(days.flatMap((d) => Object.keys(d.qtyBySource))),
   ];
@@ -367,16 +433,23 @@ export function aggregateDailyValueBySource(
     for (const src of sources) {
       let value = 0;
       const qmap = d.qtyBySource[src] ?? {};
+      const cmap = d.avgCostBySource[src] ?? {};
       for (const sym of Object.keys(qmap)) {
         const q = qmap[sym]!;
         if (q === 0) continue;
         const bar = latestBarOnOrBefore(closesBySymbol[sym] ?? [], d.date);
-        if (!bar) {
-          missing.add(sym);
+        if (bar) {
+          const px = bar.adjclose ?? bar.close;
+          value += q * px * fxToUsd(d.date, inferCurrency(sym));
           continue;
         }
-        const px = bar.adjclose ?? bar.close;
-        value += q * px * fxToUsd(d.date, inferCurrency(sym));
+        const avgCost = cmap[sym] ?? 0;
+        if (avgCost > 0) {
+          estimated.add(sym);
+          value += q * avgCost * fxToUsd(d.date, inferCurrency(sym));
+        } else {
+          missing.add(sym);
+        }
       }
       perSource[src]!.push({
         date: d.date,
@@ -385,7 +458,11 @@ export function aggregateDailyValueBySource(
       });
     }
   }
-  return { perSource, missingSymbols: [...missing] };
+  return {
+    perSource,
+    missingSymbols: [...missing],
+    estimatedSymbols: [...estimated],
+  };
 }
 
 /* ---------------- Monthly heatmap ---------------- */

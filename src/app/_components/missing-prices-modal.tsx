@@ -12,12 +12,18 @@ export interface MissingSymbol {
  * Bottom-sheet modal listing the symbols Yahoo has no price history for.
  * Opened by tapping the "prices missing for N" caption in the Performance
  * section. Backdrop tap and Escape both dismiss it.
+ *
+ * `estimated` — symbols the curve values at their known average cost from
+ * the trade log (real buy prices, flat through history). `symbols` — the
+ * remainder, excluded from the curve entirely.
  */
 export function MissingPricesModal({
   symbols,
+  estimated = [],
   onClose,
 }: {
   symbols: MissingSymbol[];
+  estimated?: MissingSymbol[];
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -57,31 +63,63 @@ export function MissingPricesModal({
             <X size={20} aria-hidden />
           </button>
         </div>
-        {symbols.length === 0 ? (
+        {symbols.length === 0 && estimated.length === 0 ? (
           <p className="py-4 text-center text-sm text-zinc-500">
             Every holding has price history.
           </p>
         ) : (
-          <ul className="space-y-2">
-            {symbols.map((s) => (
-              <li
-                key={s.symbol}
-                className="rounded-lg bg-zinc-800/60 px-3 py-2.5"
-              >
-                <div className="text-sm font-bold tabular-nums text-zinc-100">
-                  {s.symbol}
-                </div>
-                <div className="text-xs text-zinc-400">
-                  {s.name ?? "Company name unavailable"}
-                </div>
-              </li>
-            ))}
-          </ul>
+          <>
+            {estimated.length > 0 && (
+              <div className="mb-3">
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                  Valued at cost ({estimated.length})
+                </p>
+                <ul className="space-y-2">
+                  {estimated.map((s) => (
+                    <li
+                      key={s.symbol}
+                      className="rounded-lg bg-zinc-800/60 px-3 py-2.5"
+                    >
+                      <div className="text-sm font-bold tabular-nums text-zinc-100">
+                        {s.symbol}
+                      </div>
+                      <div className="text-xs text-zinc-400">
+                        {s.name ?? "Company name unavailable"}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {symbols.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                  Excluded ({symbols.length})
+                </p>
+                <ul className="space-y-2">
+                  {symbols.map((s) => (
+                    <li
+                      key={s.symbol}
+                      className="rounded-lg bg-zinc-800/60 px-3 py-2.5"
+                    >
+                      <div className="text-sm font-bold tabular-nums text-zinc-100">
+                        {s.symbol}
+                      </div>
+                      <div className="text-xs text-zinc-400">
+                        {s.name ?? "Company name unavailable"}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
         )}
         <p className="mt-3 text-xs leading-relaxed text-zinc-400">
-          These holdings are excluded from the true value curve on days
-          without price data — the totals shown cover holdings with price
-          data only.
+          &quot;Valued at cost&quot; holdings use their real average buy price from your
+          trade log — flat through history, no prices invented. &quot;Excluded&quot;
+          holdings have neither price history nor a known cost, so the totals
+          shown cover the other holdings only.
         </p>
       </div>
     </div>

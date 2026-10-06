@@ -83,6 +83,8 @@ export function PerformanceSection({
   const source = curve?.source ?? "none";
   const missingSymbols =
     curve?.source === "true" ? (curve.missingSymbols ?? []) : [];
+  const estimatedSymbols =
+    curve?.source === "true" ? (curve.estimatedSymbols ?? []) : [];
   const perSource =
     curve?.source === "true" ? (curve.perSource ?? {}) : {};
   const monthlyCells =
@@ -195,7 +197,7 @@ export function PerformanceSection({
             <>
               True historical value · holdings excl. cash · last point is
               today&apos;s live value
-              {missingSymbols.length > 0 && (
+              {(missingSymbols.length > 0 || estimatedSymbols.length > 0) && (
                 <>
                   {" · "}
                   <button
@@ -203,9 +205,22 @@ export function PerformanceSection({
                     onClick={() => setShowMissing(true)}
                     className="min-h-[44px] underline decoration-dotted underline-offset-2 hover:text-zinc-300"
                   >
-                    {missingSymbols.length} symbol
-                    {missingSymbols.length === 1 ? "" : "s"} lack
-                    {missingSymbols.length === 1 ? "s" : ""} price history
+                    {estimatedSymbols.length > 0 && (
+                      <>
+                        {estimatedSymbols.length} symbol
+                        {estimatedSymbols.length === 1 ? "" : "s"} valued at
+                        cost
+                      </>
+                    )}
+                    {estimatedSymbols.length > 0 &&
+                      missingSymbols.length > 0 &&
+                      ", "}
+                    {missingSymbols.length > 0 && (
+                      <>
+                        {missingSymbols.length} lack
+                        {missingSymbols.length === 1 ? "s" : ""} price history
+                      </>
+                    )}
                   </button>
                 </>
               )}
@@ -239,6 +254,7 @@ export function PerformanceSection({
       {showMissing && (
         <MissingPricesModal
           symbols={missingSymbols}
+          estimated={estimatedSymbols}
           onClose={() => setShowMissing(false)}
         />
       )}

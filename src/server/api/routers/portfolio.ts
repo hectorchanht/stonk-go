@@ -356,6 +356,12 @@ async function buildTrueCurve(
 ): Promise<{
   points: Array<CurvePoint & { invested: number }>;
   missingSymbols: Array<{ symbol: string; name: string | null }>;
+  /**
+   * Symbols with no price history, valued at their known average cost from
+   * the trade log (flat, honest). The UI labels them separately from the
+   * truly-missing ones.
+   */
+  estimatedSymbols: Array<{ symbol: string; name: string | null }>;
   /** source key → downsampled daily {date, value, invested} (trade-log only). */
   perSource: Record<string, PricedDay[]>;
   /** Monthly buckets from the full-resolution series (all history). */
@@ -407,11 +413,11 @@ async function buildTrueCurve(
 
   const holdings = buildDailyHoldings(txns, fxToUsd);
   if (holdings.length === 0) return null;
-  const { priced, missingSymbols: missingTotal } = aggregateDailyValue(
-    holdings,
-    closesBySymbol,
-    fxToUsd,
-  );
+  const {
+    priced,
+    missingSymbols: missingTotal,
+    estimatedSymbols: estimatedTotal,
+  } = aggregateDailyValue(holdings, closesBySymbol, fxToUsd);
 
   // Per-source breakdown for the By Source view: same price data, grouped by
   // each trade's origin. A separate cheap walk; the tested path above is
@@ -425,16 +431,28 @@ async function buildTrueCurve(
   const missingKeys = [
     ...new Set([...missingTotal, ...bySource.missingSymbols]),
   ];
+  const estimatedKeys = [
+    ...new Set([...estimatedTotal, ...bySource.estimatedSymbols]),
+  ];
   // Resolve display names for the "prices missing" modal. Best-effort:
   // getQuote never throws (unavailable → name null) and rides the 60s quote
   // cache, so this only costs network on the rare non-empty case.
+  // Estimated symbols get names too — they're shown in the same modal with
+  // their own "valued at cost" label.
   let missingSymbols: Array<{ symbol: string; name: string | null }> =
     missingKeys.map((symbol) => ({ symbol, name: null }));
-  if (missingKeys.length > 0) {
+  let estimatedSymbols: Array<{ symbol: string; name: string | null }> =
+    estimatedKeys.map((symbol) => ({ symbol, name: null }));
+  const nameKeys = [...new Set([...missingKeys, ...estimatedKeys])];
+  if (nameKeys.length > 0) {
     try {
-      const quotes = await getQuotes(missingKeys);
+      const quotes = await getQuotes(nameKeys);
       const names = new Map(quotes.map((q) => [q.symbol, q.name]));
       missingSymbols = missingKeys.map((symbol) => ({
+        symbol,
+        name: names.get(symbol) ?? null,
+      }));
+      estimatedSymbols = estimatedKeys.map((symbol) => ({
         symbol,
         name: names.get(symbol) ?? null,
       }));
@@ -472,6 +490,7 @@ async function buildTrueCurve(
   return {
     points: downsamplePoints(points, 180),
     missingSymbols,
+    estimatedSymbols,
     perSource,
     monthly,
   };
@@ -578,6 +597,7 @@ export const portfolioRouter = createTRPCRouter({
               source: "true" as const,
               points: tru.points,
               missingSymbols: tru.missingSymbols,
+              estimatedSymbols: tru.estimatedSymbols,
               perSource: tru.perSource,
               monthly: tru.monthly,
             };

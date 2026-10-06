@@ -146,6 +146,19 @@ describe("buildDailyHoldings", () => {
     expect(d3.invested).toBeCloseTo(1000 + 5010 / 7.8 - 599, 6);
   });
 
+  it("tracks average cost per symbol (sells relieve proportionally)", () => {
+    const days = buildDailyHoldings(trades, fx);
+    const d1 = days.find((x) => x.date === "2026-10-01")!;
+    expect(d1.avgCostBySymbol.AAPL).toBeCloseTo(100, 6);
+    const d2 = days.find((x) => x.date === "2026-10-02")!;
+    // 2225: (100*50 + 10) / 100 = 50.1
+    expect(d2.avgCostBySymbol["2225"]).toBeCloseTo(50.1, 6);
+    const d3 = days.find((x) => x.date === "2026-10-03")!;
+    // sold half the AAPL: average cost of the remainder is unchanged
+    expect(d3.avgCostBySymbol.AAPL).toBeCloseTo(100, 6);
+    expect(d3.qtyBySymbol.AAPL).toBe(5);
+  });
+
   it("emits every day through today and repeats state on quiet days", () => {
     const days = buildDailyHoldings(trades, fx);
     const today = new Date().toISOString().slice(0, 10);
@@ -162,10 +175,10 @@ describe("buildDailyHoldings", () => {
 describe("aggregateDailyValue", () => {
   const fx = () => 1;
   const days = [
-    { date: "2024-01-08", qtyBySymbol: { AAPL: 10 }, invested: 1000 },
+    { date: "2024-01-08", qtyBySymbol: { AAPL: 10 }, invested: 1000, avgCostBySymbol: { AAPL: 100 } },
     // 2024-01-09 has no bar → forward-fills from 01-08
-    { date: "2024-01-09", qtyBySymbol: { AAPL: 10 }, invested: 1000 },
-    { date: "2024-01-10", qtyBySymbol: { AAPL: 10 }, invested: 1000 },
+    { date: "2024-01-09", qtyBySymbol: { AAPL: 10 }, invested: 1000, avgCostBySymbol: { AAPL: 100 } },
+    { date: "2024-01-10", qtyBySymbol: { AAPL: 10 }, invested: 1000, avgCostBySymbol: { AAPL: 100 } },
   ];
   const closes = {
     AAPL: [
@@ -181,14 +194,41 @@ describe("aggregateDailyValue", () => {
     expect(missingSymbols).toEqual([]);
   });
 
-  it("reports symbols with no usable bars instead of zeroing them", () => {
-    const { priced, missingSymbols } = aggregateDailyValue(
-      [{ date: "2024-01-10", qtyBySymbol: { NOPE: 5 }, invested: 0 }],
+  it("reports symbols with no usable bars and no known cost instead of zeroing them", () => {
+    const { priced, missingSymbols, estimatedSymbols } = aggregateDailyValue(
+      [
+        {
+          date: "2024-01-10",
+          qtyBySymbol: { NOPE: 5 },
+          invested: 0,
+          avgCostBySymbol: {},
+        },
+      ],
       {},
       fx,
     );
     expect(priced[0]!.value).toBe(0);
     expect(missingSymbols).toEqual(["NOPE"]);
+    expect(estimatedSymbols).toEqual([]);
+  });
+
+  it("values symbols without price history at their known average cost", () => {
+    const { priced, missingSymbols, estimatedSymbols } = aggregateDailyValue(
+      [
+        {
+          date: "2024-01-10",
+          qtyBySymbol: { ODD: 4 },
+          invested: 400,
+          avgCostBySymbol: { ODD: 25 },
+        },
+      ],
+      {},
+      fx,
+    );
+    // 4 shares × $25 cost — flat, honest, never $0 and never invented
+    expect(priced[0]!.value).toBe(100);
+    expect(missingSymbols).toEqual([]);
+    expect(estimatedSymbols).toEqual(["ODD"]);
   });
 });
 
@@ -307,19 +347,18 @@ describe("aggregateDailyValueBySource", () => {
       },
     ];
     const days = buildSourcedDailyHoldings(trades, fx);
-    const { perSource, missingSymbols } = aggregateDailyValueBySource(
-      days,
-      bars,
-      fx,
-    );
-    // MSFT has no bars → reported, never silently zeroed in a way we hide
-    expect(missingSymbols).toEqual(["MSFT"]);
+    const { perSource, missingSymbols, estimatedSymbols } =
+      aggregateDailyValueBySource(days, bars, fx);
+    // MSFT has no bars but a known cost → valued at cost, never silently
+    // zeroed and never invented
+    expect(missingSymbols).toEqual([]);
+    expect(estimatedSymbols).toEqual(["MSFT"]);
     const ibkr = perSource.ibkr!.find((p) => p.date === "2026-10-02")!;
     expect(ibkr.value).toBeCloseTo(10 * 110, 6);
     expect(ibkr.invested).toBeCloseTo(900, 6);
-    // manual's MSFT prices nothing (no bars) → 0 value, invested intact
+    // manual's MSFT is valued at its $200 average cost
     const manual = perSource.manual!.find((p) => p.date === "2026-10-02")!;
-    expect(manual.value).toBe(0);
+    expect(manual.value).toBeCloseTo(5 * 200, 6);
     expect(manual.invested).toBeCloseTo(1000, 6);
     // series are date-aligned across sources
     expect(perSource.ibkr!.length).toBe(perSource.manual!.length);
