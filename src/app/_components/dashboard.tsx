@@ -5,6 +5,13 @@ import { signOut, useSession } from "next-auth/react";
 
 import { api, type RouterOutputs } from "~/trpc/react";
 import { BrokerCard } from "~/app/_components/broker";
+import {
+  FlairBadge,
+  YoloMeter,
+  GainLossPorn,
+  TendiesCounter,
+} from "~/app/_components/wsb";
+import type { PositionFlair } from "~/server/wsb";
 
 type Summary = RouterOutputs["portfolio"]["summary"];
 type HoldingRow = Summary["rows"][number];
@@ -118,12 +125,19 @@ function Allocation({ rows }: { rows: HoldingRow[] }) {
   );
 }
 
-function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
+function HoldingsTable({
+  rows,
+  flair,
+}: {
+  rows: HoldingRow[];
+  flair?: Record<string, PositionFlair>;
+}) {
   const utils = api.useUtils();
   const del = api.portfolio.deleteHolding.useMutation({
     onSuccess: () => {
       void utils.portfolio.summary.invalidate();
       void utils.portfolio.transactions.invalidate();
+      void utils.portfolio.flair.invalidate();
     },
   });
 
@@ -174,6 +188,7 @@ function HoldingsTable({ rows }: { rows: HoldingRow[] }) {
                     {r.name}
                   </div>
                 )}
+                <FlairBadge flair={flair?.[r.symbol]} />
               </td>
               <td className="px-4 py-3 text-right tabular-nums text-zinc-300 sm:px-5">
                 {r.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })}
@@ -257,6 +272,7 @@ function TransactionForm() {
     onSuccess: () => {
       void utils.portfolio.summary.invalidate();
       void utils.portfolio.transactions.invalidate();
+      void utils.portfolio.flair.invalidate();
       setQuantity("");
       setPrice("");
       setFees("");
@@ -420,6 +436,7 @@ function TransactionList() {
     onSuccess: () => {
       void utils.portfolio.summary.invalidate();
       void utils.portfolio.transactions.invalidate();
+      void utils.portfolio.flair.invalidate();
     },
   });
 
@@ -540,6 +557,19 @@ export function Dashboard() {
       },
     );
 
+  // WSB flair is judged from the trade log — manual holdings only.
+  const manualSymbols = useMemo(
+    () =>
+      (data?.rows ?? [])
+        .filter((r) => r.source === "manual")
+        .map((r) => r.symbol),
+    [data],
+  );
+  const { data: flair } = api.portfolio.flair.useQuery(
+    { symbols: manualSymbols },
+    { enabled: manualSymbols.length > 0 },
+  );
+
   const t = data?.totals;
   const missingBasisNote =
     t && t.brokerMissingBasis > 0
@@ -630,7 +660,17 @@ export function Dashboard() {
           </div>
 
           <Allocation rows={data.rows} />
-          <HoldingsTable rows={data.rows} />
+
+          <div className="space-y-4">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">
+              🚀 WSB mode
+            </h2>
+            <YoloMeter rows={data.rows} />
+            <GainLossPorn rows={data.rows} />
+            <TendiesCounter totalPL={t!.totalPL} />
+          </div>
+
+          <HoldingsTable rows={data.rows} flair={flair} />
           <BrokerCard onPositions={setBrokerPositions} />
           <TransactionForm />
           <TransactionList />

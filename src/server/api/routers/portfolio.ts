@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { getQuote, getQuotes, type Quote } from "~/server/market";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
+import { computeFlair } from "~/server/wsb";
 import { type AppDb } from "~/server/db";
 
 /**
@@ -237,6 +238,15 @@ export const portfolioRouter = createTRPCRouter({
   quote: publicProcedure
     .input(z.object({ symbol: symbolSchema }))
     .query(async ({ input }) => getQuote(input.symbol)),
+
+  /**
+   * WSB flair per symbol, judged from the full transaction log.
+   * Manual holdings only — broker snapshots have no trade history,
+   * so they get no badge.
+   */
+  flair: publicProcedure
+    .input(z.object({ symbols: z.array(symbolSchema).max(500).default([]) }))
+    .query(({ ctx, input }) => computeFlair(ctx.db, input.symbols)),
 
   /** Transaction history, newest first. */
   transactions: publicProcedure
