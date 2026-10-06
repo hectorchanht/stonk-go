@@ -7,6 +7,7 @@ import {
   getFxRates,
   toUsd,
   inferCurrency,
+  canonicalSymbol,
   type Quote,
 } from "~/server/market";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "~/server/api/trpc";
@@ -148,10 +149,13 @@ async function buildSummary(
   brokerPositions: z.infer<typeof brokerPositionInput>[],
 ): Promise<Summary> {
   const holdings = await ctx.db.holding.findMany({ orderBy: { symbol: "asc" } });
-  const manualSymbols = new Set(holdings.map((h) => h.symbol));
+  // Canonicalized: IBKR reports "700" where a manual entry says "0700.HK".
+  const manualSymbols = new Set(holdings.map((h) => canonicalSymbol(h.symbol)));
   // The manual log wins on overlap — the same symbol must never be
   // double-counted in both the manual portfolio and the broker snapshot.
-  const broker = brokerPositions.filter((b) => !manualSymbols.has(b.symbol));
+  const broker = brokerPositions.filter(
+    (b) => !manualSymbols.has(canonicalSymbol(b.symbol)),
+  );
 
   const quotes = await getQuotes([
     ...holdings.map((h) => h.symbol),

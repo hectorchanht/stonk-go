@@ -3,7 +3,12 @@ import "server-only";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 // Re-export pure helpers (also available from ~/server/currency directly).
-export { isHkCode, inferCurrency, toUsd } from "~/server/currency";
+export {
+  isHkCode,
+  inferCurrency,
+  toUsd,
+  canonicalSymbol,
+} from "~/server/currency";
 import { isHkCode } from "~/server/currency";
 
 /**

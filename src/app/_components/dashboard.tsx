@@ -111,6 +111,8 @@ interface BrokerPositionInput {
   costBasisPrice?: number | null;
   /** Source label shown on the Holdings badge ("IBKR", "COINBASE", ...). */
   label?: string | null;
+  /** Native position currency from the broker (IBKR Flex); absent → inferred. */
+  currency?: string | null;
 }
 
 /** Format a USD amount in the user's selected display currency. */
@@ -1302,6 +1304,8 @@ function DashboardInner() {
         markPrice: p.markPrice,
         costBasisPrice: p.costBasisPrice ?? null,
         label: p.label ?? null,
+        // Empty/missing → undefined so the server falls back to inferCurrency.
+        currency: p.currency || undefined,
       })),
     [brokerPositions, exchangePositions],
   );

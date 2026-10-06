@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { inferCurrency, isHkCode, toUsd } from "~/server/currency";
+import {
+  canonicalSymbol,
+  inferCurrency,
+  isHkCode,
+  toUsd,
+} from "~/server/currency";
 
 describe("isHkCode", () => {
   it("treats pure numeric symbols as HKEX", () => {
@@ -39,5 +44,22 @@ describe("toUsd", () => {
   it("falls back to as-is when no rate", () => {
     expect(toUsd(100, "EUR", rates)).toBe(100);
     expect(toUsd(100, "HKD", {})).toBe(100);
+  });
+});
+
+describe("canonicalSymbol", () => {
+  it("unifies IBKR bare codes with manual/Yahoo .HK form", () => {
+    expect(canonicalSymbol("0700.HK")).toBe("700");
+    expect(canonicalSymbol("700")).toBe("700");
+    expect(canonicalSymbol("0700")).toBe("700");
+    expect(canonicalSymbol("2225.HK")).toBe("2225");
+  });
+  it("leaves US symbols untouched", () => {
+    expect(canonicalSymbol("AAPL")).toBe("AAPL");
+    expect(canonicalSymbol("BRK.B")).toBe("BRK.B");
+    expect(canonicalSymbol("USD.HKD")).toBe("USD.HKD");
+  });
+  it("trims and uppercases", () => {
+    expect(canonicalSymbol(" 0700.hk ")).toBe("700");
   });
 });

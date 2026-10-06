@@ -42,6 +42,8 @@ export interface ExchangePositionLike {
   markPrice: number | null;
   costBasisPrice?: number | null;
   label?: string | null;
+  /** Native currency of markPrice — always USD (balances price in priceUsd). */
+  currency?: string | null;
 }
 
 const card = "rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5";
@@ -775,6 +777,7 @@ function ExchangeCard({
         quantity: Number(i.quantity),
         markPrice: i.priceUsd == null ? null : Number(i.priceUsd),
         label: meta.title.toUpperCase(),
+        currency: "USD",
       })),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
