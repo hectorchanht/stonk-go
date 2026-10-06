@@ -256,8 +256,9 @@ async function buildSummary(
   for (const b of broker) {
     const q = bySymbol.get(b.symbol);
     const currency = b.currency ?? inferCurrency(b.symbol);
-    // Live quote when available, otherwise IBKR's end-of-day mark price.
-    const price = q?.price ?? b.markPrice;
+    // Broker's own mark price first (the value the user sees in IBKR) —
+    // Yahoo is the fallback only when the broker sent no price.
+    const price = b.markPrice ?? q?.price ?? null;
     const marketValueNative = price != null ? b.quantity * price : null;
     const marketValue =
       marketValueNative != null ? toUsd(marketValueNative, currency, fx) : null;
