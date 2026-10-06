@@ -21,6 +21,14 @@ import type { AppDb } from "~/server/db";
  *   recomputeHolding uses; a sell whose matching buy sits outside the Flex
  *   query's date range is skipped (and reported) instead of corrupting the
  *   log.
+ * - Split-aware: IBKR's Flex trade history is NOT split-adjusted, while
+ *   positions and live prices are. Candidates are reconciled against IBKR's
+ *   current position (quantity + cost basis price). When the dollars agree
+ *   but the share count doesn't, it's a stock split — trades are scaled
+ *   (qty ÷ r, price × r) into split-adjusted units. When they can't be
+ *   reconciled, the symbol is skipped (and any previously imported bad rows
+ *   are repaired) so the IBKR snapshot — always right about the current
+ *   position — stays the display.
  * - Manual rows keep externalId NULL, so they sort before "ibkr:…" keys on
  *   same-timestamp ties — deterministically, in JS and in SQL alike.
  */
@@ -37,6 +45,13 @@ export interface IbkrTradeInput {
   transactionId: string | null;
 }
 
+export interface IbkrPositionInput {
+  symbol: string;
+  quantity: number;
+  /** Per-share cost basis; null when the Flex query lacks the column. */
+  costBasisPrice: number | null;
+}
+
 export interface ImportStats {
   imported: number;
   /** Skipped: externalId already in the log (re-sync). */
@@ -47,6 +62,13 @@ export interface ImportStats {
   oversellSkipped: number;
   /** Skipped: bad date, missing price, or empty symbol. */
   unusableSkipped: number;
+  /** Trades auto-scaled for a detected stock split (qty ÷ r, price × r). */
+  splitAdjusted: number;
+  splitSymbols: string[];
+  /** Trades skipped: couldn't reconcile with IBKR's current position. */
+  mismatchSkipped: number;
+  /** Symbols whose bad ibkr rows were removed and re-imported. */
+  repairedSymbols: string[];
   symbols: string[];
 }
 
@@ -123,6 +145,54 @@ function cmpStr(a: string, b: string): number {
 }
 
 const EPS = 1e-9;
+/** Quantity mismatch tolerance vs IBKR's position (fraction). */
+const QTY_TOL = 0.01;
+/** Dollar mismatch tolerance vs IBKR's cost basis (fraction). */
+const DOLLAR_TOL = 0.08;
+
+/**
+ * Standard split ratios, as Q_before / Q_after (1:40 reverse → 40,
+ * 4:1 forward → 0.25). Fallback split signal when the Flex query lacks
+ * the Cost Basis Price column.
+ */
+const STANDARD_SPLITS = [
+  0.01, 0.02, 0.04, 0.05, 0.1, 0.2, 0.25, 0.5, 2, 3, 4, 5, 10, 20, 25, 30,
+  40, 50, 100,
+];
+
+function nearStandardSplit(r: number): boolean {
+  return STANDARD_SPLITS.some((s) => Math.abs(r - s) / s <= 0.03);
+}
+
+interface CostRow {
+  type: string;
+  quantity: number;
+  price: number;
+  fees: number;
+}
+
+/**
+ * Average-cost simulation over a set of rows. Never throws — sells are
+ * clamped instead of rejected (this is an estimate, not the log writer).
+ */
+function simulateCost(rows: CostRow[]): {
+  quantity: number;
+  costBasis: number;
+} {
+  let q = 0;
+  let cb = 0;
+  for (const t of rows) {
+    if (t.type === "BUY") {
+      cb += t.quantity * t.price + t.fees;
+      q += t.quantity;
+    } else {
+      const ratio = q > 0 ? Math.min(t.quantity, q) / q : 0;
+      cb -= cb * ratio;
+      q -= t.quantity;
+    }
+  }
+  return { quantity: q, costBasis: cb };
+}
 
 interface Candidate {
   key: string;
@@ -134,13 +204,44 @@ interface Candidate {
 }
 
 /**
+ * Decide whether a set of trades (implied quantity/cost) is a
+ * split-distorted view of an IBKR position.
+ *
+ * Splits scale per-share price and quantity inversely, so TOTAL DOLLARS are
+ * invariant: when the dollars agree but the share count doesn't, it's a
+ * split — never missing history (missing history would move the dollars
+ * too). Returns the adjustment factor r = Q_trades / Q_position, or null
+ * when this isn't a split.
+ */
+function detectSplit(
+  qTrades: number,
+  bTrades: number,
+  pos: IbkrPositionInput,
+): number | null {
+  if (!(pos.quantity > 0) || !(qTrades > 0)) return null;
+  const r = qTrades / pos.quantity;
+  if (pos.costBasisPrice != null && pos.costBasisPrice > 0 && bTrades > 0) {
+    const ibkrDollars = pos.quantity * pos.costBasisPrice;
+    if (Math.abs(bTrades - ibkrDollars) / ibkrDollars <= DOLLAR_TOL) return r;
+    return null;
+  }
+  return nearStandardSplit(r) ? r : null;
+}
+
+/**
  * Upsert IBKR trades into the Transaction log and recompute affected
  * holdings. Safe to call on every sync — already-imported trades are
  * skipped via externalId.
+ *
+ * `positions` (the same report's Open Positions) anchors the import:
+ * candidates are reconciled against IBKR's current position, splits are
+ * auto-adjusted, and anything unreconcilable is skipped so the IBKR
+ * snapshot stays the source of truth for the current position.
  */
 export async function importIbkrTrades(
   db: AppDb,
   trades: IbkrTradeInput[],
+  positions: IbkrPositionInput[] = [],
 ): Promise<ImportStats> {
   const stats: ImportStats = {
     imported: 0,
@@ -148,8 +249,18 @@ export async function importIbkrTrades(
     duplicatesSkipped: 0,
     oversellSkipped: 0,
     unusableSkipped: 0,
+    splitAdjusted: 0,
+    splitSymbols: [],
+    mismatchSkipped: 0,
+    repairedSymbols: [],
     symbols: [],
   };
+
+  const posBySymbol = new Map<string, IbkrPositionInput>();
+  for (const p of positions) {
+    const s = normSymbol(p.symbol ?? "");
+    if (s && !posBySymbol.has(s)) posBySymbol.set(s, p);
+  }
 
   const bySymbol = new Map<string, IbkrTradeInput[]>();
   for (const t of trades) {
@@ -160,11 +271,40 @@ export async function importIbkrTrades(
     else bySymbol.set(symbol, [t]);
   }
 
-  for (const [symbol, list] of bySymbol) {
-    const existing = await db.transaction.findMany({
+  // Symbols to visit: those with new trades, plus any with an IBKR
+  // position (for repairing previously imported bad rows).
+  const symbols = new Set<string>(bySymbol.keys());
+  for (const s of posBySymbol.keys()) symbols.add(s);
+
+  for (const symbol of symbols) {
+    let existing = await db.transaction.findMany({
       where: { symbol },
       orderBy: [{ executedAt: "asc" }, { externalId: "asc" }, { id: "asc" }],
     });
+    const pos = posBySymbol.get(symbol);
+
+    // ---- Repair: previously imported rows that disagree with IBKR ----
+    // Only auto-repairs when the log has no manual rows — then any
+    // disagreement is definitively the import's fault (e.g. an
+    // unadjusted stock split), never the user's data.
+    if (
+      pos &&
+      pos.quantity > 0 &&
+      existing.length > 0 &&
+      existing.every((e) => e.externalId)
+    ) {
+      const { quantity: qb, costBasis: bb } = simulateCost(existing);
+      const qtyMismatch = Math.abs(qb - pos.quantity) / pos.quantity > QTY_TOL;
+      if (qtyMismatch && detectSplit(qb, bb, pos) != null) {
+        for (const r of existing) {
+          await db.transaction.delete({ where: { id: r.id } });
+        }
+        stats.repairedSymbols.push(symbol);
+        existing = [];
+      }
+    }
+
+    const list = bySymbol.get(symbol) ?? [];
     const seenKeys = new Set(
       existing.map((e) => e.externalId).filter((k): k is string => !!k),
     );
@@ -207,7 +347,58 @@ export async function importIbkrTrades(
         executedAt,
       });
     }
-    if (cands.length === 0) continue;
+
+    // ---- Reconcile candidates against IBKR's current position ----
+    let toConsider = cands;
+    if (toConsider.length > 0 && pos && pos.quantity > 0) {
+      const { quantity: qExist, costBasis: bExist } = simulateCost(existing);
+      const qRes = pos.quantity - qExist;
+      if (qRes <= 0) {
+        // The log already explains the full position — nothing to add.
+        stats.mismatchSkipped += toConsider.length;
+        toConsider = [];
+      } else {
+        const { quantity: qCand, costBasis: bCand } =
+          simulateCost(toConsider);
+        if (Math.abs(qCand - qRes) / qRes > QTY_TOL) {
+          // Re-anchor the comparison on what the candidates alone should
+          // explain: the residual quantity and its residual dollars.
+          const residualDollars =
+            pos.costBasisPrice != null && pos.costBasisPrice > 0
+              ? pos.quantity * pos.costBasisPrice - bExist
+              : null;
+          const split = detectSplit(qCand, bCand, {
+            symbol,
+            quantity: qRes,
+            costBasisPrice:
+              residualDollars != null && residualDollars > 0 && qRes > 0
+                ? residualDollars / qRes
+                : null,
+          });
+          if (split != null) {
+            for (const c of toConsider) {
+              c.quantity /= split;
+              c.price *= split;
+            }
+            stats.splitAdjusted += toConsider.length;
+            if (!stats.splitSymbols.includes(symbol))
+              stats.splitSymbols.push(symbol);
+          } else {
+            stats.mismatchSkipped += toConsider.length;
+            toConsider = [];
+          }
+        }
+      }
+    }
+
+    if (toConsider.length === 0) {
+      // Nothing new, but a repair may have removed rows — recompute.
+      if (stats.repairedSymbols.includes(symbol)) {
+        await recomputeHolding(db, symbol);
+        if (!stats.symbols.includes(symbol)) stats.symbols.push(symbol);
+      }
+      continue;
+    }
 
     // Simulate the merged history in the exact order recomputeHolding walks,
     // so an imported sell can never push the log into an oversell state.
@@ -228,7 +419,7 @@ export async function importIbkrTrades(
         id: e.id,
         cand: null,
       })),
-      ...cands.map((c, i) => ({
+      ...toConsider.map((c, i) => ({
         type: c.type,
         quantity: c.quantity,
         executedAt: c.executedAt,
@@ -278,10 +469,10 @@ export async function importIbkrTrades(
       });
       stats.imported++;
     }
-    if (toInsert.length > 0) {
+    if (toInsert.length > 0 || stats.repairedSymbols.includes(symbol)) {
       // Cannot throw: the simulation above validated the same order.
       await recomputeHolding(db, symbol);
-      stats.symbols.push(symbol);
+      if (!stats.symbols.includes(symbol)) stats.symbols.push(symbol);
     }
   }
 

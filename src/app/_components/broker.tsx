@@ -44,14 +44,26 @@ function importSummary(s: {
   imported: number;
   duplicatesSkipped: number;
   oversellSkipped: number;
+  splitAdjusted: number;
+  splitSymbols: string[];
+  mismatchSkipped: number;
+  repairedSymbols: string[];
 }): string {
   const parts = [
     `${s.imported} trade${s.imported === 1 ? "" : "s"} merged into your log`,
   ];
+  if (s.splitAdjusted > 0)
+    parts.push(
+      `${s.splitAdjusted} split-adjusted (${s.splitSymbols.join(", ")})`,
+    );
+  if (s.repairedSymbols.length > 0)
+    parts.push(`repaired ${s.repairedSymbols.join(", ")}`);
   if (s.duplicatesSkipped > 0)
     parts.push(`${s.duplicatesSkipped} already logged by hand`);
   if (s.oversellSkipped > 0)
     parts.push(`${s.oversellSkipped} skipped (buy outside report range)`);
+  if (s.mismatchSkipped > 0)
+    parts.push(`${s.mismatchSkipped} skipped (can't reconcile with IBKR)`);
   return parts.join(" · ");
 }
 
@@ -546,7 +558,14 @@ function BrowserBrokerCard({
         !data.persisted &&
         data.trades.length > 0
       ) {
-        importMut.mutate({ trades: data.trades });
+        importMut.mutate({
+          trades: data.trades,
+          positions: data.positions.map((p) => ({
+            symbol: p.symbol,
+            quantity: p.quantity,
+            costBasisPrice: p.costBasisPrice ?? null,
+          })),
+        });
       }
     },
     onError: (e) => setError(e.message),

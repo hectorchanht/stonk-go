@@ -22,6 +22,10 @@ import {
   useCurrency,
 } from "~/app/_components/currency";
 import {
+  LocalePicker,
+  LocaleProvider,
+} from "~/app/_components/locale";
+import {
   FlairBadge,
   YoloMeter,
   GainLossPorn,
@@ -631,7 +635,9 @@ function MobileMenu({
 export function Dashboard() {
   return (
     <CurrencyProvider>
-      <DashboardInner />
+      <LocaleProvider>
+        <DashboardInner />
+      </LocaleProvider>
     </CurrencyProvider>
   );
 }
@@ -716,6 +722,7 @@ function DashboardInner() {
             <AuthButtons />
           </span>
           <CurrencyPicker />
+          <LocalePicker />
           <button
             onClick={() => refetch()}
             disabled={isFetching}
@@ -814,7 +821,7 @@ function DashboardInner() {
           <CollapsibleSection
             id="ibkr"
             title="Interactive Brokers"
-            info="Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour. Synced trades merge into your transaction log (marked IBKR) so holdings and cost basis stay in one place — your manual entries are never touched. IBKR publishes end-of-day reports, so today's trades appear after the next report; there is no live push."
+            info="Read-only sync from Interactive Brokers via the Flex Web Service. Auto-syncs when you open the app if the data is older than an hour. Synced trades merge into your transaction log (marked IBKR) so holdings and cost basis stay in one place — your manual entries are never touched. Stock splits are auto-adjusted against IBKR's positions. IBKR publishes end-of-day reports, so today's trades appear after the next report; there is no live push."
           >
             <BrokerCard onPositions={setBrokerPositions} />
           </CollapsibleSection>

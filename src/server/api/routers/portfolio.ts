@@ -267,6 +267,8 @@ export const portfolioRouter = createTRPCRouter({
           )
           .max(10)
           .default([]),
+        // Reply language for the AI insights (see ~/server/ai.ts).
+        locale: z.enum(["en", "zh-Hant", "zh-Hans"]).default("en"),
       }),
     )
     .query(async ({ input }) => {
@@ -349,10 +351,20 @@ export const portfolioRouter = createTRPCRouter({
             }),
           )
           .max(2000),
+        positions: z
+          .array(
+            z.object({
+              symbol: z.string().max(16),
+              quantity: z.number().finite(),
+              costBasisPrice: z.number().nullable(),
+            }),
+          )
+          .max(2000)
+          .default([]),
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      return mergeIbkrTrades(ctx.db, input.trades);
+      return mergeIbkrTrades(ctx.db, input.trades, input.positions);
     }),
 
   /** Delete one transaction; the holding is recomputed from the rest. */

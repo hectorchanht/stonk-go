@@ -193,8 +193,13 @@ export const ibkrRouter = createTRPCRouter({
       }
       // Merge the Flex trades into the transaction log, so holdings and
       // cost basis reflect brokerage activity instead of the snapshot
-      // being a separate display next to the manual log.
-      tradeImport = await mergeIbkrTrades(ctx.db, result.trades);
+      // being a separate display next to the manual log. Positions anchor
+      // the merge (split adjustment + reconciliation).
+      tradeImport = await mergeIbkrTrades(
+        ctx.db,
+        result.trades,
+        result.positions,
+      );
     }
 
     const now = new Date();
