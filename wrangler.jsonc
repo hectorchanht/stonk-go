@@ -26,7 +26,7 @@
   // variables that aren't declared in this file (secrets survive).
   "vars": {
     "NEXTAUTH_URL": "https://holdr.lol",
-    "NEXT_PUBLIC_VAPID_PUBLIC_KEY": "REPLACE_WITH_VAPID_PUBLIC_KEY"
+    "NEXT_PUBLIC_VAPID_PUBLIC_KEY": "BIHiUEt9NafaXBHq3mHrYrUSg-0QTbHve5EraPilxUx1tTBoLks8Ud4j-23PNIY1YsuftoNqOIDs2PQ"
   },
   // Cron trigger for background push notification checks (every 15 min).
   "triggers": {
