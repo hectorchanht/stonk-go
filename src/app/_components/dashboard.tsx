@@ -22,6 +22,7 @@ import {
   MoreHorizontal,
   Pencil,
   PieChart,
+  PiggyBank,
   Plus,
   Receipt,
   RefreshCw,
@@ -101,6 +102,7 @@ import {
 } from "~/app/_components/locale";
 import { BackupButtons } from "~/app/_components/backup";
 import { PushToggle } from "~/app/_components/push-toggle";
+import { FinancialFreedom } from "~/app/_components/financial-freedom";
 import {
   FlairBadge,
   YoloMeter,
@@ -1831,6 +1833,13 @@ const WIDGET_DEFS: WidgetDef[] = [
     info: "Your portfolio's equity curve, built from a snapshot recorded each day you open the app, plus the true annualized return (XIRR) from your full trade log.",
   },
   {
+    id: "financial-freedom",
+    title: "Financial Freedom",
+    icon: PiggyBank,
+    defaultSpan: "full",
+    info: "Your FI number (4% rule), progress to financial independence, passive income coverage, goals, and a what-if simulator.",
+  },
+  {
     id: "platforms",
     title: "Platforms",
     icon: Layers,
@@ -2189,6 +2198,9 @@ function DashboardInner() {
           break;
         case "performance":
           body = <PerformanceSection brokerPositions={brokerInput} />;
+          break;
+        case "financial-freedom":
+          body = <FinancialFreedom marketValue={t!.marketValue} costBasis={t!.costBasis} />;
           break;
         case "platforms": {
           const plats = data?.totals.byPlatform ?? [];
