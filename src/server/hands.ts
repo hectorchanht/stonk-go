@@ -11,7 +11,7 @@
 export function maxDrawdown(closes: number[]): number | null {
   const xs = closes.filter((c) => Number.isFinite(c));
   if (xs.length < 2) return null;
-  let peak = xs[0] as number;
+  let peak = xs[0]!;
   let maxDd = 0;
   for (const c of xs) {
     if (c > peak) peak = c;
