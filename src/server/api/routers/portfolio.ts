@@ -29,6 +29,7 @@ import {
   type PriceBar,
 } from "~/server/performance";
 import { getPriceHistory } from "~/server/price-history";
+import { countBuyStreak, maxDrawdown } from "~/server/hands";
 import { computeFlair } from "~/server/wsb";
 import { generateInsights } from "~/server/ai";
 import {
@@ -527,6 +528,86 @@ export const portfolioRouter = createTRPCRouter({
         take: input.limit,
       })
     ),
+
+  /**
+   * Diamond-hands stats: per-position tenure + dip survival from the
+   * transaction log and Yahoo history (D1-cached), plus the buy streak.
+   * Drawdown is computed for the top 8 positions by value to bound cost;
+   * a symbol with no history returns nulls, never an error.
+   */
+  handsStats: publicProcedure
+    .input(summaryInput)
+    .query(async ({ ctx, input }) => {
+      const s = await buildSummary(ctx, input.brokerPositions);
+      const rows = s.rows.filter((r) => r.quantity > 0 && (r.marketValue ?? 0) > 0);
+      const txns = await ctx.db.transaction.findMany({
+        orderBy: [{ executedAt: "asc" }],
+        take: 10000,
+      });
+
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const firstBuy = new Map<string, string>();
+      const buyMonths = new Set<string>();
+      for (const t of txns) {
+        const raw = t.executedAt instanceof Date ? t.executedAt.toISOString() : String(t.executedAt);
+        const day = raw.slice(0, 10);
+        if (t.type !== "BUY") continue;
+        buyMonths.add(day.slice(0, 7));
+        if (!firstBuy.has(t.symbol)) firstBuy.set(t.symbol, day);
+      }
+
+      const top = [...rows]
+        .sort((a, b) => (b.marketValue ?? 0) - (a.marketValue ?? 0))
+        .slice(0, 8);
+
+      const positions = await Promise.all(
+        top.map(async (r) => {
+          const fb = firstBuy.get(r.symbol) ?? null;
+          const daysHeld =
+            fb != null
+              ? Math.max(0, Math.round((Date.parse(todayISO) - Date.parse(fb)) / DAY_MS))
+              : null;
+          let maxDrawdownPct: number | null = null;
+          if (fb != null) {
+            try {
+              const hist = await getPriceHistory(ctx.db, r.symbol, fb, todayISO);
+              maxDrawdownPct = maxDrawdown(hist.bars.map((b) => b.adjclose ?? b.close));
+            } catch {
+              maxDrawdownPct = null;
+            }
+          }
+          return {
+            symbol: r.symbol,
+            name: r.name,
+            marketValue: r.marketValue ?? 0,
+            weightPct: r.weightPct ?? 0,
+            firstBuyDate: fb,
+            daysHeld,
+            maxDrawdownPct,
+          };
+        }),
+      );
+
+      const withTenure = positions.filter((p) => p.daysHeld != null);
+      const longestHeld =
+        withTenure.length > 0
+          ? withTenure.reduce((a, b) => ((b.daysHeld ?? 0) > (a.daysHeld ?? 0) ? b : a))
+          : null;
+      const withDip = positions.filter((p) => p.maxDrawdownPct != null);
+      const deepestDip =
+        withDip.length > 0
+          ? withDip.reduce((a, b) => ((b.maxDrawdownPct ?? 0) > (a.maxDrawdownPct ?? 0) ? b : a))
+          : null;
+
+      return {
+        positions,
+        longestHeld,
+        deepestDip,
+        buyStreakMonths: countBuyStreak(buyMonths),
+        buyMonths: buyMonths.size,
+      };
+    }),
+
 
   /**
    * Record today's portfolio snapshot for the equity curve. Called

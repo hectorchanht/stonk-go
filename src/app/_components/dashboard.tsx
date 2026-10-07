@@ -11,6 +11,7 @@ import {
   Briefcase,
   ChevronDown,
   Download,
+  Gem,
   GripVertical,
   Landmark,
   Layers,
@@ -103,6 +104,7 @@ import {
 import { BackupButtons } from "~/app/_components/backup";
 import { PushToggle } from "~/app/_components/push-toggle";
 import { FinancialFreedom } from "~/app/_components/financial-freedom";
+import { DiamondHands } from "~/app/_components/diamond-hands";
 import {
   FlairBadge,
   YoloMeter,
@@ -1826,6 +1828,13 @@ function StockBrokers({
 const WIDGET_DEFS: WidgetDef[] = [
   { id: "overview", title: "Portfolio overview", icon: LayoutDashboard, defaultSpan: "full" },
   {
+    id: "diamond-hands",
+    title: "Diamond Hands",
+    icon: Gem,
+    defaultSpan: "full",
+    info: "Your conviction at a glance: how long you've held, the dips you survived, and what the money means.",
+  },
+  {
     id: "performance",
     title: "Performance",
     icon: TrendingUp,
@@ -2198,6 +2207,11 @@ function DashboardInner() {
           break;
         case "performance":
           body = <PerformanceSection brokerPositions={brokerInput} />;
+          break;
+        case "diamond-hands":
+          body = (
+            <DiamondHands marketValue={t!.marketValue} brokerPositions={brokerInput} />
+          );
           break;
         case "financial-freedom":
           body = <FinancialFreedom marketValue={t!.marketValue} costBasis={t!.costBasis} />;
