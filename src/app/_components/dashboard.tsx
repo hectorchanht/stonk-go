@@ -2004,6 +2004,16 @@ function DashboardInner() {
   }, []);
   const [missingOpen, setMissingOpen] = useState(false);
 
+  // The broker / exchange cards report their snapshots asynchronously
+  // after mount, and the server can't see them — so a summary fetched
+  // with empty positions would flash $0 values. Treat that window as
+  // loading so skeletons show instead of false zeros.
+  const [snapshotGrace, setSnapshotGrace] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setSnapshotGrace(false), 2500);
+    return () => clearTimeout(t);
+  }, []);
+
   // True historical value series backing the P/L period lookup. 35 days
   // covers the 1M option plus a weekend/holiday buffer. D1-cached server
   // side, so this is cheap after the first build.
@@ -2416,7 +2426,11 @@ function DashboardInner() {
         </div>
       )}
 
-      {isLoading ? (
+      {isLoading ||
+      (snapshotGrace &&
+        data != null &&
+        data.totals.holdingsCount === 0 &&
+        brokerInput.length === 0) ? (
         <div className="space-y-4">
           <StatCardSkeleton />
           <div className={card}>

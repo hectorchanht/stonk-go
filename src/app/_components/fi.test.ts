@@ -5,6 +5,7 @@ import {
   fiNumber,
   formatDurationMonths,
   monthsToTarget,
+  nearestPointIndex,
   projectSeries,
 } from "./fi";
 
@@ -100,5 +101,23 @@ describe("projectSeries", () => {
 
   it("handles zero years", () => {
     expect(projectSeries(10_000, 500, 7, 0)).toHaveLength(1);
+  });
+});
+
+describe("nearestPointIndex", () => {
+  it("snaps to the closest point", () => {
+    expect(nearestPointIndex([0, 10, 20, 30], 21)).toBe(2);
+    expect(nearestPointIndex([0, 10, 20, 30], 29)).toBe(3);
+    expect(nearestPointIndex([0, 10, 20, 30], -100)).toBe(0);
+    expect(nearestPointIndex([0, 10, 20, 30], 1000)).toBe(3);
+  });
+
+  it("breaks ties toward the earlier point", () => {
+    expect(nearestPointIndex([0, 10, 20], 5)).toBe(0);
+  });
+
+  it("handles a single point and empty input", () => {
+    expect(nearestPointIndex([42], 999)).toBe(0);
+    expect(nearestPointIndex([], 10)).toBe(0);
   });
 });

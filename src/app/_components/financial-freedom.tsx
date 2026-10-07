@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Calculator,
   Check,
@@ -26,6 +26,7 @@ import {
   loadFiGoals,
   loadFiSettings,
   monthsToTarget,
+  nearestPointIndex,
   newGoalId,
   projectSeries,
   saveFiGoals,
@@ -48,6 +49,16 @@ function ProgressBar({ value }: { value: number }) {
         style={{ width: `${pct}%` }}
       />
     </div>
+  );
+}
+
+/** Shimmer placeholder used while localStorage settings / analytics load. */
+function BlockSkeleton({ className = "" }: { className?: string }) {
+  return (
+    <div
+      className={`animate-pulse rounded-xl bg-zinc-200 dark:bg-zinc-800 ${className}`}
+      aria-hidden="true"
+    />
   );
 }
 
@@ -140,15 +151,17 @@ function SectionTitle({ icon: Icon, children }: { icon: typeof Target; children:
 }
 
 /* ------------------------------------------------------------------ */
-/* Growth chart (SVG, no dependencies)                                  */
+/* Growth chart (SVG, interactive — hover / tap a point for details)    */
 /* ------------------------------------------------------------------ */
 
 function GrowthChart({
   points,
   fmtCompact,
+  fmtFull,
 }: {
   points: ProjectionPoint[];
   fmtCompact: (usd: number) => string;
+  fmtFull: (usd: number) => string;
 }) {
   const W = 640;
   const H = 230;
@@ -160,6 +173,36 @@ function GrowthChart({
   const n = points.length - 1;
   const x = (i: number) => PL + (n === 0 ? 0 : (i / n) * (W - PL - PR));
   const y = (v: number) => PT + (1 - v / maxV) * (H - PT - PB);
+
+  const [active, setActive] = useState<number | null>(null);
+  const [pinned, setPinned] = useState(false);
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  const xs = points.map((_, i) => x(i));
+
+  const setFromClientX = (clientX: number) => {
+    const el = svgRef.current;
+    if (!el || n <= 0) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const px = ((clientX - rect.left) / rect.width) * W;
+    setActive(nearestPointIndex(xs, px));
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      setPinned(true);
+      setActive((a) => Math.min(n, (a ?? -1) + 1));
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      setPinned(true);
+      setActive((a) => Math.max(0, (a ?? 1) - 1));
+    } else if (e.key === "Escape") {
+      setActive(null);
+      setPinned(false);
+    }
+  };
 
   const contribLine = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.contributed).toFixed(1)}`).join(" ");
   const totalLine = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.total).toFixed(1)}`).join(" ");
@@ -181,9 +224,61 @@ function GrowthChart({
     return out;
   }, [n]);
 
+  const activePt = active != null ? points[active] : null;
+  const ariaLabel =
+    activePt != null
+      ? `Projected portfolio growth chart. Year ${activePt.year}: total ${fmtFull(activePt.total)}, contributions ${fmtFull(activePt.contributed)}, growth ${fmtFull(activePt.growth)}.`
+      : "Projected portfolio growth chart. Hover or tap a point to inspect a year.";
+
   return (
     <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Projected portfolio growth chart">
+      {/* live readout of the hovered / tapped point */}
+      <div
+        className="mb-1 flex min-h-[1.75rem] flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-sm"
+        aria-live="polite"
+      >
+        <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+          {activePt == null ? (
+            <span className="font-normal text-zinc-500">Hover or tap the chart</span>
+          ) : activePt.year === 0 ? (
+            "Now"
+          ) : (
+            `Year ${activePt.year}`
+          )}
+        </span>
+        {activePt != null && (
+          <span className="tabular-nums text-zinc-500">
+            Total{" "}
+            <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+              {fmtFull(activePt.total)}
+            </span>
+            {" · "}you put in {fmtFull(activePt.contributed)}
+            {" · "}growth{" "}
+            <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+              {fmtFull(activePt.growth)}
+            </span>
+          </span>
+        )}
+      </div>
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full cursor-crosshair touch-pan-y"
+        role="img"
+        aria-label={ariaLabel}
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        onPointerMove={(e) => {
+          if (e.pointerType === "mouse") setFromClientX(e.clientX);
+        }}
+        onPointerDown={(e) => {
+          setFromClientX(e.clientX);
+          setPinned(true);
+        }}
+        onPointerLeave={() => {
+          if (!pinned) setActive(null);
+        }}
+      >
         {ticks.map((tv, i) => (
           <g key={i}>
             <line x1={PL} x2={W - PR} y1={y(tv)} y2={y(tv)} stroke="currentColor" className="text-zinc-200 dark:text-zinc-800" strokeWidth={1} />
@@ -195,6 +290,33 @@ function GrowthChart({
         <path d={contribArea} className="fill-emerald-500/25" />
         <path d={growthArea} className="fill-emerald-400/50" />
         <path d={totalLine} fill="none" className="stroke-emerald-500" strokeWidth={2} />
+        {activePt != null && active != null && (
+          <g pointerEvents="none">
+            <line
+              x1={x(active)}
+              x2={x(active)}
+              y1={PT}
+              y2={H - PB}
+              className="stroke-zinc-400 dark:stroke-zinc-500"
+              strokeWidth={1}
+              strokeDasharray="4 3"
+            />
+            <circle
+              cx={x(active)}
+              cy={y(activePt.total)}
+              r={5}
+              className="fill-emerald-500 stroke-white dark:stroke-zinc-950"
+              strokeWidth={2}
+            />
+            <circle
+              cx={x(active)}
+              cy={y(activePt.contributed)}
+              r={3.5}
+              className="fill-emerald-700/60 stroke-white dark:stroke-zinc-950"
+              strokeWidth={1.5}
+            />
+          </g>
+        )}
         {yearTicks.map((yr) => (
           <text key={yr} x={x(yr)} y={H - 8} textAnchor="middle" fontSize={11} className="fill-zinc-500">
             {yr === 0 ? "now" : `+${yr}y`}
@@ -233,9 +355,11 @@ export function FinancialFreedom({
   const toUsd = (display: number) => display / displayRate;
 
   // Settings + goals live in localStorage (SSR-safe defaults first, then
-  // corrected after mount to avoid hydration mismatch).
+  // corrected after mount to avoid hydration mismatch). fiReady gates every
+  // value derived from them so defaults never render as user data.
   const [settings, setSettings] = useState<FiSettings>({ ...DEFAULT_FI_SETTINGS });
   const [goals, setGoals] = useState<FiGoal[]>([]);
+  const [fiReady, setFiReady] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [addingGoal, setAddingGoal] = useState(false);
   const [goalName, setGoalName] = useState("");
@@ -245,6 +369,7 @@ export function FinancialFreedom({
   useEffect(() => {
     setSettings(loadFiSettings());
     setGoals(loadFiGoals());
+    setFiReady(true);
   }, []);
 
   const updateSettings = (patch: Partial<FiSettings>) => {
@@ -314,17 +439,31 @@ export function FinancialFreedom({
       </div>
 
       {showSettings && (
-        <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:grid-cols-3 lg:grid-cols-5">
-          <NumField label={`Monthly spending (${currency})`} value={settings.monthlyExpenses} onChange={(v) => updateSettings({ monthlyExpenses: v })} step={100} />
-          <NumField label={`Monthly investing (${currency})`} value={settings.monthlyContribution} onChange={(v) => updateSettings({ monthlyContribution: v })} step={100} />
-          <NumField label="Expected return" value={settings.annualReturnPct} onChange={(v) => updateSettings({ annualReturnPct: v })} min={0} max={30} step={0.5} suffix="% / yr" />
-          <NumField label="Current age" value={settings.currentAge} onChange={(v) => updateSettings({ currentAge: Math.round(v) })} min={10} max={100} step={1} suffix="yrs" />
-          <NumField label="Retire age" value={settings.retireAge} onChange={(v) => updateSettings({ retireAge: Math.round(v) })} min={11} max={100} step={1} suffix="yrs" />
-        </div>
+        fiReady ? (
+          <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:grid-cols-3 lg:grid-cols-5">
+            <NumField label={`Monthly spending (${currency})`} value={settings.monthlyExpenses} onChange={(v) => updateSettings({ monthlyExpenses: v })} step={100} />
+            <NumField label={`Monthly investing (${currency})`} value={settings.monthlyContribution} onChange={(v) => updateSettings({ monthlyContribution: v })} step={100} />
+            <NumField label="Expected return" value={settings.annualReturnPct} onChange={(v) => updateSettings({ annualReturnPct: v })} min={0} max={30} step={0.5} suffix="% / yr" />
+            <NumField label="Current age" value={settings.currentAge} onChange={(v) => updateSettings({ currentAge: Math.round(v) })} min={10} max={100} step={1} suffix="yrs" />
+            <NumField label="Retire age" value={settings.retireAge} onChange={(v) => updateSettings({ retireAge: Math.round(v) })} min={11} max={100} step={1} suffix="yrs" />
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:grid-cols-3 lg:grid-cols-5">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <BlockSkeleton key={i} className="h-16" />
+            ))}
+          </div>
+        )
       )}
 
       {/* FI headline cards */}
-      {!hasPortfolio ? (
+      {!fiReady ? (
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <BlockSkeleton key={i} className="h-28" />
+          ))}
+        </div>
+      ) : !hasPortfolio ? (
         <div className="rounded-xl border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-500 dark:border-zinc-700">
           <Target size={20} className="mx-auto mb-2 text-zinc-400" />
           Connect a broker or log holdings to see your FI number — the simulator below works either way.
@@ -366,39 +505,50 @@ export function FinancialFreedom({
       )}
 
       {/* passive income */}
-      {annualDivUsd > 0 && (
+      {analyticsQ.isLoading ? (
         <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:p-4">
           <SectionTitle icon={Coins}>Passive income</SectionTitle>
           <div className="mt-2 grid grid-cols-3 gap-3">
-            <div className="min-w-0">
-              <div className="text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-                {fmt(annualDivUsd)}
+            {Array.from({ length: 3 }).map((_, i) => (
+              <BlockSkeleton key={i} className="h-16" />
+            ))}
+          </div>
+        </div>
+      ) : (
+        annualDivUsd > 0 && (
+          <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:p-4">
+            <SectionTitle icon={Coins}>Passive income</SectionTitle>
+            <div className="mt-2 grid grid-cols-3 gap-3">
+              <div className="min-w-0">
+                <div className="text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {fmt(annualDivUsd)}
+                </div>
+                <div className="truncate text-xs text-zinc-500">
+                  dividends / yr (last 12m)
+                  <InfoTip text="Sum of your last 12 months of dividends from IBKR cash transactions." />
+                </div>
               </div>
-              <div className="truncate text-xs text-zinc-500">
-                dividends / yr (last 12m)
-                <InfoTip text="Sum of your last 12 months of dividends from IBKR cash transactions." />
+              <div className="min-w-0">
+                <div className="text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {yieldOnCost != null ? `${(yieldOnCost * 100).toFixed(2)}%` : "—"}
+                </div>
+                <div className="truncate text-xs text-zinc-500">
+                  yield on cost
+                  <InfoTip text="Yearly dividends divided by what you paid. Watch this climb as dividends grow." />
+                </div>
               </div>
-            </div>
-            <div className="min-w-0">
-              <div className="text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-                {yieldOnCost != null ? `${(yieldOnCost * 100).toFixed(2)}%` : "—"}
-              </div>
-              <div className="truncate text-xs text-zinc-500">
-                yield on cost
-                <InfoTip text="Yearly dividends divided by what you paid. Watch this climb as dividends grow." />
-              </div>
-            </div>
-            <div className="min-w-0">
-              <div className="text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-emerald-500">
-                {coverage != null ? `${(coverage * 100).toFixed(1)}%` : "—"}
-              </div>
-              <div className="truncate text-xs text-zinc-500">
-                of spending covered
-                <InfoTip text="Yearly dividends divided by your yearly spending. At 100%, your portfolio pays your bills." />
+              <div className="min-w-0">
+                <div className="truncate text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-emerald-500">
+                  {coverage != null ? `${(coverage * 100).toFixed(1)}%` : "—"}
+                </div>
+                <div className="truncate text-xs text-zinc-500">
+                  of spending covered
+                  <InfoTip text="Yearly dividends divided by your yearly spending. At 100%, your portfolio pays your bills." />
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )
       )}
 
       {/* goals */}
@@ -459,7 +609,11 @@ export function FinancialFreedom({
           </div>
         )}
 
-        {goals.length === 0 ? (
+        {!fiReady ? (
+          <div className="mt-2 space-y-2">
+            <BlockSkeleton className="h-20" />
+          </div>
+        ) : goals.length === 0 ? (
           <p className="mt-2 text-sm text-zinc-500">
             No goals yet. Set one — e.g. your first $100K — and watch the portfolio chase it.
           </p>
@@ -519,54 +673,67 @@ export function FinancialFreedom({
       {/* simulator */}
       <div>
         <SectionTitle icon={Calculator}>What-if simulator</SectionTitle>
-        <div className="mt-2 grid gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:grid-cols-3 sm:p-4">
-          <Slider
-            label={`Investing / month (${currency})`}
-            value={effSimPmt}
-            display={fmt(toUsd(effSimPmt))}
-            onChange={setSimPmt}
-            min={0}
-            max={20000}
-            step={100}
-          />
-          <Slider
-            label="Return / year"
-            value={effSimReturn}
-            display={`${effSimReturn.toFixed(1)}%`}
-            onChange={setSimReturn}
-            min={0}
-            max={12}
-            step={0.5}
-          />
-          <Slider label="Years" value={simYears} display={`${simYears}y`} onChange={setSimYears} min={1} max={40} step={1} />
-        </div>
-        <div className="mt-3">
-          <GrowthChart points={series} fmtCompact={fmtCompact} />
-        </div>
-        <div className="mt-2 grid grid-cols-3 gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-              {fmtCompact(simEnd.total)}
+        {!fiReady ? (
+          <div className="mt-2 space-y-3">
+            <div className="grid gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:grid-cols-3 sm:p-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <BlockSkeleton key={i} className="h-12" />
+              ))}
             </div>
-            <div className="text-xs text-zinc-500">in {simYears}y</div>
+            <BlockSkeleton className="h-56" />
           </div>
-          <div className="min-w-0">
-            <div className="truncate text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-              {fmtCompact(simEnd.contributed)}
+        ) : (
+          <>
+            <div className="mt-2 grid gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:grid-cols-3 sm:p-4">
+              <Slider
+                label={`Investing / month (${currency})`}
+                value={effSimPmt}
+                display={fmt(toUsd(effSimPmt))}
+                onChange={setSimPmt}
+                min={0}
+                max={20000}
+                step={100}
+              />
+              <Slider
+                label="Return / year"
+                value={effSimReturn}
+                display={`${effSimReturn.toFixed(1)}%`}
+                onChange={setSimReturn}
+                min={0}
+                max={12}
+                step={0.5}
+              />
+              <Slider label="Years" value={simYears} display={`${simYears}y`} onChange={setSimYears} min={1} max={40} step={1} />
             </div>
-            <div className="text-xs text-zinc-500">you put in</div>
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-emerald-500">
-              {fmtCompact(simEnd.growth)}
+            <div className="mt-3">
+              <GrowthChart points={series} fmtCompact={fmtCompact} fmtFull={fmt} />
             </div>
-            <div className="text-xs text-zinc-500">growth did</div>
-          </div>
-        </div>
-        <p className="mt-2 flex items-start gap-1 text-xs text-zinc-500">
-          <Pencil size={12} className="mt-0.5 shrink-0" />
-          Projection only — markets don&apos;t compound this neatly. Start {fmt(toUsd(effSimPmt))}/mo at {effSimReturn}% for {simYears}y.
-        </p>
+            <div className="mt-2 grid grid-cols-3 gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {fmtCompact(simEnd.total)}
+                </div>
+                <div className="text-xs text-zinc-500">in {simYears}y</div>
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {fmtCompact(simEnd.contributed)}
+                </div>
+                <div className="text-xs text-zinc-500">you put in</div>
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-[clamp(1rem,4.5vw,1.5rem)] font-bold tabular-nums text-emerald-500">
+                  {fmtCompact(simEnd.growth)}
+                </div>
+                <div className="text-xs text-zinc-500">growth did</div>
+              </div>
+            </div>
+            <p className="mt-2 flex items-start gap-1 text-xs text-zinc-500">
+              <Pencil size={12} className="mt-0.5 shrink-0" />
+              Projection only — markets don&apos;t compound this neatly. Start {fmt(toUsd(effSimPmt))}/mo at {effSimReturn}% for {simYears}y.
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

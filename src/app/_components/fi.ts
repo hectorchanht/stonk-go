@@ -223,3 +223,21 @@ export function addMonths(date: Date, months: number): Date {
   d.setMonth(d.getMonth() + Math.round(months));
   return d;
 }
+
+/**
+ * Index of the point whose x-position is closest to `px` — used to snap a
+ * pointer/touch position to the nearest projection year on the chart.
+ * Ties go to the earlier point; empty input returns 0.
+ */
+export function nearestPointIndex(xs: readonly number[], px: number): number {
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < xs.length; i++) {
+    const d = Math.abs(xs[i]! - px);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}

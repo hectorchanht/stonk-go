@@ -41,12 +41,15 @@ function GlanceTile({
   value,
   sub,
   tone = "neutral",
+  loading = false,
 }: {
   icon: LucideIcon;
   label: string;
   value: React.ReactNode;
   sub?: React.ReactNode;
   tone?: "pos" | "neg" | "warn" | "neutral";
+  /** When true, renders a shimmer instead of the value — never a 0 or a guess. */
+  loading?: boolean;
 }) {
   const toneClass =
     tone === "pos"
@@ -62,9 +65,20 @@ function GlanceTile({
         <Icon size={13} className="shrink-0" />
         <span className="truncate text-[11px] font-semibold uppercase tracking-wide">{label}</span>
       </div>
-      <div className={`mt-1 truncate text-xl font-bold tabular-nums sm:text-2xl ${toneClass}`}>{value}</div>
-      {sub != null && sub !== "" && (
-        <div className="mt-0.5 truncate text-xs text-zinc-500">{sub}</div>
+      {loading ? (
+        <>
+          <div className="mt-2 h-7 w-3/4 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-700" />
+          <div className="mt-1.5 h-3 w-1/2 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-700/70" />
+        </>
+      ) : (
+        <>
+          <div className={`mt-1 truncate text-xl font-bold tabular-nums sm:text-2xl ${toneClass}`}>
+            {value}
+          </div>
+          {sub != null && sub !== "" && (
+            <div className="mt-0.5 truncate text-xs text-zinc-500">{sub}</div>
+          )}
+        </>
       )}
     </div>
   );
@@ -87,8 +101,12 @@ export function DiamondHands({
   const toUsd = (display: number) => display / displayRate;
 
   const [fiSettings, setFiSettings] = useState<FiSettings>({ ...DEFAULT_FI_SETTINGS });
+  // fiReady gates every tile that depends on settings — first paint uses
+  // defaults, so values must not render until the saved settings load.
+  const [fiReady, setFiReady] = useState(false);
   useEffect(() => {
     setFiSettings(loadFiSettings());
+    setFiReady(true);
   }, []);
 
   const statsQ = api.portfolio.handsStats.useQuery(
@@ -151,15 +169,8 @@ export function DiamondHands({
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-            {loading ? (
-              <>
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <TileSkeleton key={i} />
-                ))}
-              </>
-            ) : (
-              <>
-                <GlanceTile
+            <GlanceTile
+                  loading={statsQ.isLoading}
                   icon={Gem}
                   label="Longest hold"
                   value={stats?.longestHeld?.daysHeld != null ? `${stats.longestHeld.daysHeld}d` : "—"}
@@ -170,6 +181,7 @@ export function DiamondHands({
                   }
                 />
                 <GlanceTile
+                  loading={statsQ.isLoading}
                   icon={TrendingDown}
                   label="Dip survived"
                   value={
@@ -181,6 +193,7 @@ export function DiamondHands({
                   tone={stats?.deepestDip ? "pos" : "neutral"}
                 />
                 <GlanceTile
+                  loading={statsQ.isLoading}
                   icon={Flame}
                   label="Buy streak"
                   value={stats != null ? `${stats.buyStreakMonths} mo` : "—"}
@@ -188,12 +201,14 @@ export function DiamondHands({
                   tone={stats && stats.buyStreakMonths >= 6 ? "pos" : "neutral"}
                 />
                 <GlanceTile
+                  loading={!fiReady}
                   icon={CalendarDays}
                   label="Freedom banked"
                   value={freedomMonths != null ? `${Math.floor(freedomMonths)} mo` : "—"}
                   sub="of spending covered"
                 />
                 <GlanceTile
+                  loading={analyticsQ.isLoading || !fiReady}
                   icon={Wallet}
                   label="Rent from dividends"
                   value={rentDays != null ? `${Math.round(rentDays)} days` : "—"}
@@ -201,6 +216,7 @@ export function DiamondHands({
                   tone={rentDays != null && rentDays >= 30 ? "pos" : "neutral"}
                 />
                 <GlanceTile
+                  loading={curveQ.isLoading}
                   icon={Mountain}
                   label="From all-time high"
                   value={`${athPct >= 0 ? "+" : ""}${athPct.toFixed(1)}%`}
@@ -208,6 +224,7 @@ export function DiamondHands({
                   tone={athPct >= 0 ? "pos" : athPct > -10 ? "neutral" : "neg"}
                 />
                 <GlanceTile
+                  loading={!fiReady}
                   icon={Flag}
                   label="Next milestone"
                   value={nextMilestone != null ? fmtCompact(nextMilestone) : "—"}
@@ -218,18 +235,29 @@ export function DiamondHands({
                   }
                 />
                 <GlanceTile
+                  loading={statsQ.isLoading}
                   icon={PieChart}
                   label="Concentration"
                   value={top != null ? `${top.weightPct.toFixed(0)}%` : "—"}
                   sub={top != null ? `${top.symbol} of portfolio` : "no positions"}
                   tone={top != null && top.weightPct > 35 ? "warn" : "neutral"}
                 />
-              </>
-            )}
           </div>
 
           {/* conviction list */}
-          {!loading && positions.length > 0 && (
+          {loading ? (
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wide text-zinc-500">
+                Conviction board
+              </h4>
+              <div className="mt-2 space-y-2" aria-hidden="true">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <TileSkeleton key={i} />
+                ))}
+              </div>
+            </div>
+          ) : (
+            positions.length > 0 && (
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wide text-zinc-500">
                 Conviction board
@@ -273,6 +301,7 @@ export function DiamondHands({
                 Tenure from your first logged buy; dips from daily closes since then. {fmt(marketValue)} working.
               </p>
             </div>
+            )
           )}
         </>
       )}
