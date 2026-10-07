@@ -565,7 +565,7 @@ export function FinancialFreedom({
         </div>
         <p className="mt-2 flex items-start gap-1 text-xs text-zinc-500">
           <Pencil size={12} className="mt-0.5 shrink-0" />
-          Projection only — markets don't compound this neatly. Start {fmt(toUsd(effSimPmt))}/mo at {effSimReturn}% for {simYears}y.
+          Projection only — markets don&apos;t compound this neatly. Start {fmt(toUsd(effSimPmt))}/mo at {effSimReturn}% for {simYears}y.
         </p>
       </div>
     </div>

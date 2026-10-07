@@ -102,7 +102,7 @@ export function loadFiGoals(): FiGoal[] {
   try {
     const raw = window.localStorage.getItem(GOALS_KEY);
     if (!raw) return [];
-    const arr = JSON.parse(raw);
+    const arr: unknown = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
     return arr.map(sanitizeGoal).filter((g): g is FiGoal => g !== null);
   } catch {
