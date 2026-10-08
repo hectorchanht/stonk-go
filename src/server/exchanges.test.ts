@@ -23,6 +23,7 @@ import {
   coinbaseSignature,
   computeBinanceCostBasis,
   decimalToString,
+  dedupeBalances,
   divDecimal,
   fetchBinancePrice,
   fetchCoinbasePrice,
@@ -227,6 +228,32 @@ describe("parseBinanceAccount", () => {
 
 /* ---------------- valuation + reconciliation ---------------- */
 
+describe("dedupeBalances", () => {
+  it("merges duplicate assets by summing quantities exactly", () => {
+    // Binance /api/v3/account can list the same asset twice (spot + margin).
+    const out = dedupeBalances([
+      { asset: "BTC", quantity: "0.04" },
+      { asset: "USDT", quantity: "100" },
+      { asset: "BTC", quantity: "0.01" },
+    ]);
+    expect(out.map((b) => b.asset)).toEqual(["BTC", "USDT"]);
+    // 0.04 + 0.01 = 0.05 exactly (float would give 0.050000000000000004)
+    expect(out[0]?.quantity).toBe("0.05");
+    expect(out[1]?.quantity).toBe("100");
+  });
+
+  it("is case-insensitive and skips garbage rows", () => {
+    const out = dedupeBalances([
+      { asset: "btc", quantity: "0.1" },
+      { asset: "BTC", quantity: "0.2" },
+      { asset: "", quantity: "5" },
+      { asset: "ETH", quantity: "not-a-number" },
+    ]);
+    expect(out.map((b) => b.asset)).toEqual(["BTC"]);
+    expect(out[0]?.quantity).toBe("0.3");
+  });
+});
+
 describe("valuate", () => {
   it("values a multi-asset portfolio with exact totals", async () => {
     const { balances } = parseCoinbaseAccounts(COINBASE_ACCOUNTS_FIXTURE);
@@ -271,6 +298,24 @@ describe("valuate", () => {
     expect(bnb?.valueCents).toBe(0n);
     // BTC 0.05 x 100000 = 500000n; USDT 500.12345678 x 1 = 50012n (rounded)
     expect(v.totalCents).toBe(500000n + 50012n + 0n);
+    expect(v.reconciled).toBe(true);
+  });
+
+  it("merges duplicate assets before pricing (Binance UNIQUE-constraint regression)", async () => {
+    // Regression: duplicate BTC rows used to hit the ExchangeBalance
+    // (userId, exchange, asset) UNIQUE constraint on createMany.
+    const v = await valuate(
+      [
+        { asset: "BTC", quantity: "0.04" },
+        { asset: "BTC", quantity: "0.01" },
+      ],
+      mockPriceFor,
+      "2026-10-06T00:00:00.000Z",
+    );
+    expect(v.items.map((i) => i.asset)).toEqual(["BTC"]);
+    expect(v.items[0]?.quantity).toBe("0.05");
+    expect(v.items[0]?.valueCents).toBe(500000n);
+    expect(v.pricedCount).toBe(1);
     expect(v.reconciled).toBe(true);
   });
 

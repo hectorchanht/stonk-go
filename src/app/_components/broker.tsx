@@ -246,6 +246,17 @@ function PositionsTable({ positions }: { positions: PositionLike[] }) {
       ),
     },
     {
+      key: "value",
+      header: "Value",
+      align: "right",
+      sortValue: (p) => valueOf(p),
+      filterValue: (p) => p.currency.toUpperCase(),
+      filterLabel: "Currency",
+      render: (p) => (
+        <span className="font-medium text-zinc-100">{money(valueOf(p))}</span>
+      ),
+    },
+    {
       key: "qty",
       header: "Qty",
       align: "right",
@@ -261,17 +272,6 @@ function PositionsTable({ positions }: { positions: PositionLike[] }) {
         <span className="text-zinc-400">
           {p.markPrice == null ? "—" : money(p.markPrice)}
         </span>
-      ),
-    },
-    {
-      key: "value",
-      header: "Value",
-      align: "right",
-      sortValue: (p) => valueOf(p),
-      filterValue: (p) => p.currency.toUpperCase(),
-      filterLabel: "Currency",
-      render: (p) => (
-        <span className="font-medium text-zinc-100">{money(valueOf(p))}</span>
       ),
     },
   ];
@@ -1002,6 +1002,16 @@ function BrowserBrokerCard({
   const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
   const utils = api.useUtils();
   const autoStarted = useRef(false);
+  /**
+   * Stream-interrupt auto-retry (mobile app-switch): tRPC's streaming link
+   * throws "Invalid response or stream interrupted" when the OS suspends the
+   * page's network mid-sync. Counts consecutive retries (max 2) with the
+   * timer handle so a late success can cancel them.
+   */
+  const streamRetries = useRef(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const credsRef = useRef(creds);
+  credsRef.current = creds;
 
   // Keep the cooldown label ticking while it is active.
   const [, setTick] = useState(0);
@@ -1040,6 +1050,11 @@ function BrowserBrokerCard({
   const sync = api.ibkr.sync.useMutation({
     onSuccess: (data) => {
       setError(null);
+      streamRetries.current = 0;
+      if (retryTimer.current) {
+        clearTimeout(retryTimer.current);
+        retryTimer.current = null;
+      }
       setCooldownUntil(null);
       try {
         localStorage.removeItem(COOLDOWN_KEY);
@@ -1077,7 +1092,31 @@ function BrowserBrokerCard({
       }
     },
     onError: (e) => {
-      setError(e.message);
+      // Mobile app-switch during the 10–30s IBKR fetch kills the response
+      // stream; the raw tRPC link error ("Invalid response or stream
+      // interrupted") means nothing to the user, so retry automatically a
+      // couple of times before surfacing a human message.
+      const interrupted = /stream interrupted|invalid response/i.test(e.message);
+      if (interrupted && streamRetries.current < 2) {
+        streamRetries.current += 1;
+        setError(
+          `Connection was interrupted (switching apps?) — retrying… (${streamRetries.current}/2)`,
+        );
+        if (retryTimer.current) clearTimeout(retryTimer.current);
+        // Re-run with the same input the failed attempt used (local creds
+        // or server-saved, matching every sync.mutate call site).
+        const input = credsRef.current ?? undefined;
+        retryTimer.current = setTimeout(() => {
+          if (getCooldownUntil() != null) return; // IBKR 1018 cooldown
+          sync.mutate(input);
+        }, 2000);
+        return;
+      }
+      setError(
+        interrupted
+          ? "The sync was interrupted (e.g. switching apps mid-sync) — tap Sync now to retry."
+          : e.message,
+      );
       // IBKR 1018 = rate limited: block every sync path for 10 minutes so
       // neither the user nor auto-sync can hammer through the throttle.
       if (e.message.includes("1018")) {
@@ -1334,7 +1373,10 @@ function BrowserBrokerCard({
                           : "Sync now"}
                     </>
                   ),
-                  onClick: () => sync.mutate(undefined),
+                  onClick: () => {
+                    streamRetries.current = 0;
+                    sync.mutate(undefined);
+                  },
                   disabled: sync.isPending || coolingDown,
                 },
                 {
@@ -1447,7 +1489,10 @@ function BrowserBrokerCard({
               : "Sync now"}
         </>
       ),
-      onClick: () => sync.mutate(creds),
+      onClick: () => {
+        streamRetries.current = 0;
+        sync.mutate(creds);
+      },
       disabled: sync.isPending || coolingDown,
     },
   ];

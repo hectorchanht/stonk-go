@@ -391,6 +391,13 @@ function BalancesTable({ data }: { data: SyncResult }) {
       render: (r) => <span className="font-semibold">{r.asset}</span>,
     },
     {
+      key: "value",
+      header: "Value",
+      align: "right",
+      sortValue: (r) => r.valueCents,
+      render: (r) => <span className="tabular-nums">{money(r.valueCents)}</span>,
+    },
+    {
       key: "qty",
       header: "Qty",
       align: "right",
@@ -417,13 +424,6 @@ function BalancesTable({ data }: { data: SyncResult }) {
           {r.priceUsd == null ? "—" : money(Math.round(Number(r.priceUsd) * 100))}
         </span>
       ),
-    },
-    {
-      key: "value",
-      header: "Value",
-      align: "right",
-      sortValue: (r) => r.valueCents,
-      render: (r) => <span className="tabular-nums">{money(r.valueCents)}</span>,
     },
     ...(showCost
       ? [

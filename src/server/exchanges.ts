@@ -1015,14 +1015,51 @@ export type PriceFetcher = (
  * Price fetches run with bounded concurrency; a failed price leaves the
  * asset unpriced (NOT zeroed).
  */
+/**
+ * Merge duplicate assets by summing quantities (exact decimal math).
+ * Binance's /api/v3/account can list the same asset twice (spot + margin
+ * entries), and the browser-posted direct-sync payload can too. Without
+ * this merge, createMany hits the ExchangeBalance (userId, exchange, asset)
+ * UNIQUE constraint — and the persist fails AFTER the deleteMany, wiping
+ * the stored balances. First occurrence wins the display order.
+ */
+export function dedupeBalances(balances: NativeBalance[]): NativeBalance[] {
+  const sums = new Map<string, Decimal>();
+  const order: string[] = [];
+  for (const b of balances) {
+    const key = b.asset.toUpperCase();
+    if (!key) continue;
+    let qty: Decimal;
+    try {
+      qty = parseDecimal(b.quantity);
+    } catch {
+      continue;
+    }
+    const prev = sums.get(key);
+    if (prev === undefined) {
+      sums.set(key, qty);
+      order.push(key);
+    } else {
+      sums.set(key, addDecimal(prev, qty));
+    }
+  }
+  return order.map((asset) => ({
+    asset,
+    quantity: decimalToString(sums.get(asset)!),
+  }));
+}
+
 export async function valuate(
   balances: NativeBalance[],
   priceFor: PriceFetcher,
   nowIso: string,
 ): Promise<Valuation> {
+  // Binance can carry the same asset twice — merge before pricing so the
+  // persist never violates the UNIQUE (userId, exchange, asset) constraint.
+  const deduped = dedupeBalances(balances);
   const items: ValuedBalance[] = [];
   // Bounded concurrency: 6 at a time.
-  const queue = [...balances];
+  const queue = [...deduped];
   const results = new Map<string, ValuedBalance>();
   const workers = Array.from({ length: Math.min(6, queue.length) }, async () => {
     while (queue.length > 0) {
@@ -1055,7 +1092,7 @@ export async function valuate(
     }
   });
   await Promise.all(workers);
-  for (const b of balances) {
+  for (const b of deduped) {
     const r = results.get(b.asset);
     if (r) items.push(r);
   }
