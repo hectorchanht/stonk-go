@@ -78,6 +78,7 @@ export const env = createEnv({
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     EMAIL_FROM: process.env.EMAIL_FROM,
     CREDENTIALS_KEY: process.env.CREDENTIALS_KEY,
+    SENTRY_DSN: process.env.SENTRY_DSN,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially
