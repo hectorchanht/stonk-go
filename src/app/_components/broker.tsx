@@ -60,6 +60,23 @@ const CREDS_KEY = "holdr.ibkr.creds";
 const SNAPSHOT_KEY = "holdr.ibkr.snapshot";
 /** Auto-sync on page load when the cached snapshot is older than this. */
 const AUTO_SYNC_AFTER_MS = 1 * 3600 * 1000;
+/**
+ * After IBKR answers 1018 (rate limited), block every sync path for this
+ * long. IBKR throttles repeated calls to the same query and repeat
+ * violations can lock the token — the app must not let the user (or its
+ * own auto-sync) hammer through a throttle.
+ */
+const COOLDOWN_MS = 10 * 60 * 1000;
+const COOLDOWN_KEY = "holdr.ibkr.cooldownUntil";
+
+function getCooldownUntil(): number | null {
+  try {
+    const v = Number(localStorage.getItem(COOLDOWN_KEY));
+    return Number.isFinite(v) && v > Date.now() ? v : null;
+  } catch {
+    return null;
+  }
+}
 
 /** One-line summary of an IBKR trade-import result for the status line. */
 function importSummary(s: {
@@ -958,8 +975,37 @@ function BrowserBrokerCard({
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  /** Epoch ms until which syncs are blocked after an IBKR 1018 rate limit. */
+  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
   const utils = api.useUtils();
   const autoStarted = useRef(false);
+
+  // Keep the cooldown label ticking while it is active.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (cooldownUntil == null) return;
+    const t = setInterval(() => {
+      if (Date.now() >= cooldownUntil) {
+        setCooldownUntil(null);
+        try {
+          localStorage.removeItem(COOLDOWN_KEY);
+        } catch {
+          /* ignore */
+        }
+      }
+      // Re-render so the "retry after HH:MM" label counts down.
+      setTick((n) => n + 1);
+    }, 15000);
+    return () => clearInterval(t);
+  }, [cooldownUntil]);
+
+  const coolingDown = cooldownUntil != null && Date.now() < cooldownUntil;
+  const cooldownLabel = coolingDown
+    ? new Date(cooldownUntil!).toLocaleString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
 
   const { data: session } = useSession();
   const savedQ = api.ibkr.savedCredentials.useQuery(undefined, {
@@ -970,6 +1016,12 @@ function BrowserBrokerCard({
   const sync = api.ibkr.sync.useMutation({
     onSuccess: (data) => {
       setError(null);
+      setCooldownUntil(null);
+      try {
+        localStorage.removeItem(COOLDOWN_KEY);
+      } catch {
+        /* ignore */
+      }
       const snap = { at: new Date().toISOString(), data };
       setSnapshot(snap);
       try {
@@ -1000,7 +1052,20 @@ function BrowserBrokerCard({
         });
       }
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message);
+      // IBKR 1018 = rate limited: block every sync path for 10 minutes so
+      // neither the user nor auto-sync can hammer through the throttle.
+      if (e.message.includes("1018")) {
+        const until = Date.now() + COOLDOWN_MS;
+        setCooldownUntil(until);
+        try {
+          localStorage.setItem(COOLDOWN_KEY, String(until));
+        } catch {
+          /* ignore */
+        }
+      }
+    },
   });
 
   const importMut = api.portfolio.importIbkrTrades.useMutation({
@@ -1127,12 +1192,15 @@ function BrowserBrokerCard({
   useEffect(() => {
     setCreds(loadCreds());
     setSnapshot(loadSnapshot());
+    // A 1018 cooldown survives reloads — keep blocking until it expires.
+    setCooldownUntil(getCooldownUntil());
   }, []);
 
   // Self update: auto-sync on page load when the cached snapshot is stale.
   useEffect(() => {
     if (creds === undefined || creds === null || autoStarted.current) return;
     autoStarted.current = true;
+    if (getCooldownUntil() != null) return; // IBKR 1018 cooldown: don't hammer
     const snap = loadSnapshot();
     const stale =
       !snap || Date.now() - new Date(snap.at).getTime() > AUTO_SYNC_AFTER_MS;
@@ -1158,6 +1226,7 @@ function BrowserBrokerCard({
       return;
     }
     savedAutoStarted.current = true;
+    if (getCooldownUntil() != null) return; // IBKR 1018 cooldown: don't hammer
     const snap = loadSnapshot();
     const stale =
       !snap || Date.now() - new Date(snap.at).getTime() > AUTO_SYNC_AFTER_MS;
@@ -1228,11 +1297,15 @@ function BrowserBrokerCard({
                         size={15}
                         className={sync.isPending ? "animate-spin" : ""}
                       />
-                      {sync.isPending ? "Syncing…" : "Sync now"}
+                      {sync.isPending
+                        ? "Syncing…"
+                        : coolingDown
+                          ? `Cooling down… retry after ${cooldownLabel}`
+                          : "Sync now"}
                     </>
                   ),
                   onClick: () => sync.mutate(undefined),
-                  disabled: sync.isPending,
+                  disabled: sync.isPending || coolingDown,
                 },
                 {
                   label: "Use different credentials",
@@ -1337,11 +1410,15 @@ function BrowserBrokerCard({
             size={15}
             className={sync.isPending ? "animate-spin" : ""}
           />
-          {sync.isPending ? "Syncing…" : "Sync now"}
+          {sync.isPending
+            ? "Syncing…"
+            : coolingDown
+              ? `Cooling down… retry after ${cooldownLabel}`
+              : "Sync now"}
         </>
       ),
       onClick: () => sync.mutate(creds),
-      disabled: sync.isPending,
+      disabled: sync.isPending || coolingDown,
     },
   ];
   if (session?.user) {

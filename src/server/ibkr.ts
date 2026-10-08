@@ -85,7 +85,8 @@ const ERROR_HINTS: Record<string, string> = {
   "1012": "Token invalid — check IBKR_FLEX_TOKEN.",
   "1014": "Query ID invalid — check IBKR_FLEX_QUERY_ID (Reports > Flex Queries).",
   "1015": "Token expired — generate a new one in Client Portal (Settings > Reporting > Flex Web Service).",
-  "1018": "Rate limited by IBKR — wait a minute and retry.",
+  "1018":
+    "Rate limited by IBKR — wait at least 10 minutes before retrying. Rapid retries can extend the lockout.",
   "1020": "Malformed request — report this as a bug.",
   "1025":
     "Too many failed attempts — IBKR temporarily blocked this token. Check the token (Client Portal > Settings > Reporting > Flex Web Service) and Query ID (Reports > Flex Queries), save fresh credentials, then wait ~1h before re-syncing.",
