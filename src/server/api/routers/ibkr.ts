@@ -301,8 +301,7 @@ export const ibkrRouter = createTRPCRouter({
         where: { userId: backfillUserId },
         orderBy: [{ dateTime: "desc" }],
       });
-      for (let i = 0; i < history.length; i++) {
-        const c = history[i]!;
+      for (const c of history) {
         cashLikes.push({
           id: `hist-${c.id}`,
           type: c.type,

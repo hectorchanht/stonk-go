@@ -51,6 +51,14 @@ function fakeDb(state: {
       }
     : null;
   const histRows: unknown[] = [];
+  const histDeleteWindow = vi.fn(async (_userId: string, _fd: string, _td: string) => {
+    histRows.length = 0;
+    return { count: 0 };
+  });
+  const histCreateMany = vi.fn(async (args: { data: unknown[] }) => {
+    histRows.push(...args.data);
+    return { count: args.data.length };
+  });
   const db = {
     brokerBackfill: {      findUnique: vi.fn(async () => row),
       upsert: vi.fn(async (args: never) => {
@@ -72,17 +80,11 @@ function fakeDb(state: {
     },
     brokerCashFlowHistory: {
       findMany: vi.fn(async () => []),
-      deleteWindow: vi.fn(async () => {
-        histRows.length = 0;
-        return { count: 0 };
-      }),
-      createMany: vi.fn(async (args: { data: unknown[] }) => {
-        histRows.push(...args.data);
-        return { count: args.data.length };
-      }),
+      deleteWindow: histDeleteWindow,
+      createMany: histCreateMany,
     },
   } as unknown as AppDb;
-  return { db, getRow: () => row };
+  return { db, getRow: () => row, histMocks: { deleteWindow: histDeleteWindow, createMany: histCreateMany } };
 }
 
 const trade = (tradeDate: string) => ({
@@ -204,7 +206,7 @@ describe("runBackfillWindow", () => {
   });
 
   it("stores the window's cash flows to history (delete-then-insert)", async () => {
-    const { db } = fakeDb({ oldestCovered: "20251008" });
+    const { db, histMocks } = fakeDb({ oldestCovered: "20251008" });
     const cashFlow = {
       accountId: "a1",
       symbol: "AAPL",
@@ -220,7 +222,6 @@ describe("runBackfillWindow", () => {
       cashFlows: [cashFlow],
       generatedAt: null,
     }));
-    const hist = db.brokerCashFlowHistory;
     const progress = await runBackfillWindow(
       db,
       { userId: "u1", token: "t", queryId: "q", positions: [] },
@@ -229,11 +230,11 @@ describe("runBackfillWindow", () => {
         mergeTrades: vi.fn(async () => ({}) as never),
       },
     );
-    expect(hist.deleteWindow).toHaveBeenCalledWith("u1", "20241008", "20251008");
-    expect(hist.createMany).toHaveBeenCalledTimes(1);
-    const data = (hist.createMany as ReturnType<typeof vi.fn>).mock.calls[0]![0].data;
+    expect(histMocks.deleteWindow).toHaveBeenCalledWith("u1", "20241008", "20251008");
+    expect(histMocks.createMany).toHaveBeenCalledTimes(1);
+    const data = histMocks.createMany.mock.calls[0]![0].data;
     expect(data).toHaveLength(1);
-    expect(data[0]!).toMatchObject({ userId: "u1", amount: 12.5, type: "Dividends" });
+    expect(data[0]).toMatchObject({ userId: "u1", amount: 12.5, type: "Dividends" });
     expect(progress.cashFlowsStored).toBe(1);
     expect(progress.done).toBe(false); // non-empty: streak reset
   });
