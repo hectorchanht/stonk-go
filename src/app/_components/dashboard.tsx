@@ -718,35 +718,30 @@ function HoldingsTable({
                 ) : (
                   <span className="flex-1" />
                 )}
-                {t.source !== "ibkr" ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setEditingTxn(t)}
-                      title="Edit trade"
-                      aria-label={"Edit trade " + t.id}
-                      className="rounded p-1 text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700 hover:text-zinc-200"
-                    >
-                      <Pencil size={13} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (confirm("Delete this transaction? The holding will be recomputed.")) {
-                          delTxn.mutate({ id: t.id });
-                        }
-                      }}
-                      title="Delete trade"
-                      aria-label={"Delete trade " + t.id}
-                      className="rounded p-1 text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700 hover:text-rose-400"
-                    >
-                      <X size={13} />
-                    </button>
-                  </>
-                ) : (
+                {t.source !== "ibkr" && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingTxn(t)}
+                    title="Edit trade"
+                    aria-label={"Edit trade " + t.id}
+                    className="rounded p-1 text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700 hover:text-zinc-200"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => delTxn.mutate({ id: t.id })}
+                  title="Delete trade (stays deleted — IBKR sync won't bring it back)"
+                  aria-label={"Delete trade " + t.id}
+                  className="rounded p-1 text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700 hover:text-rose-400"
+                >
+                  <X size={13} />
+                </button>
+                {t.source === "ibkr" && (
                   <span
                     className="rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] font-bold text-sky-400"
-                    title="Synced from IBKR — managed by the next sync"
+                    title="Synced from IBKR"
                   >
                     IBKR
                   </span>
@@ -1515,24 +1510,15 @@ function TransactionList() {
       key: "actions",
       header: "",
       align: "right",
-      render: (t) =>
-        t.source !== "ibkr" ? (
-          <button
-            onClick={() => {
-              if (
-                confirm(
-                  "Delete this transaction? The holding will be recomputed.",
-                )
-              ) {
-                del.mutate({ id: t.id });
-              }
-            }}
-            className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 hover:text-rose-400"
-            title="Delete transaction"
-          >
-            <X size={14} />
-          </button>
-        ) : null,
+      render: (t) => (
+        <button
+          onClick={() => del.mutate({ id: t.id })}
+          className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 hover:text-rose-400"
+          title="Delete transaction (stays deleted — IBKR sync won't bring it back)"
+        >
+          <X size={14} />
+        </button>
+      ),
     },
   ];
 

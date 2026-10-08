@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { recomputeHolding, mergeCurveLegs } from "./ibkr-import";
+import { recomputeHolding, mergeCurveLegs, importIbkrTrades } from "./ibkr-import";
 import type { AppDb } from "./d1db";
 
 interface Txn {
@@ -281,5 +281,88 @@ describe("mergeCurveLegs opening balances", () => {
     expect(legs).toHaveLength(2);
     expect(stats.fromBrokerTrades).toBe(2);
     expect(stats.openingBalances).toBe(0);
+  });
+});
+
+describe("importIbkrTrades tombstones (deleted trades stay deleted)", () => {
+  interface Stone {
+    symbol: string;
+    type: string;
+    quantity: number;
+    price: number;
+    executedAt: Date;
+    externalId: string | null;
+  }
+  function importDb(stones: Stone[]) {
+    const inserted: unknown[] = [];
+    const db = {
+      deletedTransaction: {
+        findMany: async () => stones,
+      },
+      transaction: {
+        findMany: async () => [],
+        create: async (args: { data: unknown }) => {
+          inserted.push(args.data);
+          return args.data;
+        },
+        delete: async () => ({}),
+      },
+      holding: {
+        deleteMany: async () => ({}),
+        upsert: async (args: { create: unknown }) => args.create,
+      },
+    };
+    return { db: db as unknown as AppDb, inserted };
+  }
+  const trade = (over: Record<string, unknown> = {}) => ({
+    symbol: "AAPL",
+    tradeDate: "20260105",
+    quantity: 10,
+    tradePrice: 150,
+    commission: 1,
+    transactionId: "txn-1",
+    ...over,
+  });
+
+  it("skips a trade whose externalId was tombstoned", async () => {
+    const { db, inserted } = importDb([
+      {
+        symbol: "AAPL",
+        type: "BUY",
+        quantity: 10,
+        price: 150,
+        executedAt: new Date("2026-01-05T12:00:00Z"),
+        externalId: "ibkr:txn-1",
+      },
+    ]);
+    const stats = await importIbkrTrades(db, [trade()], []);
+    expect(inserted).toHaveLength(0);
+    expect(stats.imported).toBe(0);
+    expect(stats.duplicatesSkipped).toBe(1);
+  });
+
+  it("skips a manually-deleted trade that matches by fields (no externalId)", async () => {
+    const { db, inserted } = importDb([
+      {
+        symbol: "AAPL",
+        type: "BUY",
+        quantity: 10,
+        price: 150,
+        executedAt: new Date("2026-01-05T12:00:00Z"),
+        externalId: null,
+      },
+    ]);
+    // Different IBKR transaction id, same economics — must not resurrect.
+    const stats = await importIbkrTrades(db, [trade({ transactionId: "txn-9" })], []);
+    expect(inserted).toHaveLength(0);
+    expect(stats.imported).toBe(0);
+    expect(stats.duplicatesSkipped).toBe(1);
+  });
+
+  it("still imports a trade that was never deleted", async () => {
+    const { db, inserted } = importDb([]);
+    const stats = await importIbkrTrades(db, [trade()], []);
+    expect(inserted).toHaveLength(1);
+    expect(stats.imported).toBe(1);
   });
 });

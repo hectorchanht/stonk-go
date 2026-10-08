@@ -78,6 +78,53 @@ const summaryInput = z.object({
 const DAY_MS = 86_400_000;
 
 /**
+ * Record a tombstone for a transaction BEFORE it is deleted. IBKR auto-sync
+ * re-imports any trade whose externalId is missing from the log — without
+ * the tombstone the user's delete is silently undone ("restored") on the
+ * next sync. Idempotent: re-deleting an already-tombstoned row is a no-op.
+ */
+async function tombstoneTransaction(
+  db: AppDb,
+  t: {
+    symbol: string;
+    type: string;
+    quantity: number;
+    price: number;
+    executedAt: Date | string;
+    externalId: string | null;
+  },
+) {
+  const stones = await db.deletedTransaction.findMany();
+  if (t.externalId) {
+    if (stones.some((s) => s.externalId === t.externalId)) return;
+  } else {
+    const day = new Date(t.executedAt).toISOString().slice(0, 10);
+    if (
+      stones.some(
+        (s) =>
+          s.externalId == null &&
+          s.symbol === t.symbol &&
+          s.type === t.type &&
+          s.quantity === t.quantity &&
+          s.price === t.price &&
+          new Date(s.executedAt).toISOString().slice(0, 10) === day,
+      )
+    )
+      return;
+  }
+  await db.deletedTransaction.create({
+    data: {
+      symbol: t.symbol,
+      type: t.type,
+      quantity: t.quantity,
+      price: t.price,
+      executedAt: t.executedAt,
+      externalId: t.externalId,
+    },
+  });
+}
+
+/**
  * Trade-log cash flows in a single currency (USD). Trade prices are stored
  * in native currency (HKD for HKEX), while the terminal market value is
  * USD — mixing them corrupts any money-weighted math, so every flow is
@@ -939,6 +986,9 @@ export const portfolioRouter = createTRPCRouter({
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Transaction not found" });
       }
+      // Tombstone first: otherwise the next IBKR auto-sync re-imports the
+      // row and the user's delete is silently undone.
+      await tombstoneTransaction(db, existing);
       await db.transaction.delete({ where: { id: input.id } });
       await recomputeHolding(db, existing.symbol);
       return { ok: true };
@@ -989,6 +1039,15 @@ export const portfolioRouter = createTRPCRouter({
     .input(z.object({ symbol: symbolSchema }))
     .mutation(async ({ ctx, input }) => {
       // Sequential, not an interactive $transaction (unsupported on D1).
+      // Tombstone every row first — otherwise the next IBKR auto-sync
+      // re-imports the whole history and the delete is silently undone.
+      const rows = await ctx.db.transaction.findMany({
+        where: { symbol: input.symbol },
+        orderBy: [{ executedAt: "asc" }],
+      });
+      for (const r of rows) {
+        await tombstoneTransaction(ctx.db, r);
+      }
       await ctx.db.transaction.deleteMany({ where: { symbol: input.symbol } });
       await ctx.db.holding.deleteMany({ where: { symbol: input.symbol } });
       return { ok: true };

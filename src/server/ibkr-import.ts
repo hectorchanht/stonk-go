@@ -256,6 +256,14 @@ export async function importIbkrTrades(
     symbols: [],
   };
 
+  // User-deleted trades stay deleted: the tombstone table records every
+  // deleteTransaction/deleteHolding, so the next auto-sync can't resurrect
+  // the rows (the classic "my trashed tx keeps coming back" bug).
+  const tombstones = await db.deletedTransaction.findMany();
+  const tombstonedKeys = new Set(
+    tombstones.map((t) => t.externalId).filter((k): k is string => !!k),
+  );
+
   const posBySymbol = new Map<string, IbkrPositionInput>();
   for (const p of positions) {
     const s = normSymbol(p.symbol ?? "");
@@ -317,6 +325,11 @@ export async function importIbkrTrades(
         stats.alreadyImported++;
         continue;
       }
+      // The user deleted this exact trade before — keep it deleted.
+      if (tombstonedKeys.has(key)) {
+        stats.duplicatesSkipped++;
+        continue;
+      }
       const executedAt = parseTradeDate(t.tradeDate);
       if (!executedAt || t.tradePrice == null) {
         stats.unusableSkipped++;
@@ -335,6 +348,23 @@ export async function importIbkrTrades(
           ymd(m.executedAt) === t.tradeDate,
       );
       if (dup) {
+        stats.duplicatesSkipped++;
+        continue;
+      }
+      // The user deleted this trade by hand before (as a manual row) —
+      // same tolerant match as the manual-dedupe above, so it can't come
+      // back as an ibkr row on the next sync.
+      const wasTrashed = tombstones.some(
+        (s) =>
+          s.externalId == null &&
+          s.symbol === symbol &&
+          s.type === type &&
+          Math.abs(s.quantity - quantity) <= EPS &&
+          s.price > 0 &&
+          Math.abs(s.price - t.tradePrice!) / s.price < 0.005 &&
+          ymd(s.executedAt) === t.tradeDate,
+      );
+      if (wasTrashed) {
         stats.duplicatesSkipped++;
         continue;
       }

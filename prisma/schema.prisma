@@ -60,6 +60,25 @@ model Transaction {
     @@index([executedAt])
 }
 
+// Tombstones for user-deleted transactions. IBKR auto-sync re-imports any
+// trade whose externalId is missing from the log — without this table a
+// deleted trade is silently "restored" on the next sync. IBKR rows are
+// keyed by externalId; manual rows (externalId null) are matched by their
+// (symbol, type, quantity, price, date) with the same tolerances as the
+// import dedupe, so a deleted manual trade can't come back as an ibkr row.
+model DeletedTransaction {
+    id         String   @id @default(cuid())
+    symbol     String
+    type       String
+    quantity   Float
+    price      Float
+    executedAt DateTime
+    externalId String?  @unique
+    deletedAt  DateTime @default(now())
+
+    @@index([symbol])
+}
+
 // Snapshot of positions synced from Interactive Brokers via the
 // Flex Web Service (read-only). Refreshed by ibkr.sync; the same sync merges
 // the Flex trades into the Transaction log, which stays the source of truth

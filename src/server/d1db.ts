@@ -41,6 +41,19 @@ export interface TransactionRow {
   createdAt: Date;
 }
 
+/** Tombstone for a user-deleted transaction — stops IBKR auto-sync resurrecting it. */
+export interface DeletedTransactionRow {
+  id: string;
+  symbol: string;
+  type: string;
+  quantity: number;
+  price: number;
+  executedAt: Date;
+  /** IBKR trade key when the deleted row had one; null for manual rows. */
+  externalId: string | null;
+  deletedAt: Date;
+}
+
 export interface BrokerPositionRow {
   id: string;
   accountId: string;
@@ -487,6 +500,24 @@ export interface AppDb {
       };
     }): Promise<TransactionRow>;
   };
+  /**
+   * Tombstones for user-deleted transactions. importIbkrTrades consults
+   * this before inserting, so a deleted trade can't be resurrected by the
+   * next auto-sync. Local-dev Prisma and the D1 adapter both implement it.
+   */
+  deletedTransaction: {
+    findMany(): Promise<DeletedTransactionRow[]>;
+    create(args: {
+      data: {
+        symbol: string;
+        type: string;
+        quantity: number;
+        price: number;
+        executedAt: Date | string;
+        externalId?: string | null;
+      };
+    }): Promise<DeletedTransactionRow>;
+  };
   portfolioSnapshot: {
     findMany(args: {
       orderBy: Array<{ date?: SortDir }>;
@@ -755,6 +786,19 @@ function mapTransaction(r: RawRow): TransactionRow {
     source: (r.source as string) ?? "manual",
     externalId: (r.externalId as string | null) ?? null,
     createdAt: toDate(r.createdAt),
+  };
+}
+
+function mapDeletedTransaction(r: RawRow): DeletedTransactionRow {
+  return {
+    id: r.id as string,
+    symbol: r.symbol as string,
+    type: r.type as string,
+    quantity: r.quantity as number,
+    price: r.price as number,
+    executedAt: toDate(r.executedAt),
+    externalId: (r.externalId as string | null) ?? null,
+    deletedAt: toDate(r.deletedAt),
   };
 }
 
@@ -1577,6 +1621,47 @@ export function createD1Db(d1: D1Database): AppDb {
     },
   };
 
+  const deletedTransaction: AppDb["deletedTransaction"] = {
+    findMany: async () => {
+      const { results } = await d1
+        .prepare(`SELECT * FROM "DeletedTransaction"`)
+        .all();
+      return (results as unknown as RawRow[]).map(mapDeletedTransaction);
+    },
+
+    create: async (args) => {
+      const d = args.data;
+      const row: DeletedTransactionRow = {
+        id: crypto.randomUUID(),
+        symbol: d.symbol,
+        type: d.type,
+        quantity: d.quantity,
+        price: d.price,
+        executedAt: toDate(d.executedAt),
+        externalId: d.externalId ?? null,
+        deletedAt: new Date(),
+      };
+      await d1
+        .prepare(
+          `INSERT INTO "DeletedTransaction"
+             ("id", "symbol", "type", "quantity", "price", "executedAt", "externalId", "deletedAt")
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.symbol,
+          row.type,
+          row.quantity,
+          row.price,
+          iso(row.executedAt),
+          row.externalId,
+          iso(row.deletedAt),
+        )
+        .run();
+      return row;
+    },
+  };
+
   const portfolioSnapshot: AppDb["portfolioSnapshot"] = {
     findMany: async (args) => {
       const order = args.orderBy
@@ -1872,6 +1957,7 @@ export function createD1Db(d1: D1Database): AppDb {
     brokerBackfill,
     holding,
     transaction,
+    deletedTransaction,
     portfolioSnapshot,
     priceAlert,
     pushSubscription,
