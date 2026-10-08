@@ -153,6 +153,102 @@ type HoldingSortKey = "symbol" | "marketValue" | "dayPL" | "totalPL" | "weightPc
 
 type TxnRow = RouterOutputs["portfolio"]["transactions"][number];
 
+/** One trade row in the holdings inspector. */
+function InspectorTradeRow({
+  t,
+  money,
+  onEdit,
+  onDelete,
+}: {
+  t: TxnRow;
+  money: (v: number | null) => string;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-zinc-200/60 dark:bg-zinc-800/60 px-2 py-1.5 text-xs">
+      <span
+        className={"rounded px-1.5 py-0.5 text-[10px] font-bold " + (t.type === "BUY"
+            ? "bg-emerald-900/60 text-emerald-400"
+            : "bg-rose-900/60 text-rose-400")}
+      >
+        {t.type}
+      </span>
+      <span className="whitespace-nowrap text-zinc-500">
+        {new Date(t.executedAt).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })}
+      </span>
+      <span className="tabular-nums text-zinc-700 dark:text-zinc-300">
+        {t.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })} @{" "}
+        {money(t.price)}
+      </span>
+      {t.note ? (
+        <span className="min-w-0 flex-1 truncate text-zinc-500">{t.note}</span>
+      ) : (
+        <span className="flex-1" />
+      )}
+      {t.source !== "ibkr" && (
+        <button
+          type="button"
+          onClick={onEdit}
+          title="Edit trade"
+          aria-label={"Edit trade " + t.id}
+          className="rounded p-1 text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700 hover:text-zinc-200"
+        >
+          <Pencil size={13} />
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onDelete}
+        title="Delete trade (stays deleted — IBKR sync won't bring it back)"
+        aria-label={"Delete trade " + t.id}
+        className="rounded p-1 text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700 hover:text-rose-400"
+      >
+        <X size={13} />
+      </button>
+    </div>
+  );
+}
+
+/** One platform section inside the holdings inspector. */
+function InspectorSection({
+  label,
+  rows,
+  money,
+  setEditingTxn,
+  delTxn,
+}: {
+  label: string;
+  rows: TxnRow[];
+  money: (v: number | null) => string;
+  setEditingTxn: (t: TxnRow | null) => void;
+  delTxn: { mutate: (input: { id: string }) => void };
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div>
+      <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+        {label}
+      </div>
+      <div className="space-y-1">
+        {rows.map((t) => (
+          <InspectorTradeRow
+            key={t.id}
+            t={t}
+            money={money}
+            onEdit={() => setEditingTxn(t)}
+            onDelete={() => delTxn.mutate({ id: t.id })}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function HoldingsTable({
   rows,
   flair,
@@ -270,6 +366,16 @@ function HoldingsTable({
             new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime(),
         ),
     [txnsQuery.data, inspectSymbol],
+  );
+  // Platforms stay separated in the inspector too: manual trades and IBKR
+  // trades render under their own section headers, never interleaved.
+  const inspectManual = useMemo(
+    () => inspectTxns.filter((t) => t.source !== "ibkr"),
+    [inspectTxns],
+  );
+  const inspectIbkr = useMemo(
+    () => inspectTxns.filter((t) => t.source === "ibkr"),
+    [inspectTxns],
   );
   useEffect(() => {
     try {
@@ -689,65 +795,21 @@ function HoldingsTable({
               No trades found for this symbol.
             </p>
           )}
-          <div className="space-y-1">
-            {inspectTxns.map((t) => (
-              <div
-                key={t.id}
-                className="flex items-center gap-2 rounded-lg bg-zinc-200/60 dark:bg-zinc-800/60 px-2 py-1.5 text-xs"
-              >
-                <span
-                  className={"rounded px-1.5 py-0.5 text-[10px] font-bold " + (t.type === "BUY"
-                      ? "bg-emerald-900/60 text-emerald-400"
-                      : "bg-rose-900/60 text-rose-400")}
-                >
-                  {t.type}
-                </span>
-                <span className="whitespace-nowrap text-zinc-500">
-                  {new Date(t.executedAt).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  })}
-                </span>
-                <span className="tabular-nums text-zinc-700 dark:text-zinc-300">
-                  {t.quantity.toLocaleString("en-US", { maximumFractionDigits: 4 })} @{" "}
-                  {money(t.price)}
-                </span>
-                {t.note ? (
-                  <span className="min-w-0 flex-1 truncate text-zinc-500">{t.note}</span>
-                ) : (
-                  <span className="flex-1" />
-                )}
-                {t.source !== "ibkr" && (
-                  <button
-                    type="button"
-                    onClick={() => setEditingTxn(t)}
-                    title="Edit trade"
-                    aria-label={"Edit trade " + t.id}
-                    className="rounded p-1 text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700 hover:text-zinc-200"
-                  >
-                    <Pencil size={13} />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => delTxn.mutate({ id: t.id })}
-                  title="Delete trade (stays deleted — IBKR sync won't bring it back)"
-                  aria-label={"Delete trade " + t.id}
-                  className="rounded p-1 text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700 hover:text-rose-400"
-                >
-                  <X size={13} />
-                </button>
-                {t.source === "ibkr" && (
-                  <span
-                    className="rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] font-bold text-sky-400"
-                    title="Synced from IBKR"
-                  >
-                    IBKR
-                  </span>
-                )}
-              </div>
-            ))}
+          <div className="space-y-3">
+            <InspectorSection
+              label="Manual"
+              rows={inspectManual}
+              money={money}
+              setEditingTxn={setEditingTxn}
+              delTxn={delTxn}
+            />
+            <InspectorSection
+              label="IBKR"
+              rows={inspectIbkr}
+              money={money}
+              setEditingTxn={setEditingTxn}
+              delTxn={delTxn}
+            />
           </div>
         </div>
       )}
@@ -1389,7 +1451,6 @@ function TransactionForm() {
 }
 
 type TxnFilter = "ALL" | "BUY" | "SELL";
-type TxnSourceFilter = "all" | "manual" | "ibkr";
 
 function TransactionList() {
   const money = useMoney();
@@ -1406,24 +1467,43 @@ function TransactionList() {
   });
 
   const [typeFilter, setTypeFilter] = useState<TxnFilter>("ALL");
-  const [sourceFilter, setSourceFilter] = useState<TxnSourceFilter>("all");
+  // Platforms are separated: each source gets its own tab, never mixed.
+  const [tab, setTab] = useState<"manual" | "ibkr">("manual");
   const [query, setQuery] = useState("");
+
+  const counts = useMemo(() => {
+    let manual = 0;
+    let ibkr = 0;
+    for (const t of data ?? []) {
+      if (t.source === "ibkr") ibkr++;
+      else manual++;
+    }
+    return { manual, ibkr };
+  }, [data]);
+
+  // If the current tab is empty but the other isn't (e.g. first IBKR sync),
+  // switch to the tab that has rows.
+  useEffect(() => {
+    if (tab === "manual" && counts.manual === 0 && counts.ibkr > 0) {
+      setTab("ibkr");
+    }
+  }, [tab, counts]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (data ?? []).filter(
       (t) =>
+        (tab === "ibkr" ? t.source === "ibkr" : t.source !== "ibkr") &&
         (typeFilter === "ALL" || t.type === typeFilter) &&
-        (sourceFilter === "all" || t.source === sourceFilter) &&
         (!q ||
           t.symbol.toLowerCase().includes(q) ||
           (t.note ?? "").toLowerCase().includes(q)),
     );
-  }, [data, typeFilter, sourceFilter, query]);
+  }, [data, tab, typeFilter, query]);
 
   const exportCsv = () =>
     downloadCsv(
-      "holdr-transactions.csv",
+      `holdr-transactions-${tab}.csv`,
       ["date", "type", "symbol", "quantity", "price", "fees", "note", "source"],
       filtered.map((t) => [
         new Date(t.executedAt).toISOString(),
@@ -1463,14 +1543,6 @@ function TransactionList() {
       render: (t) => (
         <>
           <span className="font-semibold text-zinc-900 dark:text-zinc-100">{t.symbol}</span>
-          {t.source === "ibkr" && (
-            <span
-              className="ml-1.5 rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] font-bold text-sky-400"
-              title="Synced from IBKR — managed by the next sync"
-            >
-              IBKR
-            </span>
-          )}
           {t.note && (
             <div className="max-w-[220px] truncate text-xs text-zinc-500">
               {t.note}
@@ -1572,25 +1644,31 @@ function TransactionList() {
         </div>
         <div
           className="flex shrink-0 overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700"
-          role="group"
-          aria-label="Filter by source"
+          role="tablist"
+          aria-label="Transaction source"
         >
-          {(["all", "manual", "ibkr"] as const).map((sf) => (
+          {(
+            [
+              { key: "manual", label: "Manual" },
+              { key: "ibkr", label: "IBKR" },
+            ] as const
+          ).map(({ key, label }) => (
             <button
-              key={sf}
+              key={key}
               type="button"
+              role="tab"
               onClick={() => {
-                setSourceFilter(sf);
+                setTab(key);
                 pager.reset();
               }}
-              aria-pressed={sourceFilter === sf}
+              aria-selected={tab === key}
               className={`px-2.5 py-1.5 text-xs font-semibold uppercase ${
-                sourceFilter === sf
+                tab === key
                   ? "bg-zinc-600 text-white"
                   : "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-700"
               }`}
             >
-              {sf}
+              {label} · {key === "ibkr" ? counts.ibkr : counts.manual}
             </button>
           ))}
         </div>
@@ -1616,7 +1694,7 @@ function TransactionList() {
           sort={txnSort.sort}
           onSortChange={handleTxnSortChange}
           emptyText={
-            query || typeFilter !== "ALL" || sourceFilter !== "all"
+            query || typeFilter !== "ALL"
               ? "No transactions match that filter."
               : "Nothing logged yet."
           }
