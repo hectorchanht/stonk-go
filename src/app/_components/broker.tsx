@@ -78,6 +78,29 @@ function getCooldownUntil(): number | null {
   }
 }
 
+/** One-line history-backfill status for the IBKR card. */
+function backfillStatus(
+  bf: SyncResult["backfill"],
+): { text: string; tone: "ok" | "busy" | "warn" } | null {
+  if (!bf) return null;
+  if (bf.error) return { text: `Older history paused: ${bf.error}`, tone: "warn" };
+  const ymd = (s: string) => `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  if (bf.done && bf.oldestCovered)
+    return { text: `Full history synced — oldest ${ymd(bf.oldestCovered)} ✓`, tone: "ok" };
+  if (bf.windowFetched)
+    return {
+      text: `Fetching older history… now back to ${ymd(bf.oldestCovered ?? bf.windowFetched.fd)} · +${bf.tradesFetched} trades this sync`,
+      tone: "busy",
+    };
+  return { text: "Fetching older history…", tone: "busy" };
+}
+
+const BACKFILL_TONE = {
+  ok: "text-emerald-400/90",
+  busy: "text-sky-400/90",
+  warn: "text-amber-400/90",
+} as const;
+
 /** One-line summary of an IBKR trade-import result for the status line. */
 function importSummary(s: {
   imported: number;
@@ -1236,6 +1259,7 @@ function BrowserBrokerCard({
   }, [creds, session?.user, savedQ.data?.saved, showForm]);
 
   const data = sync.data ?? snapshot?.data ?? null;
+  const bfStatus = backfillStatus(data?.backfill ?? null);
 
   const lastSync = sync.data
     ? new Date()
@@ -1287,6 +1311,11 @@ function BrowserBrokerCard({
               </p>
               {importStatus && (
                 <p className="mt-1 text-xs text-sky-400/90">{importStatus}</p>
+              )}
+              {bfStatus && (
+                <p className={`mt-1 text-xs ${BACKFILL_TONE[bfStatus.tone]}`}>
+                  {bfStatus.text}
+                </p>
               )}
             </div>
             <GearMenu
@@ -1485,6 +1514,11 @@ function BrowserBrokerCard({
           </p>
           {importStatus && (
             <p className="mt-1 text-xs text-sky-400/90">{importStatus}</p>
+          )}
+          {bfStatus && (
+            <p className={`mt-1 text-xs ${BACKFILL_TONE[bfStatus.tone]}`}>
+              {bfStatus.text}
+            </p>
           )}
         </div>
         <GearMenu items={gearItems} />

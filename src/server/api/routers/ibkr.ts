@@ -9,6 +9,10 @@ import {
   type FlexResult,
 } from "~/server/ibkr";
 import {
+  runBackfillWindow,
+  type BackfillProgress,
+} from "~/server/ibkr-backfill";
+import {
   computeAnalytics,
   type CashFlowLike,
   type TradeLike,
@@ -40,7 +44,7 @@ async function analyticsWithNames(
 const SETUP_HINT =
   "IBKR is not connected. In Client Portal: Reports > Flex Queries (create an Activity query with the Open Positions, Trades and Cash Transactions sections, note its ID), then Settings > Reporting > Flex Web Service (generate a token). Set IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID as environment variables/secrets — or paste your token + query ID below; it stays in your browser and is only sent to IBKR when you sync.";
 
-function getFlexConfig(): { token: string; queryId: string } | null {
+export function getFlexConfig(): { token: string; queryId: string } | null {
   let token: unknown;
   let queryId: unknown;
   try {
@@ -236,6 +240,39 @@ export const ibkrRouter = createTRPCRouter({
       );
     }
 
+    // History backfill: IBKR caps every request at 365 days, so older
+    // history arrives one 365-day window per sync, walking backward.
+    // Best-effort — a window failure never fails the main sync.
+    // Only for logged-in users (the cursor is keyed by user id); the
+    // legacy env-mode path and anonymous transient syncs skip it.
+    let backfill: BackfillProgress | null = null;
+    const backfillUserId = ctx.session?.user?.id;
+    if (backfillUserId) {
+      try {
+        backfill = await runBackfillWindow(
+          ctx.db,
+          {
+            userId: backfillUserId,
+            token: cfg.token,
+            queryId: cfg.queryId,
+            positions: result.positions.map((p) => ({
+              symbol: p.symbol,
+              quantity: p.quantity,
+              costBasisPrice: p.costBasisPrice ?? null,
+            })),
+          },
+        );
+      } catch (e) {
+        backfill = {
+          done: false,
+          oldestCovered: null,
+          windowFetched: null,
+          tradesFetched: 0,
+          error: e instanceof Error ? e.message : "backfill failed",
+        };
+      }
+    }
+
     const now = new Date();
     const tradeLikes: TradeLike[] = result.trades.map((t, i) => ({
       id: `sync-${i}`,
@@ -274,6 +311,10 @@ export const ibkrRouter = createTRPCRouter({
       })),
       // Set when this sync merged trades server-side (non-transient mode).
       tradeImport,
+      // History-backfill progress (null for anonymous/legacy syncs).
+      // The window's trades are already merged server-side; the browser
+      // merge only handles the main window's trades.
+      backfill,
     };
   }),
 

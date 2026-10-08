@@ -106,6 +106,19 @@ export interface ExchangeCredentialRow {
   updatedAt: Date;
 }
 
+/** One row per user: how far back the IBKR history backfill has reached. */
+export interface BrokerBackfillRow {
+  id: string;
+  userId: string;
+  /** Oldest date (YYYYMMDD) already covered by fetched windows. */
+  oldestCovered: string;
+  /** Consecutive fetched windows with zero trades and zero cash flows. */
+  emptyStreak: number;
+  /** Set when the floor date or the empty cap was reached. */
+  doneAt: Date | null;
+  updatedAt: Date;
+}
+
 export interface ExchangeBalanceRow {
   id: string;
   userId: string;
@@ -285,6 +298,20 @@ export interface AppDb {
       };
     }): Promise<BrokerCredentialRow>;
     delete(args: { where: { userId: string } }): Promise<BrokerCredentialRow>;
+  };
+  brokerBackfill: {
+    findUnique(args: {
+      where: { userId: string };
+    }): Promise<BrokerBackfillRow | null>;
+    upsert(args: {
+      where: { userId: string };
+      update: {
+        oldestCovered: string;
+        emptyStreak: number;
+        doneAt?: Date | null;
+      };
+      create: { userId: string; oldestCovered: string; emptyStreak?: number };
+    }): Promise<BrokerBackfillRow>;
   };
   exchangeCredential: {
     findFirst(args: {
@@ -587,6 +614,17 @@ function mapBrokerCredential(r: RawRow): BrokerCredentialRow {
     encQueryId: r.encQueryId as string,
     iv: r.iv as string,
     createdAt: toDate(r.createdAt),
+    updatedAt: toDate(r.updatedAt),
+  };
+}
+
+function mapBrokerBackfill(r: RawRow): BrokerBackfillRow {
+  return {
+    id: r.id as string,
+    userId: r.userId as string,
+    oldestCovered: r.oldestCovered as string,
+    emptyStreak: r.emptyStreak as number,
+    doneAt: r.doneAt == null ? null : toDate(r.doneAt),
     updatedAt: toDate(r.updatedAt),
   };
 }
@@ -966,6 +1004,52 @@ export function createD1Db(d1: D1Database): AppDb {
         .bind(args.where.userId)
         .run();
       return mapBrokerCredential(row as unknown as RawRow);
+    },
+  };
+
+  const brokerBackfill: AppDb["brokerBackfill"] = {
+    findUnique: async (args) => {
+      const row = await d1
+        .prepare(`SELECT * FROM "BrokerBackfill" WHERE "userId" = ?`)
+        .bind(args.where.userId)
+        .first();
+      return row ? mapBrokerBackfill(row as unknown as RawRow) : null;
+    },
+
+    upsert: async (args) => {
+      const now = new Date().toISOString();
+      const doneAt =
+        args.update.doneAt === undefined
+          ? null
+          : args.update.doneAt === null
+            ? null
+            : args.update.doneAt.toISOString();
+      await d1
+        .prepare(
+          `INSERT INTO "BrokerBackfill"
+             ("id", "userId", "oldestCovered", "emptyStreak", "doneAt", "updatedAt")
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT("userId") DO UPDATE SET
+             "oldestCovered" = excluded."oldestCovered",
+             "emptyStreak" = excluded."emptyStreak",
+             "doneAt" = excluded."doneAt",
+             "updatedAt" = excluded."updatedAt"`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          args.create.userId,
+          args.update.oldestCovered,
+          args.update.emptyStreak,
+          doneAt,
+          now,
+        )
+        .run();
+      const row = await d1
+        .prepare(`SELECT * FROM "BrokerBackfill" WHERE "userId" = ?`)
+        .bind(args.where.userId)
+        .first();
+      if (!row) throw new Error(`upsert failed for broker backfill`);
+      return mapBrokerBackfill(row as unknown as RawRow);
     },
   };
 
@@ -1692,6 +1776,7 @@ export function createD1Db(d1: D1Database): AppDb {
     brokerCashFlow,
     brokerPosition,
     brokerCredential,
+    brokerBackfill,
     holding,
     transaction,
     portfolioSnapshot,

@@ -244,19 +244,14 @@ async function getStatement(token: string, referenceCode: string): Promise<strin
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * Fetch open positions from IBKR via Flex Web Service.
- * Polls while the report is generating (1019), up to ~50s.
- */
-export async function fetchFlexPositions(
+/** Poll GetStatement until the report is ready (1019 = still generating). */
+async function pollStatement(
   token: string,
-  queryId: string,
+  referenceCode: string,
   opts: { maxAttempts?: number; pollMs?: number } = {},
 ): Promise<FlexResult> {
   const maxAttempts = opts.maxAttempts ?? 10;
   const pollMs = opts.pollMs ?? 5000;
-
-  const referenceCode = await sendRequest(token, queryId);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const body = await getStatement(token, referenceCode);
@@ -276,4 +271,52 @@ export async function fetchFlexPositions(
     return parseFlexPositions(body);
   }
   throw new FlexError("IBKR took too long to generate the report — try again in a minute.", "1019");
+}
+
+/**
+ * Fetch open positions from IBKR via Flex Web Service.
+ * Polls while the report is generating (1019), up to ~50s.
+ */
+export async function fetchFlexPositions(
+  token: string,
+  queryId: string,
+  opts: { maxAttempts?: number; pollMs?: number } = {},
+): Promise<FlexResult> {
+  const referenceCode = await sendRequest(token, queryId);
+  return pollStatement(token, referenceCode, opts);
+}
+
+/**
+ * Fetch one explicit date window via the fd/td overrides.
+ * IBKR caps the override range at 365 days — wider ranges get 1018, so
+ * callers must chunk. Used by the history backfill, one window per sync.
+ */
+export async function fetchFlexWindow(
+  token: string,
+  queryId: string,
+  fd: string,
+  td: string,
+  opts: { maxAttempts?: number; pollMs?: number } = {},
+): Promise<FlexResult> {
+  if (!/^\d{8}$/.test(fd) || !/^\d{8}$/.test(td) || td < fd) {
+    throw new Error(`fetchFlexWindow: invalid window fd=${fd} td=${td}`);
+  }
+  // yyyymmdd strings compare lexicographically; cap the span at 365 days.
+  const days =
+    (Date.UTC(+td.slice(0, 4), +td.slice(4, 6) - 1, +td.slice(6, 8)) -
+      Date.UTC(+fd.slice(0, 4), +fd.slice(4, 6) - 1, +fd.slice(6, 8))) /
+    86400000;
+  if (days > 365) {
+    throw new Error(`fetchFlexWindow: window ${fd}..${td} exceeds IBKR's 365-day override cap`);
+  }
+  const url =
+    `${FLEX_BASE}/SendRequest?t=${encodeURIComponent(token)}` +
+    `&q=${encodeURIComponent(queryId)}&v=3&fd=${fd}&td=${td}`;
+  const res = await flexFetch(url);
+  if (!res.ok) throw new FlexError(`IBKR SendRequest HTTP ${res.status}`);
+  const meta = parseResponseMeta(await res.text());
+  if (meta.status !== "Success" || !meta.referenceCode) {
+    throw new FlexError(flexErrorMessage(meta.code ?? "?", meta.message ?? ""), meta.code);
+  }
+  return pollStatement(token, meta.referenceCode, opts);
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchFlexPositions } from "./ibkr";
+import { fetchFlexPositions, fetchFlexWindow } from "./ibkr";
 
 const okSend = (ref: string) =>
   `<FlexStatementResponse><Status>Success</Status><ReferenceCode>${ref}</ReferenceCode></FlexStatementResponse>`;
@@ -48,5 +48,43 @@ describe("fetchFlexPositions request shape", () => {
     // Exactly one SendRequest: no retry burning a 2nd call.
     const sends = urls.filter((u) => u.includes("/SendRequest?"));
     expect(sends).toHaveLength(1);
+  });
+});
+
+describe("fetchFlexWindow", () => {
+  it("sends fd/td for a <=365-day window", async () => {
+    const urls = mockFetch((url) =>
+      url.includes("/SendRequest?") ? okSend("REFW") : emptyStatement,
+    );
+    await fetchFlexWindow("tok", "qid", "20240101", "20241231", {
+      pollMs: 1,
+      maxAttempts: 1,
+    });
+    const sends = urls.filter((u) => u.includes("/SendRequest?"));
+    expect(sends).toHaveLength(1);
+    expect(sends[0]).toContain("fd=20240101");
+    expect(sends[0]).toContain("td=20241231");
+  });
+
+  it("refuses windows wider than 365 days without hitting the network", async () => {
+    const urls = mockFetch(() => okSend("REFX"));
+    await expect(
+      fetchFlexWindow("tok", "qid", "20100101", "20261008", {
+        pollMs: 1,
+        maxAttempts: 1,
+      }),
+    ).rejects.toThrow("365-day");
+    expect(urls).toHaveLength(0);
+  });
+
+  it("rejects malformed window dates", async () => {
+    const urls = mockFetch(() => okSend("REFX"));
+    await expect(
+      fetchFlexWindow("tok", "qid", "20241231", "20240101", {
+        pollMs: 1,
+        maxAttempts: 1,
+      }),
+    ).rejects.toThrow("invalid window");
+    expect(urls).toHaveLength(0);
   });
 });
