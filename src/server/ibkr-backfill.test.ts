@@ -50,9 +50,9 @@ function fakeDb(state: {
         updatedAt: new Date(),
       }
     : null;
+  const histRows: unknown[] = [];
   const db = {
-    brokerBackfill: {
-      findUnique: vi.fn(async () => row),
+    brokerBackfill: {      findUnique: vi.fn(async () => row),
       upsert: vi.fn(async (args: never) => {
         const a = args as {
           where: { userId: string };
@@ -68,6 +68,17 @@ function fakeDb(state: {
           updatedAt: new Date(),
         };
         return row;
+      }),
+    },
+    brokerCashFlowHistory: {
+      findMany: vi.fn(async () => []),
+      deleteWindow: vi.fn(async () => {
+        histRows.length = 0;
+        return { count: 0 };
+      }),
+      createMany: vi.fn(async (args: { data: unknown[] }) => {
+        histRows.push(...args.data);
+        return { count: args.data.length };
       }),
     },
   } as unknown as AppDb;
@@ -190,6 +201,41 @@ describe("runBackfillWindow", () => {
     );
     expect(progress.done).toBe(true);
     expect(fetchWindow).not.toHaveBeenCalled();
+  });
+
+  it("stores the window's cash flows to history (delete-then-insert)", async () => {
+    const { db } = fakeDb({ oldestCovered: "20251008" });
+    const cashFlow = {
+      accountId: "a1",
+      symbol: "AAPL",
+      description: "Dividend",
+      currency: "USD",
+      dateTime: "20250615",
+      amount: 12.5,
+      type: "Dividends",
+    };
+    const fetchWindow = vi.fn(async () => ({
+      positions: [],
+      trades: [],
+      cashFlows: [cashFlow],
+      generatedAt: null,
+    }));
+    const hist = db.brokerCashFlowHistory;
+    const progress = await runBackfillWindow(
+      db,
+      { userId: "u1", token: "t", queryId: "q", positions: [] },
+      {
+        fetchWindow: fetchWindow as never,
+        mergeTrades: vi.fn(async () => ({}) as never),
+      },
+    );
+    expect(hist.deleteWindow).toHaveBeenCalledWith("u1", "20241008", "20251008");
+    expect(hist.createMany).toHaveBeenCalledTimes(1);
+    const data = (hist.createMany as ReturnType<typeof vi.fn>).mock.calls[0]![0].data;
+    expect(data).toHaveLength(1);
+    expect(data[0]!).toMatchObject({ userId: "u1", amount: 12.5, type: "Dividends" });
+    expect(progress.cashFlowsStored).toBe(1);
+    expect(progress.done).toBe(false); // non-empty: streak reset
   });
 
   it("reports a fetch failure without throwing or advancing the cursor", async () => {

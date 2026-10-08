@@ -120,6 +120,25 @@ model BrokerCashFlow {
     @@index([type])
 }
 
+// Older-window cash flows collected by the history backfill. The main sync
+// wipes BrokerCashFlow on every run, so backfilled flows live here instead
+// (delete-then-insert per 365-day window keeps it idempotent).
+model BrokerCashFlowHistory {
+    id          String   @id @default(cuid())
+    userId      String
+    accountId   String
+    symbol      String?
+    description String?
+    currency    String
+    dateTime    String
+    amount      Float
+    type        String
+    syncedAt    DateTime @default(now())
+    user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId, dateTime])
+}
+
 // Necessary for NextAuth
 model Account {
     id                       String  @id @default(cuid())
@@ -158,6 +177,7 @@ model User {
     sessions      Session[]
     brokerCredential BrokerCredential?
     brokerBackfill   BrokerBackfill?
+    brokerCashFlowHistory BrokerCashFlowHistory[]
     exchangeCredentials ExchangeCredential[]
     exchangeBalances ExchangeBalance[]
     exchangeSyncs ExchangeSync[]

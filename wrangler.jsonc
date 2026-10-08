@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "holdr",
-  "main": ".open-next/worker.js",
+  "main": "./custom-worker.ts",
   "compatibility_date": "2025-06-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
@@ -26,18 +26,10 @@
   // variables that aren't declared in this file (secrets survive).
   "vars": {
     "NEXTAUTH_URL": "https://holdr.lol",
-    "NEXT_PUBLIC_VAPID_PUBLIC_KEY": "BIHiUEt9NafaXBHq3mHrYrUSg-0QTbHve5EraPilxUx1tTBoLks8Ud4j-23PNIY1YsuftoNqOIDs2PQ"
+    "NEXT_PUBLIC_VAPID_PUBLIC_KEY": "REPLACE_WITH_VAPID_PUBLIC_KEY"
   },
   // Cron trigger for background push notification checks (every 15 min).
   "triggers": {
     "crons": ["*/15 * * * *"]
   }
-,
-  // Custom domain for the hectorchan.com subdomain (keeper domain; .lol may expire).
-  // `wrangler deploy` creates the Custom Domain + manages DNS on deploy.
-  // Both custom domains are config-managed: wrangler deploy keeps exactly these.
-  "routes": [
-    { "pattern": "holdr.hectorchan.com", "custom_domain": true },
-    { "pattern": "holdr.lol", "custom_domain": true }
-  ]
 }

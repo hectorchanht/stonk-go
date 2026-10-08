@@ -84,6 +84,22 @@ export interface BrokerCashFlowRow {
   syncedAt: Date;
 }
 
+/** Backfilled (older-window) cash flows; the main sync wipes BrokerCashFlow. */
+export interface BrokerCashFlowHistoryRow extends BrokerCashFlowRow {
+  userId: string;
+}
+
+export interface BrokerCashFlowHistoryData {
+  userId: string;
+  accountId: string;
+  symbol?: string | null;
+  description?: string | null;
+  currency: string;
+  dateTime: string;
+  amount: number;
+  type: string;
+}
+
 export interface BrokerCredentialRow {
   id: string;
   userId: string;
@@ -260,6 +276,26 @@ export interface AppDb {
       take?: number;
     }): Promise<BrokerCashFlowRow[]>;
   } & BulkInsertable<BrokerCashFlowData>;
+  brokerCashFlowHistory: {
+    findMany(args: {
+      where: { userId: string };
+      orderBy: Array<{ dateTime?: SortDir }>;
+    }): Promise<BrokerCashFlowHistoryRow[]>;
+    /**
+     * Idempotent window replace: deletes this user's rows whose dateTime
+     * falls in [fd, td] (YYYYMMDD, compared on the date prefix).
+     * Optional because the local-dev Prisma client does not implement it —
+     * cash-flow backfill requires the D1 binding.
+     */
+    deleteWindow?(
+      userId: string,
+      fd: string,
+      td: string,
+    ): Promise<{ count: number }>;
+    createMany(args: {
+      data: BrokerCashFlowHistoryData[];
+    }): Promise<{ count: number }>;
+  };
   brokerPosition: {
     findMany(args: {
       orderBy: Array<{ symbol?: SortDir; accountId?: SortDir }>;
@@ -606,6 +642,10 @@ function mapBrokerCashFlow(r: RawRow): BrokerCashFlowRow {
   };
 }
 
+function mapBrokerCashFlowHistory(r: RawRow): BrokerCashFlowHistoryRow {
+  return { ...mapBrokerCashFlow(r), userId: r.userId as string };
+}
+
 function mapBrokerCredential(r: RawRow): BrokerCredentialRow {
   return {
     id: r.id as string,
@@ -878,6 +918,58 @@ export function createD1Db(d1: D1Database): AppDb {
           )
           .bind(
             crypto.randomUUID(),
+            c.accountId,
+            c.symbol ?? null,
+            c.description ?? null,
+            c.currency,
+            c.dateTime,
+            c.amount,
+            c.type,
+            now,
+          )
+          .run();
+        count++;
+      }
+      return { count };
+    },
+  };
+
+  const brokerCashFlowHistory: AppDb["brokerCashFlowHistory"] = {
+    findMany: async (args) => {
+      const { results } = await d1
+        .prepare(
+          `SELECT * FROM "BrokerCashFlowHistory" WHERE "userId" = ?${orderClause(args.orderBy)}`,
+        )
+        .bind(args.where.userId)
+        .all();
+      return (results as unknown as RawRow[]).map(mapBrokerCashFlowHistory);
+    },
+    deleteWindow: async (userId, fd, td) => {
+      const r = await d1
+        .prepare(
+          `DELETE FROM "BrokerCashFlowHistory"
+           WHERE "userId" = ?
+             AND substr("dateTime", 1, 8) >= ?
+             AND substr("dateTime", 1, 8) <= ?`,
+        )
+        .bind(userId, fd, td)
+        .run();
+      return { count: r.meta.changes ?? 0 };
+    },
+    createMany: async (args) => {
+      const now = new Date().toISOString();
+      let count = 0;
+      for (const c of args.data) {
+        await d1
+          .prepare(
+            `INSERT INTO "BrokerCashFlowHistory"
+               ("id", "userId", "accountId", "symbol", "description",
+                "currency", "dateTime", "amount", "type", "syncedAt")
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            c.userId,
             c.accountId,
             c.symbol ?? null,
             c.description ?? null,
@@ -1774,6 +1866,7 @@ export function createD1Db(d1: D1Database): AppDb {
   return {
     brokerTrade,
     brokerCashFlow,
+    brokerCashFlowHistory,
     brokerPosition,
     brokerCredential,
     brokerBackfill,

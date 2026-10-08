@@ -32,6 +32,8 @@ export interface BackfillProgress {
   /** The window fetched this run, if any. */
   windowFetched: { fd: string; td: string } | null;
   tradesFetched: number;
+  /** Cash-flow rows stored to history this run. */
+  cashFlowsStored: number;
   /** Non-fatal: the main sync succeeded but the window fetch failed. */
   error?: string;
 }
@@ -98,6 +100,7 @@ export async function runBackfillWindow(
       oldestCovered: state.oldestCovered,
       windowFetched: null,
       tradesFetched: 0,
+      cashFlowsStored: 0,
     };
   }
 
@@ -115,7 +118,7 @@ export async function runBackfillWindow(
       },
       create: { userId: opts.userId, oldestCovered },
     });
-    return { done: true, oldestCovered, windowFetched: null, tradesFetched: 0 };
+    return { done: true, oldestCovered, windowFetched: null, tradesFetched: 0, cashFlowsStored: 0 };
   }
 
   let trades: FlexTrade[];
@@ -136,6 +139,7 @@ export async function runBackfillWindow(
       oldestCovered: state?.oldestCovered ?? null,
       windowFetched: null,
       tradesFetched: 0,
+      cashFlowsStored: 0,
       error: message,
     };
   }
@@ -148,6 +152,31 @@ export async function runBackfillWindow(
     // Idempotent via externalId — re-fetching a window never duplicates.
     // Positions are period-independent, so the current snapshot anchors.
     await mergeTrades(db, trades, opts.positions);
+  }
+
+  // Cash flows (dividends, interest, withholding tax…) go to the history
+  // table — the main sync wipes BrokerCashFlow on every run. Delete-then-
+  // insert per window keeps re-runs idempotent.
+  let cashFlowsStored = 0;
+  if (cashFlows.length > 0) {
+    const hist = db.brokerCashFlowHistory;
+    if (!hist.deleteWindow) {
+      throw new Error("cash-flow backfill requires the D1 binding");
+    }
+    await hist.deleteWindow(opts.userId, window.fd, window.td);
+    const stored = await hist.createMany({
+      data: cashFlows.map((c) => ({
+        userId: opts.userId,
+        accountId: c.accountId,
+        symbol: c.symbol,
+        description: c.description,
+        currency: c.currency,
+        dateTime: c.dateTime,
+        amount: c.amount,
+        type: c.type,
+      })),
+    });
+    cashFlowsStored = stored.count;
   }
 
   await db.brokerBackfill.upsert({
@@ -165,5 +194,6 @@ export async function runBackfillWindow(
     oldestCovered: window.fd,
     windowFetched: window,
     tradesFetched: trades.length,
+    cashFlowsStored,
   };
 }

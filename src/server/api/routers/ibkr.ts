@@ -268,6 +268,7 @@ export const ibkrRouter = createTRPCRouter({
           oldestCovered: null,
           windowFetched: null,
           tradesFetched: 0,
+          cashFlowsStored: 0,
           error: e instanceof Error ? e.message : "backfill failed",
         };
       }
@@ -293,6 +294,25 @@ export const ibkrRouter = createTRPCRouter({
       amount: c.amount,
       currency: c.currency,
     }));
+    // Fold in backfilled older-window cash flows so dividend/income
+    // analytics cover the full history, not just the latest 365 days.
+    if (backfillUserId) {
+      const history = await ctx.db.brokerCashFlowHistory.findMany({
+        where: { userId: backfillUserId },
+        orderBy: [{ dateTime: "desc" }],
+      });
+      for (let i = 0; i < history.length; i++) {
+        const c = history[i]!;
+        cashLikes.push({
+          id: `hist-${c.id}`,
+          type: c.type,
+          symbol: c.symbol,
+          dateTime: c.dateTime,
+          amount: c.amount,
+          currency: c.currency,
+        });
+      }
+    }
 
     return {
       persisted: !transient,

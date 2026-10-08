@@ -87,11 +87,14 @@ function backfillStatus(
   const ymd = (s: string) => `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
   if (bf.done && bf.oldestCovered)
     return { text: `Full history synced — oldest ${ymd(bf.oldestCovered)} ✓`, tone: "ok" };
-  if (bf.windowFetched)
+  if (bf.windowFetched) {
+    const bits = [`+${bf.tradesFetched} trades`];
+    if (bf.cashFlowsStored > 0) bits.push(`+${bf.cashFlowsStored} cash flows`);
     return {
-      text: `Fetching older history… now back to ${ymd(bf.oldestCovered ?? bf.windowFetched.fd)} · +${bf.tradesFetched} trades this sync`,
+      text: `Fetching older history… now back to ${ymd(bf.oldestCovered ?? bf.windowFetched.fd)} · ${bits.join(" · ")} this sync`,
       tone: "busy",
     };
+  }
   return { text: "Fetching older history…", tone: "busy" };
 }
 
@@ -100,6 +103,32 @@ const BACKFILL_TONE = {
   busy: "text-sky-400/90",
   warn: "text-amber-400/90",
 } as const;
+
+/**
+ * Visual backfill progress: a pulsing range bar from the oldest covered
+ * year to the current year. Determinate percentages would be dishonest
+ * (the total window count is unknown until the empty-streak/floor stop),
+ * so the bar shows the covered span growing leftward each sync.
+ */
+function BackfillBar({ bf }: { bf: NonNullable<SyncResult["backfill"]> }) {
+  if (bf.done || bf.error) return null;
+  const oldest = bf.oldestCovered ?? bf.windowFetched?.fd ?? null;
+  const fromYear = oldest ? oldest.slice(0, 4) : null;
+  const toYear = String(new Date().getFullYear());
+  return (
+    <div className="mt-1.5" aria-hidden>
+      <div className="h-1 overflow-hidden rounded-full bg-zinc-800">
+        <div className="h-full w-full animate-pulse rounded-full bg-gradient-to-r from-sky-500/50 to-sky-400/90" />
+      </div>
+      {fromYear && (
+        <div className="mt-0.5 flex justify-between text-[10px] tabular-nums text-zinc-500">
+          <span>{fromYear}</span>
+          <span>{toYear}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** One-line summary of an IBKR trade-import result for the status line. */
 function importSummary(s: {
@@ -1298,7 +1327,8 @@ function BrowserBrokerCard({
   }, [creds, session?.user, savedQ.data?.saved, showForm]);
 
   const data = sync.data ?? snapshot?.data ?? null;
-  const bfStatus = backfillStatus(data?.backfill ?? null);
+  const bf = data?.backfill ?? null;
+  const bfStatus = backfillStatus(bf);
 
   const lastSync = sync.data
     ? new Date()
@@ -1351,10 +1381,13 @@ function BrowserBrokerCard({
               {importStatus && (
                 <p className="mt-1 text-xs text-sky-400/90">{importStatus}</p>
               )}
-              {bfStatus && (
-                <p className={`mt-1 text-xs ${BACKFILL_TONE[bfStatus.tone]}`}>
-                  {bfStatus.text}
-                </p>
+              {bf && bfStatus && (
+                <>
+                  <p className={`mt-1 text-xs ${BACKFILL_TONE[bfStatus.tone]}`}>
+                    {bfStatus.text}
+                  </p>
+                  <BackfillBar bf={bf} />
+                </>
               )}
             </div>
             <GearMenu
@@ -1560,10 +1593,13 @@ function BrowserBrokerCard({
           {importStatus && (
             <p className="mt-1 text-xs text-sky-400/90">{importStatus}</p>
           )}
-          {bfStatus && (
-            <p className={`mt-1 text-xs ${BACKFILL_TONE[bfStatus.tone]}`}>
-              {bfStatus.text}
-            </p>
+          {bf && bfStatus && (
+            <>
+              <p className={`mt-1 text-xs ${BACKFILL_TONE[bfStatus.tone]}`}>
+                {bfStatus.text}
+              </p>
+              <BackfillBar bf={bf} />
+            </>
           )}
         </div>
         <GearMenu items={gearItems} />
