@@ -243,7 +243,10 @@ function yyyymmdd(d: Date): string {
  * SendRequest with an explicit wide date range, so trades/cash flows come
  * back for the full available history instead of the query's saved period
  * (capped at 365 days in the portal). Falls back to the plain request if
- * IBKR rejects the overrides — a 365-day sync beats a failed sync.
+ * IBKR rejects the overrides — a 365-day sync beats a failed sync. Errors
+ * that are clearly not about the date overrides (bad/expired/blocked token,
+ * rate limit) are rethrown immediately: retrying those with a plain request
+ * would just burn another failed call and deepen a rate limit.
  */
 async function sendRequestWideRange(
   token: string,
@@ -266,9 +269,14 @@ async function sendRequestWideRange(
       meta.code,
     );
   } catch (e) {
-    // Genuine network/HTTP failures stay fatal; only a Flex-level rejection
-    // of the date overrides falls back to the saved query period.
+    // Genuine network/HTTP failures stay fatal.
     if (!(e instanceof FlexError)) throw e;
+    // Auth problems and rate limits are not about the date overrides —
+    // falling back would just burn another failed/rate-limited call.
+    if (e.code && ["1012", "1014", "1015", "1018", "1025"].includes(e.code))
+      throw e;
+    // Otherwise assume IBKR rejected the fd/td overrides and fall back to
+    // the saved query period — a 365-day sync beats a failed sync.
     return sendRequest(token, queryId);
   }
 }

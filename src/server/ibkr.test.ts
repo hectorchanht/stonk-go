@@ -57,4 +57,18 @@ describe("fetchFlexPositions date range", () => {
     expect(sends[0]).toContain("fd=");
     expect(sends[1]).not.toContain("fd=");
   });
+
+  it("does NOT fall back on rate limit (1018) — surfaces immediately", async () => {
+    const urls = mockFetch((url) =>
+      url.includes("/SendRequest?")
+        ? errSend("1018", "Request rate limit exceeded")
+        : emptyStatement,
+    );
+    await expect(
+      fetchFlexPositions("tok", "qid", { pollMs: 1, maxAttempts: 1 }),
+    ).rejects.toThrow("1018");
+    // Exactly one SendRequest: no plain-request retry burning a 2nd call.
+    const sends = urls.filter((u) => u.includes("/SendRequest?"));
+    expect(sends).toHaveLength(1);
+  });
 });
