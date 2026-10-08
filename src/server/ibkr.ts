@@ -11,11 +11,12 @@
  *   2. GetStatement?t={token}&q={referenceCode}&v=3 -> the report XML
  *      (the report generates async; error 1019 means "try again shortly")
  *
- * A query's saved period caps at 365 days in the portal, so SendRequest
- * carries fd/td (yyyymmdd) overrides to pull the full available history —
- * positions are period-independent, but trades/cash flows only include rows
- * inside the window. The trade merge is idempotent, so a wide re-sync is
- * safe.
+ * A query's saved period caps at 365 days in the portal, and IBKR's own
+ * docs cap the fd/td (yyyymmdd) SendRequest overrides at 365 days too —
+ * there is no way to pull more than a year of trades per request, so the
+ * sync uses the query's saved period as-is. (A 2010→today override was
+ * tried 2026-10-06: IBKR answers every such request with 1018 rate-limit,
+ * so it was reverted.) The trade merge is idempotent, so re-syncs are safe.
  *
  * Positions are end-of-day (activity data refreshes once daily at close).
  * This is reporting only — it cannot trade.
@@ -234,54 +235,6 @@ async function sendRequest(token: string, queryId: string): Promise<string> {
   throw new FlexError(flexErrorMessage(meta.code ?? "?", meta.message ?? ""), meta.code);
 }
 
-/** yyyymmdd in local time, for the fd/td SendRequest overrides. */
-function yyyymmdd(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
-}
-
-/**
- * SendRequest with an explicit wide date range, so trades/cash flows come
- * back for the full available history instead of the query's saved period
- * (capped at 365 days in the portal). Falls back to the plain request if
- * IBKR rejects the overrides — a 365-day sync beats a failed sync. Errors
- * that are clearly not about the date overrides (bad/expired/blocked token,
- * rate limit) are rethrown immediately: retrying those with a plain request
- * would just burn another failed call and deepen a rate limit.
- */
-async function sendRequestWideRange(
-  token: string,
-  queryId: string,
-): Promise<string> {
-  const now = new Date();
-  const fd = "20100101";
-  const td = yyyymmdd(now);
-  const url =
-    `${FLEX_BASE}/SendRequest?t=${encodeURIComponent(token)}` +
-    `&q=${encodeURIComponent(queryId)}&v=3&fd=${fd}&td=${td}`;
-  try {
-    const res = await flexFetch(url);
-    if (!res.ok) throw new FlexError(`IBKR SendRequest HTTP ${res.status}`);
-    const meta = parseResponseMeta(await res.text());
-    if (meta.status === "Success" && meta.referenceCode)
-      return meta.referenceCode;
-    throw new FlexError(
-      flexErrorMessage(meta.code ?? "?", meta.message ?? ""),
-      meta.code,
-    );
-  } catch (e) {
-    // Genuine network/HTTP failures stay fatal.
-    if (!(e instanceof FlexError)) throw e;
-    // Auth problems and rate limits are not about the date overrides —
-    // falling back would just burn another failed/rate-limited call.
-    if (e.code && ["1012", "1014", "1015", "1018", "1025"].includes(e.code))
-      throw e;
-    // Otherwise assume IBKR rejected the fd/td overrides and fall back to
-    // the saved query period — a 365-day sync beats a failed sync.
-    return sendRequest(token, queryId);
-  }
-}
-
 async function getStatement(token: string, referenceCode: string): Promise<string> {
   const url = `${FLEX_BASE}/GetStatement?t=${encodeURIComponent(token)}&q=${encodeURIComponent(referenceCode)}&v=3`;
   const res = await flexFetch(url);
@@ -303,7 +256,7 @@ export async function fetchFlexPositions(
   const maxAttempts = opts.maxAttempts ?? 10;
   const pollMs = opts.pollMs ?? 5000;
 
-  const referenceCode = await sendRequestWideRange(token, queryId);
+  const referenceCode = await sendRequest(token, queryId);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const body = await getStatement(token, referenceCode);

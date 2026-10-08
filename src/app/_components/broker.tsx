@@ -999,13 +999,14 @@ function BrowserBrokerCard({
     return () => clearInterval(t);
   }, [cooldownUntil]);
 
-  const coolingDown = cooldownUntil != null && Date.now() < cooldownUntil;
-  const cooldownLabel = coolingDown
-    ? new Date(cooldownUntil!).toLocaleString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-      })
-    : null;
+  const cooldownLabel =
+    cooldownUntil != null && Date.now() < cooldownUntil
+      ? new Date(cooldownUntil).toLocaleString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+        })
+      : null;
+  const coolingDown = cooldownLabel != null;
 
   const { data: session } = useSession();
   const savedQ = api.ibkr.savedCredentials.useQuery(undefined, {
