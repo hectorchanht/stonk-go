@@ -16,7 +16,8 @@ const PREF_KEYS = new Set([
   "holdr.locale",
   "holdr.ai-locale",
   "holdr.theme",
-  "holdr.dashboard-layout.v1",
+  "holdr.dashboard-layout.v2",
+  "holdr.dashboard-layout.v1", // legacy: restored by the v2 migration path
   "holdr.holdings.columns",
   "holdr.pnl.period",
   "holdr.alert-threshold",
