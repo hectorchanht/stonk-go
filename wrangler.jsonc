@@ -32,4 +32,9 @@
   "triggers": {
     "crons": ["*/15 * * * *"]
   }
+,
+  // Custom domain for the hectorchan.com subdomain (keeper domain; .lol may expire).
+  // `wrangler deploy` creates the Custom Domain + manages DNS on deploy.
+  // holdr.lol stays dashboard-managed and untouched.
+  "routes": [{ "pattern": "holdr.hectorchan.com", "custom_domain": true }]
 }
