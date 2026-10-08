@@ -47,6 +47,9 @@ export const env = createEnv({
     // Encrypts per-user IBKR credentials at rest (AES-GCM-256).
     // Required only when logged-in users save IBKR credentials.
     CREDENTIALS_KEY: z.string().optional(),
+    // Optional: Sentry error tracking DSN (https://sentry.io).
+    // Set via `wrangler secret put SENTRY_DSN`. Without it, Sentry init is skipped.
+    SENTRY_DSN: z.string().optional(),
   },
 
   /**
