@@ -61,10 +61,11 @@ const SNAPSHOT_KEY = "holdr.ibkr.snapshot";
 /** Auto-sync on page load when the cached snapshot is older than this. */
 const AUTO_SYNC_AFTER_MS = 1 * 3600 * 1000;
 /**
- * After IBKR answers 1018 (rate limited), block every sync path for this
- * long. IBKR throttles repeated calls to the same query and repeat
- * violations can lock the token — the app must not let the user (or its
- * own auto-sync) hammer through a throttle.
+ * After IBKR answers 1018 (rate limited) or 403/429 (blocked/throttled),
+ * block every sync path for this long. IBKR throttles repeated calls to
+ * the same query and repeat violations can lock the token or escalate to
+ * an IP block — the app must not let the user (or its own auto-sync)
+ * hammer through a throttle.
  */
 const COOLDOWN_MS = 10 * 60 * 1000;
 const COOLDOWN_KEY = "holdr.ibkr.cooldownUntil";
@@ -1141,14 +1142,20 @@ function BrowserBrokerCard({
         }, 2000);
         return;
       }
+      const blocked = /HTTP 403|HTTP 429/.test(e.message);
       setError(
         interrupted
           ? "The sync was interrupted (e.g. switching apps mid-sync) — tap Sync now to retry."
-          : e.message,
+          : blocked
+            ? "IBKR is temporarily blocking syncs — cooling down 10 minutes, then try again. If it persists, regenerate the Flex token in Client Portal."
+            : e.message,
       );
-      // IBKR 1018 = rate limited: block every sync path for 10 minutes so
-      // neither the user nor auto-sync can hammer through the throttle.
-      if (e.message.includes("1018")) {
+      // IBKR 1018 = rate limited, 403/429 = blocked/throttled: block every
+      // sync path for 10 minutes so neither the user nor auto-sync can
+      // hammer through it. Repeat violations can lock the token or extend
+      // an IP block (2026-10-09: 1018s escalated to a 403 after repeated
+      // syncs kept firing through the throttle).
+      if (/1018|1019|HTTP 403|HTTP 429|rate.?limited|throttled/i.test(e.message)) {
         const until = Date.now() + COOLDOWN_MS;
         setCooldownUntil(until);
         try {
