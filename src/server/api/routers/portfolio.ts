@@ -1225,24 +1225,15 @@ export const portfolioRouter = createTRPCRouter({
           await ctx.db.holding.deleteMany({ where: { symbol: h.symbol } });
         }
       } else {
-        // Recompute EVERY holding from the trades that survive — not just
-        // the touched symbols. Manual holdings with no backing trades at
-        // all (orphaned rows) are dropped by recomputeHolding; holdings
-        // backed by IBKR-imported trades are rebuilt and kept.
+        // Delete ALL holdings in the manual section — the user asked to
+        // clear them and rebuild from IBKR full history afterwards.
+        // (Recomputing from the current incomplete log would just resurrect
+        // the same stale rows.)
         const holdings = await ctx.db.holding.findMany({
           orderBy: { symbol: "asc" },
         });
         for (const h of holdings) {
-          try {
-            await recomputeHolding(ctx.db, h.symbol);
-          } catch {
-            // Remaining trades can't form a valid position; drop the stale
-            // row instead of showing a number we know is wrong.
-            await ctx.db.holding
-              .deleteMany({ where: { symbol: h.symbol } })
-              .catch(() => undefined);
-            failed.push(h.symbol);
-          }
+          await ctx.db.holding.deleteMany({ where: { symbol: h.symbol } });
         }
       }
       return { deletedTrades: doomed.length, failed };
