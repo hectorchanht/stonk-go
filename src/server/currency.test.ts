@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalSymbol,
   inferCurrency,
+  isForexSymbol,
   isHkCode,
   toUsd,
 } from "~/server/currency";
@@ -34,6 +35,22 @@ describe("inferCurrency", () => {
     expect(inferCurrency("AAPL")).toBe("USD");
     expect(inferCurrency("NVTS")).toBe("USD");
     expect(inferCurrency("")).toBe("USD");
+  });
+});
+
+describe("isForexSymbol", () => {
+  it("matches IBKR currency-conversion pseudo-symbols", () => {
+    expect(isForexSymbol("USD.HKD")).toBe(true);
+    expect(isForexSymbol("EUR.USD")).toBe(true);
+    expect(isForexSymbol("usd.hkd")).toBe(true);
+    expect(isForexSymbol(" USD.HKD ")).toBe(true);
+  });
+  it("rejects real tickers", () => {
+    expect(isForexSymbol("AAPL")).toBe(false);
+    expect(isForexSymbol("BRK.B")).toBe(false); // 1-letter suffix
+    expect(isForexSymbol("0700.HK")).toBe(false); // numeric prefix
+    expect(isForexSymbol("700")).toBe(false);
+    expect(isForexSymbol("")).toBe(false);
   });
 });
 

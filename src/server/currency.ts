@@ -35,6 +35,19 @@ export function canonicalSymbol(symbol: string): string {
   return t.replace(/\s+/g, "");
 }
 
+/**
+ * IBKR reports forex conversions as pseudo-symbols like "USD.HKD" — a
+ * currency conversion, not a holding. Valued as a position (qty × "cost"),
+ * one of these reads as hundreds of thousands of dollars of phantom
+ * holdings (2026-10-09: USD.HKD inflated the true equity curve by US$432k,
+ * printing a −HK$3.2M 1D P/L on a HK$766k portfolio). Matches any
+ * XXX.YYY currency-pair shape; real tickers never look like this
+ * ("BRK.B" has a 1-letter suffix, "0700.HK" a numeric prefix).
+ */
+export function isForexSymbol(symbol: string): boolean {
+  return /^[A-Z]{3}\.[A-Z]{3}$/.test(symbol.trim().toUpperCase());
+}
+
 /** Convert an amount in `currency` to USD. Falls back to as-is. */
 export function toUsd(
   amount: number,

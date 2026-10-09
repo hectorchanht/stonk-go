@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 
 import type { AppDb } from "~/server/db";
+import { isForexSymbol } from "~/server/currency";
 
 /**
  * Merging IBKR-synced trades into the manual transaction log.
@@ -529,7 +530,8 @@ export async function importIbkrTrades(
  * Honesty rules:
  * - Symbols WITH Transaction rows use the log ONLY (mixing raw Flex rows
  *   would double-count across stock splits).
- * - "USD.HKD" is a currency conversion, not a holding — excluded.
+ * - Forex conversions ("USD.HKD" etc.) are currency moves, not holdings —
+ *   excluded from BOTH the Transaction legs and the raw Flex rows.
  * - Rows without a usable price or date are skipped (counted).
  * - Opening quantities can never go negative: when (position − flexNet)
  *   isn't a sane positive number (e.g. a split makes flexNet dwarf the
@@ -596,7 +598,12 @@ export function mergeCurveLegs(
     noCostBasis: 0,
     unusableSkipped: 0,
   };
-  const legs: CurveLeg[] = txns.map((t) => ({
+  // Forex conversions (e.g. "USD.HKD") are currency moves, not holdings —
+  // valued as positions they'd print hundreds of thousands of dollars of
+  // phantom value (2026-10-09: USD.HKD legs inflated the true curve by
+  // US$432k → a −HK$3.2M 1D P/L on a HK$766k portfolio).
+  const curveTxns = txns.filter((t) => !isForexSymbol(t.symbol));
+  const legs: CurveLeg[] = curveTxns.map((t) => ({
     symbol: t.symbol,
     type: t.type,
     quantity: t.quantity,
@@ -607,14 +614,14 @@ export function mergeCurveLegs(
   }));
   stats.fromTransactions = legs.length;
 
-  const logSymbols = new Set(txns.map((t) => normSymbol(t.symbol)));
+  const logSymbols = new Set(curveTxns.map((t) => normSymbol(t.symbol)));
   stats.symbolsCoveredByLog = logSymbols.size;
 
   // Validate + group Flex trades (log symbols excluded — see above).
   const bySymbol = new Map<string, BrokerTradeLike[]>();
   for (const b of brokerTrades) {
     const sym = normSymbol(b.symbol);
-    if (!sym || sym === "USD.HKD") continue;
+    if (!sym || isForexSymbol(sym)) continue;
     if (logSymbols.has(sym)) continue;
     const executedAt = parseTradeDate(b.tradeDate);
     if (

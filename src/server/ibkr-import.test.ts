@@ -181,13 +181,32 @@ describe("mergeCurveLegs", () => {
   it("skips FX conversions, zero qty, null prices and bad dates", () => {
     const { legs, stats } = mergeCurveLegs([], [
       flex("USD.HKD", "20251003", 1000, 7.8),
+      flex("EUR.USD", "20251003", 500, 1.08),
       flex("AAA", "20251003", 0, 10),
       flex("BBB", "20251003", 5, null),
       flex("CCC", "not-a-date", 5, 10),
       flex("DDD", "20251003", 5, -3),
     ]);
     expect(legs).toHaveLength(0);
-    expect(stats.unusableSkipped).toBe(4); // USD.HKD filtered before counting
+    expect(stats.unusableSkipped).toBe(4); // FX pairs filtered before counting
+  });
+
+  it("excludes FX conversions from the Transaction legs too", () => {
+    // Regression: 2026-10-09 — USD.HKD legs from the Transaction log sailed
+    // through mergeCurveLegs and were valued at "cost" (US$432k of phantom
+    // holdings), printing a −HK$3.2M 1D P/L on a HK$766k portfolio.
+    const { legs, stats } = mergeCurveLegs(
+      [
+        txn("USD.HKD", "BUY", 42695.01, 7.78154, "2025-10-03"),
+        txn("USD.HKD", "BUY", 12847.6, 7.78246, "2025-10-06"),
+        txn("AAPL", "BUY", 10, 100, "2025-10-03"),
+      ],
+      [],
+    );
+    expect(legs).toHaveLength(1);
+    expect(legs[0]!.symbol).toBe("AAPL");
+    expect(stats.fromTransactions).toBe(1);
+    expect(stats.symbolsCoveredByLog).toBe(1);
   });
 });
 
