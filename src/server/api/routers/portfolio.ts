@@ -1211,6 +1211,9 @@ export const portfolioRouter = createTRPCRouter({
         ? all
         : all.filter((t) => t.source === "manual");
       for (const t of doomed) {
+        // Tombstone IBKR-imported rows before deleting: otherwise the next
+        // auto-sync re-imports them and the reset is silently undone.
+        if (t.externalId) await tombstoneTransaction(ctx.db, t);
         await ctx.db.transaction.delete({ where: { id: t.id } });
       }
       const failed: string[] = [];
@@ -1222,16 +1225,23 @@ export const portfolioRouter = createTRPCRouter({
           await ctx.db.holding.deleteMany({ where: { symbol: h.symbol } });
         }
       } else {
-        for (const s of [...new Set(doomed.map((t) => t.symbol))]) {
+        // Recompute EVERY holding from the trades that survive — not just
+        // the touched symbols. Manual holdings with no backing trades at
+        // all (orphaned rows) are dropped by recomputeHolding; holdings
+        // backed by IBKR-imported trades are rebuilt and kept.
+        const holdings = await ctx.db.holding.findMany({
+          orderBy: { symbol: "asc" },
+        });
+        for (const h of holdings) {
           try {
-            await recomputeHolding(ctx.db, s);
+            await recomputeHolding(ctx.db, h.symbol);
           } catch {
             // Remaining trades can't form a valid position; drop the stale
             // row instead of showing a number we know is wrong.
             await ctx.db.holding
-              .deleteMany({ where: { symbol: s } })
+              .deleteMany({ where: { symbol: h.symbol } })
               .catch(() => undefined);
-            failed.push(s);
+            failed.push(h.symbol);
           }
         }
       }
