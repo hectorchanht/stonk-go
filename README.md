@@ -169,3 +169,12 @@ Notes:
   2 minutes.
 - Possible next steps: multi-currency support, dividends/splits, CSV import,
   portfolio history chart, watchlist.
+
+## Links
+
+https://holdr.lol
+
+## Contact
+
+- hello@holdr.lol
+- support@holdr.lol
