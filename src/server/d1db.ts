@@ -23,6 +23,8 @@ export interface HoldingRow {
   avgCost: number;
   createdAt: Date;
   updatedAt: Date;
+  /** Soft delete timestamp — null means active. Cleared holdings are recoverable. */
+  deletedAt: Date | null;
 }
 
 export interface TransactionRow {
@@ -460,7 +462,17 @@ export interface AppDb {
       update: { quantity: number; avgCost: number };
       create: { symbol: string; quantity: number; avgCost: number };
     }): Promise<HoldingRow>;
+    /**
+     * Soft delete: sets deletedAt instead of removing the row, so cleared
+     * holdings are recoverable via `restore`. findMany excludes soft-deleted
+     * rows; upsert revives them.
+     */
     deleteMany(args: { where: { symbol: string } }): Promise<{ count: number }>;
+    /**
+     * Recover soft-deleted holdings: clears deletedAt.
+     * Optional — the local-dev Prisma client doesn't implement it.
+     */
+    restore?(args: { where: { symbol: string } }): Promise<{ count: number }>;
     updateMany(args: {
       where: { symbol: string; name: null };
       data: { name: string };
@@ -770,6 +782,7 @@ function mapHolding(r: RawRow): HoldingRow {
     avgCost: r.avgCost as number,
     createdAt: toDate(r.createdAt),
     updatedAt: toDate(r.updatedAt),
+    deletedAt: r.deletedAt ? toDate(r.deletedAt) : null,
   };
 }
 
@@ -1434,7 +1447,9 @@ export function createD1Db(d1: D1Database): AppDb {
     findMany: async (args) => {
       const dir = args.orderBy.symbol === "desc" ? "DESC" : "ASC";
       const { results } = await d1
-        .prepare(`SELECT * FROM "Holding" ORDER BY "symbol" ${dir}`)
+        .prepare(
+          `SELECT * FROM "Holding" WHERE "deletedAt" IS NULL ORDER BY "symbol" ${dir}`,
+        )
         .all();
       return (results as unknown as RawRow[]).map(mapHolding);
     },
@@ -1444,12 +1459,13 @@ export function createD1Db(d1: D1Database): AppDb {
       const id = crypto.randomUUID();
       await d1
         .prepare(
-          `INSERT INTO "Holding" ("id", "symbol", "name", "quantity", "avgCost", "createdAt", "updatedAt")
-           VALUES (?, ?, NULL, ?, ?, ?, ?)
+          `INSERT INTO "Holding" ("id", "symbol", "name", "quantity", "avgCost", "createdAt", "updatedAt", "deletedAt")
+           VALUES (?, ?, NULL, ?, ?, ?, ?, NULL)
            ON CONFLICT("symbol") DO UPDATE SET
              "quantity" = excluded."quantity",
              "avgCost" = excluded."avgCost",
-             "updatedAt" = excluded."updatedAt"`,
+             "updatedAt" = excluded."updatedAt",
+             "deletedAt" = NULL`,
         )
         .bind(
           id,
@@ -1469,9 +1485,22 @@ export function createD1Db(d1: D1Database): AppDb {
     },
 
     deleteMany: async (args) => {
+      // Soft delete — the row stays for recovery via `restore`.
       const r = await d1
-        .prepare(`DELETE FROM "Holding" WHERE "symbol" = ?`)
-        .bind(args.where.symbol)
+        .prepare(
+          `UPDATE "Holding" SET "deletedAt" = ? WHERE "symbol" = ? AND "deletedAt" IS NULL`,
+        )
+        .bind(new Date().toISOString(), args.where.symbol)
+        .run();
+      return { count: r.meta.changes ?? 0 };
+    },
+
+    restore: async (args) => {
+      const r = await d1
+        .prepare(
+          `UPDATE "Holding" SET "deletedAt" = NULL, "updatedAt" = ? WHERE "symbol" = ? AND "deletedAt" IS NOT NULL`,
+        )
+        .bind(new Date().toISOString(), args.where.symbol)
         .run();
       return { count: r.meta.changes ?? 0 };
     },
@@ -1479,7 +1508,7 @@ export function createD1Db(d1: D1Database): AppDb {
     updateMany: async (args) => {
       const r = await d1
         .prepare(
-          `UPDATE "Holding" SET "name" = ? WHERE "symbol" = ? AND "name" IS NULL`,
+          `UPDATE "Holding" SET "name" = ? WHERE "symbol" = ? AND "name" IS NULL AND "deletedAt" IS NULL`,
         )
         .bind(args.data.name, args.where.symbol)
         .run();

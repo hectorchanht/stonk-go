@@ -29,8 +29,9 @@ model Holding {
     quantity Float
     avgCost  Float // average cost basis per share (fees folded in)
 
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime? // soft delete: cleared holdings are recoverable
 
     @@index([symbol])
 }
