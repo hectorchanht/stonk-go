@@ -2080,10 +2080,52 @@ function DashboardInner() {
   // True historical value series backing the P/L period lookup. 35 days
   // covers the 1M option plus a weekend/holiday buffer. D1-cached server
   // side, so this is cheap after the first build.
+  //
+  // onlySources = platforms present in the live summary. A disconnected
+  // platform's history is excluded from the curve so performance is always
+  // computed on the connected portfolio — every number stays consistent
+  // with what's displayed.
+  const liveSources = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of data?.rows ?? []) {
+      s.add(
+        r.source === "manual" ? "manual" : (r.brokerLabel ?? "IBKR").toLowerCase(),
+      );
+    }
+    return [...s];
+  }, [data]);
   const { data: pnlCurve } = api.portfolio.equityCurve.useQuery(
-    { days: 35, brokerPositions: brokerInput },
+    { days: 35, brokerPositions: brokerInput, onlySources: liveSources },
     { staleTime: 300_000, refetchInterval: 300_000 },
   );
+
+  // The P/L universe = live sources that actually have curve history
+  // (exchanges like Binance keep balances only, no trade log). The live
+  // comparison value must cover the same universe, otherwise the pill
+  // compares apples (live) to oranges (history).
+  const pnlUniverse = useMemo(() => {
+    const legSources = new Set(pnlCurve?.legSources ?? []);
+    return liveSources.filter((s) => legSources.has(s));
+  }, [liveSources, pnlCurve]);
+  const liveUniverseValue = useMemo(
+    () =>
+      (data?.rows ?? [])
+        .filter((r) =>
+          pnlUniverse.includes(
+            r.source === "manual" ? "manual" : (r.brokerLabel ?? "IBKR").toLowerCase(),
+          ),
+        )
+        .reduce((sum, r) => sum + (r.marketValue ?? 0), 0),
+    [data, pnlUniverse],
+  );
+  // Refuse to print a period P/L that represents less than half the
+  // displayed portfolio — fall back to the honest 1-day number instead of
+  // a fabricated multi-day one.
+  const pnlCoverage =
+    data?.totals && data.totals.marketValue > 0
+      ? liveUniverseValue / data.totals.marketValue
+      : 0;
+  const hasPnlCoverage = pnlCoverage >= 0.5;
 
   // 1W/2W/1M need real history — with fewer than 2 equity-curve points
   // they'd silently show the 1D number, so pin to 1D and disable those
@@ -2093,15 +2135,19 @@ function DashboardInner() {
   const periodDays = pnlPeriodDays(activePnlPeriod);
   const periodPnl = useMemo(
     () =>
-      data?.totals
+      data?.totals && hasPnlCoverage
         ? pnlForPeriod(
             pnlCurve?.points ?? [],
-            data.totals.marketValue,
+            liveUniverseValue,
             periodDays,
           )
         : null,
-    [pnlCurve, data, periodDays],
+    [pnlCurve, data, periodDays, hasPnlCoverage, liveUniverseValue],
   );
+  // Coverage failed but history exists: the connected portfolio has no
+  // usable multi-day history (e.g. IBKR disconnected, exchange-only).
+  // Say so plainly instead of silently showing the 1-day fallback.
+  const pnlCoverageBlocked = hasPnlHistory && !hasPnlCoverage;
   const periodPnlTone: "pos" | "neg" | "neutral" =
     periodPnl == null
       ? "neutral"
@@ -2221,7 +2267,9 @@ function DashboardInner() {
                 info={
                   periodPnl
                     ? `Gain or loss versus the portfolio value ${periodDays} day${periodDays === 1 ? "" : "s"} ago (${shortDate(periodPnl.compareDate)}).`
-                    : "Today's gain or loss versus yesterday's closing prices."
+                    : pnlCoverageBlocked
+                      ? "Multi-day performance needs history for your connected platforms — only today's move is available right now."
+                      : "Today's gain or loss versus yesterday's closing prices."
                 }
                 sub={
                   periodPnl
@@ -2279,7 +2327,7 @@ function DashboardInner() {
           );
           break;
         case "performance":
-          body = <PerformanceSection brokerPositions={brokerInput} />;
+          body = <PerformanceSection brokerPositions={brokerInput} onlySources={liveSources} />;
           break;
         case "diamond-hands":
           body = (
@@ -2413,6 +2461,8 @@ function DashboardInner() {
       periodPnl,
       periodPnlTone,
       selectPnlPeriod,
+      liveSources,
+      pnlCoverageBlocked,
     ],
   );
 

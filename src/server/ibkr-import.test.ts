@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { recomputeHolding, mergeCurveLegs, importIbkrTrades } from "./ibkr-import";
+import { recomputeHolding, mergeCurveLegs, importIbkrTrades, curveTradeLegs } from "./ibkr-import";
 import type { AppDb } from "./d1db";
 
 interface Txn {
@@ -383,5 +383,54 @@ describe("importIbkrTrades tombstones (deleted trades stay deleted)", () => {
     const stats = await importIbkrTrades(db, [trade()], []);
     expect(inserted).toHaveLength(1);
     expect(stats.imported).toBe(1);
+  });
+});
+
+describe("curveTradeLegs source filtering", () => {
+  const dbTxn = (symbol: string, source: string) => ({
+    id: `${source}-${symbol}`,
+    symbol,
+    type: "BUY",
+    quantity: 10,
+    price: 100,
+    fees: null,
+    executedAt: new Date("2025-10-03T12:00:00Z"),
+    externalId: null,
+    source,
+  });
+  const mockCurveDb = () =>
+    ({
+      transaction: {
+        findMany: async () => [dbTxn("AAPL", "ibkr"), dbTxn("TSLA", "manual")],
+      },
+      brokerTrade: { findMany: async () => [] },
+      brokerPosition: { findMany: async () => [] },
+    }) as unknown as AppDb;
+
+  it("returns all legs without a filter", async () => {
+    const { legs } = await curveTradeLegs(mockCurveDb());
+    expect(legs.map((l) => l.symbol).sort()).toEqual(["AAPL", "TSLA"]);
+  });
+
+  it("drops a disconnected platform's legs with onlySources", async () => {
+    // 2026-10-09: IBKR 403 left a Binance-only live portfolio against a
+    // full-history curve, printing 1M P/L -$49,291 on a $20,868 portfolio.
+    // The curve must exclude disconnected platforms so performance always
+    // reflects the connected portfolio.
+    const { legs } = await curveTradeLegs(mockCurveDb(), ["manual"]);
+    expect(legs).toHaveLength(1);
+    expect(legs[0]!.symbol).toBe("TSLA");
+    expect(legs[0]!.source).toBe("manual");
+  });
+
+  it("matches sources case-insensitively", async () => {
+    const { legs } = await curveTradeLegs(mockCurveDb(), ["IBKR"]);
+    expect(legs).toHaveLength(1);
+    expect(legs[0]!.symbol).toBe("AAPL");
+  });
+
+  it("returns no legs when the universe has no history", async () => {
+    const { legs } = await curveTradeLegs(mockCurveDb(), ["binance"]);
+    expect(legs).toHaveLength(0);
   });
 });

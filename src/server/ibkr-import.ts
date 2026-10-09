@@ -742,14 +742,29 @@ export function mergeCurveLegs(
   return { legs, stats };
 }
 
-/** Full curve legs: Transaction log + Flex trades + opening balances. */
+/**
+ * Full curve legs: Transaction log + Flex trades + opening balances.
+ *
+ * `onlySources` (e.g. `["manual", "ibkr"]`) restricts the legs to those
+ * sources — used to keep performance numbers consistent with the platforms
+ * currently connected. A disconnected platform's history is excluded so the
+ * curve never compares against a live portfolio that doesn't contain it.
+ * Empty/omitted = no filtering.
+ */
 export async function curveTradeLegs(
   db: AppDb,
+  onlySources?: string[],
 ): Promise<{ legs: CurveLeg[]; stats: CurveLegStats }> {
   const [txns, brokerTrades, brokerPositions] = await Promise.all([
     db.transaction.findMany({ orderBy: [{ executedAt: "asc" }] }),
     db.brokerTrade.findMany({ orderBy: [{ tradeDate: "asc" }] }),
     db.brokerPosition.findMany({ orderBy: [{ symbol: "asc" }] }),
   ]);
-  return mergeCurveLegs(txns, brokerTrades, brokerPositions);
+  const merged = mergeCurveLegs(txns, brokerTrades, brokerPositions);
+  if (!onlySources || onlySources.length === 0) return merged;
+  const allow = new Set(onlySources.map((s) => s.trim().toLowerCase()));
+  return {
+    legs: merged.legs.filter((l) => allow.has(l.source.trim().toLowerCase())),
+    stats: merged.stats,
+  };
 }

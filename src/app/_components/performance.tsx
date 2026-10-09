@@ -65,8 +65,10 @@ type ViewKey = (typeof VIEWS)[number]["key"];
 
 export function PerformanceSection({
   brokerPositions,
+  onlySources = [],
 }: {
   brokerPositions: BrokerPositionInput[];
+  onlySources?: string[];
 }) {
   const [range, setRange] = useState<number>(90);
   const [view, setView] = useState<ViewKey>("value");
@@ -74,8 +76,9 @@ export function PerformanceSection({
   const { data: curve, isLoading } = api.portfolio.equityCurve.useQuery({
     days: range,
     brokerPositions,
+    onlySources,
   });
-  const { data: perf } = api.portfolio.xirr.useQuery({ brokerPositions });
+  const { data: perf } = api.portfolio.xirr.useQuery({ brokerPositions, onlySources });
   const money = useMoney();
   const { fmtCompact } = useCurrency();
 

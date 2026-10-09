@@ -206,6 +206,16 @@ function platformOf(r: HoldingRow): string {
   return r.source === "manual" ? "Manual" : (r.brokerLabel ?? "IBKR");
 }
 
+/**
+ * Map a summary row to its curve-leg source key (lowercase). Must match the
+ * source values produced by curveTradeLegs ("ibkr", "manual") so the live
+ * side and the history side of a performance comparison cover the same
+ * universe.
+ */
+function legSourceOf(r: HoldingRow): string {
+  return r.source === "manual" ? "manual" : (r.brokerLabel ?? "IBKR").toLowerCase();
+}
+
 /** Per-platform snapshot totals for the Platforms widget. */
 function buildByPlatform(rows: HoldingRow[]) {
   const map = new Map<
@@ -416,6 +426,8 @@ async function buildTrueCurve(
   perSource: Record<string, PricedDay[]>;
   /** Monthly buckets from the full-resolution series (all history). */
   monthly: MonthCell[];
+  /** Distinct normalized leg sources in the curve (e.g. ["ibkr","manual"]). */
+  legSources: string[];
 } | null> {
   const symbols = [
     ...new Set(txns.map((t) => t.symbol.trim().toUpperCase())),
@@ -543,6 +555,7 @@ async function buildTrueCurve(
     estimatedSymbols,
     perSource,
     monthly,
+    legSources: [...new Set(txns.map((t) => t.source.trim().toLowerCase()))],
   };
 }
 
@@ -713,7 +726,17 @@ export const portfolioRouter = createTRPCRouter({
   equityCurve: publicProcedure
     .input(
       z
-        .object({ days: z.number().int().min(0).max(3650).default(90) })
+        .object({
+          days: z.number().int().min(0).max(3650).default(90),
+          /**
+           * Restrict the curve to these leg sources (e.g. ["manual","ibkr"]).
+           * The dashboard passes the sources present in the live summary so
+           * a disconnected platform's history can't inflate the comparison —
+           * performance always reflects the connected portfolio. Empty =
+           * no filtering.
+           */
+          onlySources: z.array(z.string()).max(20).default([]),
+        })
         .merge(summaryInput),
     )
     .query(async ({ ctx, input }) => {
@@ -721,7 +744,14 @@ export const portfolioRouter = createTRPCRouter({
       // true curve covers IBKR positions whose trades never made it into
       // the log (mergeIbkrTrades skips unreconciled symbols). See
       // mergeCurveLegs for the honesty rules.
-      const { legs: txns } = await curveTradeLegs(ctx.db);
+      const { legs: txns } = await curveTradeLegs(ctx.db, input.onlySources);
+
+      // Filtered to a universe with no history at all — no curve, and the
+      // snapshots/invested fallbacks below would show the WRONG (unfiltered)
+      // portfolio, so stop here.
+      if (input.onlySources.length > 0 && txns.length === 0) {
+        return { source: "none" as const, points: [], legSources: [] as string[] };
+      }
 
       // 1. True historical value curve. Yahoo/FX failures fall through to
       // the older sources — never a broken chart.
@@ -742,6 +772,7 @@ export const portfolioRouter = createTRPCRouter({
               estimatedSymbols: tru.estimatedSymbols,
               perSource: tru.perSource,
               monthly: tru.monthly,
+              legSources: tru.legSources,
             };
           }
         } catch {
@@ -767,9 +798,10 @@ export const portfolioRouter = createTRPCRouter({
           points: downsamplePoints(
             inRange.map((r) => ({ date: r.date, value: r.marketValue })),
           ),
+          legSources: [...new Set(txns.map((t) => t.source.trim().toLowerCase()))],
         };
       }
-      if (txns.length === 0) return { source: "none" as const, points: [] };
+      if (txns.length === 0) return { source: "none" as const, points: [], legSources: [] as string[] };
       const fx = await getFxRates();
       const flows = txnsToUsdFlows(txns, fx);
       const s = await buildSummary(ctx, input.brokerPositions);
@@ -778,25 +810,49 @@ export const portfolioRouter = createTRPCRouter({
       });
       const source: "trades" | "none" =
         points.length >= 2 ? "trades" : "none";
-      return { source, points };
+      return {
+        source,
+        points,
+        legSources: [...new Set(txns.map((t) => t.source.trim().toLowerCase()))],
+      };
     }),
 
   /**
-   * Annualized internal rate of return from the full transaction log.
-   * Buys are outflows, sells are inflows, today's market value is the
-   * terminal inflow — all converted to USD. Excludes dividends (they
-   * aren't in the log). XIRR stays null until 30 days of history exist:
-   * annualizing a shorter span explodes into noise (a 1% weekly wobble
-   * reads as ±68% "annualized").
+   * Annualized internal rate of return from the transaction log. Buys are
+   * outflows, sells are inflows, today's market value is the terminal
+   * inflow — all converted to USD. Excludes dividends (they aren't in the
+   * log). XIRR stays null until 30 days of history exist: annualizing a
+   * shorter span explodes into noise (a 1% weekly wobble reads as ±68%
+   * "annualized").
+   *
+   * `onlySources` restricts both the legs and the terminal value to the
+   * same platform universe as the equity curve, so XIRR stays consistent
+   * with the connected portfolio.
    */
-  xirr: publicProcedure.input(summaryInput).query(async ({ ctx, input }) => {
+  xirr: publicProcedure
+    .input(
+      summaryInput.merge(
+        z.object({ onlySources: z.array(z.string()).max(20).default([]) }),
+      ),
+    )
+    .query(async ({ ctx, input }) => {
     // Same legs as the curve — XIRR and the chart must tell one story.
-    const { legs: txns } = await curveTradeLegs(ctx.db);
+    const { legs: txns } = await curveTradeLegs(ctx.db, input.onlySources);
     const fx = await getFxRates();
     const flows = txnsToUsdFlows(txns, fx);
     const s = await buildSummary(ctx, input.brokerPositions);
-    if (s.totals.marketValue > 0) {
-      flows.push({ date: new Date(), amount: s.totals.marketValue });
+    // Terminal value over the same universe as the legs — a disconnected
+    // platform's history must not be measured against a live value that
+    // doesn't contain it (or vice versa).
+    const allow = new Set(input.onlySources.map((x) => x.trim().toLowerCase()));
+    const terminalValue =
+      input.onlySources.length === 0
+        ? s.totals.marketValue
+        : s.rows
+            .filter((r) => allow.has(legSourceOf(r)))
+            .reduce((sum, r) => sum + (r.marketValue ?? 0), 0);
+    if (terminalValue > 0) {
+      flows.push({ date: new Date(), amount: terminalValue });
     }
     const times = flows.map((f) => f.date.getTime());
     const spanDays =
