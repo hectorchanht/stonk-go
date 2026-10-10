@@ -29,6 +29,7 @@ import {
   type PriceBar,
 } from "~/server/performance";
 import { getPriceHistory } from "~/server/price-history";
+import { buildByPlatform, type PlatformTotal } from "~/server/platform-totals";
 import { countBuyStreak, maxDrawdown } from "~/server/hands";
 import { computeFlair } from "~/server/wsb";
 import { generateInsights } from "~/server/ai";
@@ -179,31 +180,29 @@ export interface HoldingRow {
 export interface Summary {
   rows: HoldingRow[];
   totals: {
-    costBasis: number;
+    /**
+     * Null when any position lacks a recorded cost. Unknown cost is never
+     * treated as $0 — doing so would parade the position's full market
+     * value as profit.
+     */
+    costBasis: number | null;
     marketValue: number;
     dayPL: number | null;
-    /** Current value minus total cost. Positions without a recorded cost count as $0. */
-    totalPL: number;
+    /**
+     * Current value minus total cost. Null when cost is unknown — we never
+     * invent a $0 cost, so a platform like Binance without synced trade
+     * history honestly shows no P/L instead of its full value as profit.
+     */
+    totalPL: number | null;
     totalPLPct: number | null;
     /** Per-platform snapshot: Manual + each broker/exchange label. */
-    byPlatform: Array<{
-      platform: string;
-      count: number;
-      marketValue: number;
-      costBasis: number;
-      dayPL: number | null;
-      totalPL: number;
-    }>;
+    byPlatform: PlatformTotal[];
     holdingsCount: number;
     pricedCount: number;
     brokerCount: number;
     /** Broker rows with a market value but no cost basis. */
     brokerMissingBasis: number;
   };
-}
-
-function platformOf(r: HoldingRow): string {
-  return r.source === "manual" ? "Manual" : (r.brokerLabel ?? "IBKR");
 }
 
 /**
@@ -214,33 +213,6 @@ function platformOf(r: HoldingRow): string {
  */
 function legSourceOf(r: HoldingRow): string {
   return r.source === "manual" ? "manual" : (r.brokerLabel ?? "IBKR").toLowerCase();
-}
-
-/** Per-platform snapshot totals for the Platforms widget. */
-function buildByPlatform(rows: HoldingRow[]) {
-  const map = new Map<
-    string,
-    { count: number; marketValue: number; costBasis: number; dayPL: number }
-  >();
-  for (const r of rows) {
-    const p = platformOf(r);
-    const e = map.get(p) ?? { count: 0, marketValue: 0, costBasis: 0, dayPL: 0 };
-    e.count += 1;
-    e.marketValue += r.marketValue ?? 0;
-    e.costBasis += r.costBasis ?? 0;
-    e.dayPL += r.dayPL ?? 0;
-    map.set(p, e);
-  }
-  return [...map.entries()]
-    .map(([platform, e]) => ({
-      platform,
-      count: e.count,
-      marketValue: e.marketValue,
-      costBasis: e.costBasis,
-      dayPL: e.dayPL,
-      totalPL: e.marketValue - e.costBasis,
-    }))
-    .sort((a, b) => b.marketValue - a.marketValue);
 }
 
 async function buildSummary(
@@ -355,17 +327,23 @@ async function buildSummary(
   }
 
   const marketValue = rows.reduce((s, r) => s + (r.marketValue ?? 0), 0);
-  const costBasis = rows.reduce((s, r) => s + (r.costBasis ?? 0), 0);
+  const knownCost = rows.reduce((s, r) => s + (r.costBasis ?? 0), 0);
+  // Unknown cost is never treated as $0: if any position lacks a recorded
+  // cost basis, the portfolio totals honestly report unknown instead of
+  // parading the missing cost's market value as profit.
+  const hasUnknownCost = rows.some((r) => r.costBasis == null);
+  const costBasis = hasUnknownCost ? null : knownCost;
   const dayPLValues = rows
     .map((r) => r.dayPL)
     .filter((v): v is number => v != null);
   const brokerMissingBasis = rows.filter(
     (r) => r.source === "broker" && r.marketValue != null && r.costBasis == null,
   ).length;
-  // Total P/L is simply value minus cost. Positions without a recorded
-  // cost basis count as $0 cost (the info tooltip says so) — holders expect
-  // this number to match Value − Cost at a glance.
-  const totalPL = marketValue - costBasis;
+  // Total P/L is value minus cost — but only when every position has a
+  // recorded cost. A missing cost is unknown, never $0: counting it as $0
+  // would show the position's full market value as profit (the old Binance
+  // bug: +$20,908 of phantom P/L with no cost data behind it).
+  const totalPL = costBasis == null ? null : marketValue - costBasis;
 
   for (const r of rows) {
     r.weightPct =
@@ -381,7 +359,10 @@ async function buildSummary(
       marketValue,
       dayPL: dayPLValues.length > 0 ? dayPLValues.reduce((a, b) => a + b, 0) : null,
       totalPL,
-      totalPLPct: costBasis > 0 ? (totalPL / costBasis) * 100 : null,
+      totalPLPct:
+        costBasis != null && costBasis > 0 && totalPL != null
+          ? (totalPL / costBasis) * 100
+          : null,
       byPlatform: buildByPlatform(rows),
       holdingsCount: rows.length,
       pricedCount: rows.filter((r) => r.marketValue != null).length,
@@ -915,7 +896,7 @@ export const portfolioRouter = createTRPCRouter({
         totals: z.object({
           marketValue: z.number(),
           dayPL: z.number().nullable(),
-          totalPL: z.number(),
+          totalPL: z.number().nullable(),
           totalPLPct: z.number().nullable(),
         }),
         recentTrades: z

@@ -347,8 +347,8 @@ export function FinancialFreedom({
 }: {
   /** Total portfolio market value, USD. */
   marketValue: number;
-  /** Total cost basis, USD. */
-  costBasis: number;
+  /** Total cost basis, USD. Null when any position lacks a recorded cost. */
+  costBasis: number | null;
 }) {
   const { fmt, fmtCompact, rates, currency } = useCurrency();
   const displayRate = rates?.[currency.toLowerCase()] ?? 1;
@@ -403,7 +403,10 @@ export function FinancialFreedom({
   const monthsFi = monthsToTarget(marketValue, monthlyPmtUsd, settings.annualReturnPct, fiNum);
   const coast = coastFiAmount(fiNum, settings.annualReturnPct, settings.currentAge, settings.retireAge);
   const isCoast = fiNum > 0 && marketValue >= coast;
-  const yieldOnCost = costBasis > 0 && annualDivUsd > 0 ? annualDivUsd / costBasis : null;
+  const yieldOnCost =
+    costBasis != null && costBasis > 0 && annualDivUsd > 0
+      ? annualDivUsd / costBasis
+      : null;
   const coverage = annualExpensesUsd > 0 && annualDivUsd > 0 ? annualDivUsd / annualExpensesUsd : null;
 
   /* ---- simulator state (defaults follow settings) ---- */

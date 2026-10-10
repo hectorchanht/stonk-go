@@ -2198,12 +2198,12 @@ function DashboardInner() {
   const t = data?.totals;
   const noCostNote =
     t && t.brokerMissingBasis > 0
-      ? ` ${t.brokerMissingBasis} position${t.brokerMissingBasis === 1 ? "" : "s"} without a recorded cost count${t.brokerMissingBasis === 1 ? "s" : ""} as $0.`
+      ? ` ${t.brokerMissingBasis} position${t.brokerMissingBasis === 1 ? "" : "s"} without a recorded cost — Cost and Total P/L stay hidden until every position has one. Sync the platform's trade history to fill it in.`
       : "";
   const dayTone: "pos" | "neg" | "neutral" =
     t?.dayPL == null ? "neutral" : t.dayPL > 0 ? "pos" : t.dayPL < 0 ? "neg" : "neutral";
   const totalTone: "pos" | "neg" | "neutral" =
-    t == null
+    t?.totalPL == null
       ? "neutral"
       : t.totalPL > 0
         ? "pos"

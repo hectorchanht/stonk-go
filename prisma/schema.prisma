@@ -332,7 +332,7 @@ model PortfolioSnapshot {
     id            String   @id @default(cuid())
     date          String   @unique // YYYY-MM-DD (local date)
     marketValue   Float
-    costBasis     Float
+    costBasis     Float? // null when any position lacks a recorded cost — unknown is never $0
     totalPL       Float?
     dayPL         Float?
     holdingsCount Int      @default(0)

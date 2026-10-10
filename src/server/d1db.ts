@@ -189,7 +189,8 @@ export interface PortfolioSnapshotRow {
   id: string;
   date: string; // YYYY-MM-DD (local)
   marketValue: number;
-  costBasis: number;
+  /** Null when any position lacked a recorded cost — unknown is never $0. */
+  costBasis: number | null;
   totalPL: number | null;
   dayPL: number | null;
   holdingsCount: number;
@@ -540,14 +541,14 @@ export interface AppDb {
       create: {
         date: string;
         marketValue: number;
-        costBasis: number;
+        costBasis: number | null;
         totalPL?: number | null;
         dayPL?: number | null;
         holdingsCount?: number;
       };
       update: {
         marketValue: number;
-        costBasis: number;
+        costBasis: number | null;
         totalPL?: number | null;
         dayPL?: number | null;
         holdingsCount?: number;
@@ -820,7 +821,7 @@ function mapPortfolioSnapshot(r: RawRow): PortfolioSnapshotRow {
     id: r.id as string,
     date: r.date as string,
     marketValue: r.marketValue as number,
-    costBasis: r.costBasis as number,
+    costBasis: (r.costBasis as number | null) ?? null,
     totalPL: (r.totalPL as number | null) ?? null,
     dayPL: (r.dayPL as number | null) ?? null,
     holdingsCount: (r.holdingsCount as number) ?? 0,
@@ -1724,7 +1725,7 @@ export function createD1Db(d1: D1Database): AppDb {
           crypto.randomUUID(),
           c.date,
           c.marketValue,
-          c.costBasis,
+          c.costBasis ?? null,
           c.totalPL ?? null,
           c.dayPL ?? null,
           c.holdingsCount ?? 0,

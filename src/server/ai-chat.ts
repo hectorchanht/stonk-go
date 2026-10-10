@@ -103,7 +103,7 @@ function buildPortfolioContext(input: InsightInput): string {
   return (
     `Portfolio: $${t.marketValue.toFixed(0)} total, ` +
     `today ${t.dayPL != null ? `$${t.dayPL.toFixed(0)}` : "n/a"}, ` +
-    `all-time P/L $${t.totalPL.toFixed(0)}` +
+    `all-time P/L ${t.totalPL != null ? `$${t.totalPL.toFixed(0)}` : "n/a"}` +
     (t.totalPLPct != null ? ` (${t.totalPLPct.toFixed(1)}%)` : "") +
     `.\n\nPositions:\n${pos}\n\nRecent trades:\n${trades}`
   );

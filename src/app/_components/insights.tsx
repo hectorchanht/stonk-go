@@ -89,7 +89,7 @@ export function AiInsights({
       totals: {
         marketValue: totals.marketValue,
         dayPL: totals.dayPL ?? null,
-        totalPL: totals.totalPL ?? 0,
+        totalPL: totals.totalPL ?? null,
         totalPLPct: totals.totalPLPct ?? null,
       },
       recentTrades: (txns ?? []).map((t) => ({
